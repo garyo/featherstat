@@ -1,0 +1,23 @@
+{
+  "name": "@analytics/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/main.ts",
+    "build": "esbuild src/main.ts --bundle --platform=node --format=esm --target=node24 --external:better-sqlite3 --outfile=dist/main.js",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.0.12",
+    "better-sqlite3": "^13.0.1",
+    "hono": "^4.12.32",
+    "isbot": "^5.2.1",
+    "mmdb-lib": "^3.0.2",
+    "ua-parser-js": "^1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "esbuild": "^0.28.1"
+  }
+}

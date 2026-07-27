@@ -1,0 +1,793 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wakescope — dashboard mockup</title>
+</head>
+<body>
+<!-- artifact:start -->
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7;
+    --surface: #fcfcfb;
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --muted: #898781;
+    --grid: #e1e0d9;
+    --axis: #c3c2b7;
+    --border: rgba(11, 11, 11, 0.10);
+    --s1: #2a78d6;   /* categorical slot 1 — visitors */
+    --s2: #eb6834;   /* slot 2 — pageviews */
+    --s3: #1baf7a;   /* slot 3 */
+    --good: #006300;
+    --bad: #d03b3b;
+    --wash: #cde2fb;         /* bar-list inline bar */
+    --hm0: #efeee9;          /* heatmap zero — recedes to surface */
+    --hm1: #cde2fb; --hm2: #9ec5f4; --hm3: #5598e7; --hm4: #256abf; --hm5: #0d366b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --page: #0d0d0d;
+      --surface: #1a1a19;
+      --ink: #ffffff;
+      --ink-2: #c3c2b7;
+      --muted: #898781;
+      --grid: #2c2c2a;
+      --axis: #383835;
+      --border: rgba(255, 255, 255, 0.10);
+      --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+      --good: #0ca30c;
+      --bad: #e66767;
+      --wash: #184f95;
+      --hm0: #232320;
+      --hm1: #0d366b; --hm2: #184f95; --hm3: #256abf; --hm4: #3987e5; --hm5: #86b6ef;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255, 255, 255, 0.10);
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+    --good: #0ca30c;
+    --bad: #e66767;
+    --wash: #184f95;
+    --hm0: #232320;
+    --hm1: #0d366b; --hm2: #184f95; --hm3: #256abf; --hm4: #3987e5; --hm5: #86b6ef;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--ink);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+
+  .shell { max-width: 1180px; margin: 0 auto; padding: 0 20px 48px; }
+
+  /* ---------- header ---------- */
+  header.top {
+    display: flex; align-items: center; gap: 24px;
+    padding: 14px 0 12px; border-bottom: 1px solid var(--border);
+  }
+  .wordmark { font-size: 17px; font-weight: 650; letter-spacing: 0.02em; }
+  .wordmark .dot { color: var(--s1); }
+  .tabs { display: flex; gap: 4px; }
+  .tab {
+    appearance: none; border: 0; background: none; color: var(--ink-2);
+    font: inherit; font-weight: 500; padding: 6px 12px; border-radius: 7px; cursor: pointer;
+  }
+  .tab:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+  .tab[aria-selected="true"] { background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); }
+  .spacer { flex: 1; }
+  .icon-btn {
+    appearance: none; border: 1px solid var(--border); background: var(--surface); color: var(--ink-2);
+    width: 32px; height: 32px; border-radius: 7px; cursor: pointer; font-size: 15px; line-height: 1;
+  }
+  .icon-btn:hover { color: var(--ink); }
+  :is(.tab, .icon-btn, .preset):focus-visible { outline: 2px solid var(--s1); outline-offset: 2px; }
+
+  /* ---------- filter row ---------- */
+  .filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 14px 0; }
+  .preset {
+    appearance: none; border: 0; background: none; color: var(--ink-2); font: inherit;
+    padding: 5px 10px; border-radius: 7px; cursor: pointer;
+  }
+  .preset:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+  .preset[aria-pressed="true"] { background: var(--surface); border: 1px solid var(--border); color: var(--ink); font-weight: 600; }
+  .compare-note { color: var(--muted); font-size: 13px; margin-left: 8px; }
+
+  /* ---------- grid & cards ---------- */
+  .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 14px; }
+  .card {
+    grid-column: span 12;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 16px 18px; min-width: 0;
+  }
+  @media (min-width: 760px) {
+    .c6 { grid-column: span 6; }
+    .c4 { grid-column: span 4; }
+    .c3 { grid-column: span 3; }
+  }
+  .card h2 {
+    margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--ink-2);
+    letter-spacing: 0.01em;
+  }
+  .card-head { display: flex; align-items: baseline; gap: 12px; }
+  .card-head .legend { margin-left: auto; display: flex; gap: 14px; font-size: 12.5px; color: var(--ink-2); }
+  .legend .key { display: inline-flex; align-items: center; gap: 6px; }
+  .legend .line { width: 14px; height: 0; border-top: 2.5px solid; border-radius: 2px; }
+  .legend .swatch { width: 10px; height: 10px; border-radius: 2px; }
+
+  /* ---------- KPI tiles ---------- */
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; }
+  .tile { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .tile .label { font-size: 12.5px; color: var(--ink-2); }
+  .tile .row { display: flex; align-items: flex-end; gap: 10px; margin-top: 4px; }
+  .tile .value { font-size: 26px; font-weight: 600; line-height: 1.1; }
+  .tile .delta { font-size: 12.5px; font-weight: 600; padding-bottom: 3px; }
+  .delta.up   { color: var(--good); }
+  .delta.down { color: var(--bad); }
+  .delta.muted { color: var(--muted); font-weight: 500; }
+  .tile svg { display: block; margin-top: 8px; }
+
+  /* ---------- bar lists ---------- */
+  .bar-list { display: flex; flex-direction: column; gap: 4px; }
+  .bar-row {
+    position: relative; display: flex; align-items: center; gap: 10px;
+    padding: 3px 8px; border-radius: 5px; min-height: 26px; cursor: default;
+  }
+  .bar-row:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
+  .bar-row .bar {
+    position: absolute; inset: 3px auto 3px 0; z-index: 0;
+    background: var(--wash); border-radius: 0 4px 4px 0;
+  }
+  .bar-row .name {
+    position: relative; z-index: 1; flex: 1; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .bar-row .num {
+    position: relative; z-index: 1; font-variant-numeric: tabular-nums; color: var(--ink-2);
+  }
+  .flag { margin-right: 6px; }
+
+  /* ---------- stacked device bar ---------- */
+  .stack { display: flex; gap: 2px; height: 24px; margin: 6px 0 10px; }
+  .stack .seg { position: relative; cursor: default; }
+  .stack .seg:last-child { border-radius: 0 4px 4px 0; }
+  .stack .seg:hover { filter: brightness(1.12); }
+  .seg-label {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    font-size: 11.5px; font-weight: 600; overflow: hidden; white-space: nowrap;
+  }
+  .divider { border: 0; border-top: 1px solid var(--border); margin: 14px 0 12px; }
+
+  /* ---------- heatmap ---------- */
+  .heatmap { display: grid; grid-template-columns: 34px 1fr; gap: 6px; }
+  .hm-days { display: grid; grid-template-rows: repeat(7, 1fr); gap: 2px; font-size: 11px; color: var(--muted); }
+  .hm-days span { display: flex; align-items: center; }
+  .hm-cells { display: grid; grid-template-columns: repeat(24, 1fr); gap: 2px; }
+  .hm-cell { aspect-ratio: 1.4; border-radius: 3px; background: var(--hm0); }
+  .hm-cell:hover { outline: 2px solid var(--ink); outline-offset: -1px; }
+  .hm-hours { grid-column: 2; display: grid; grid-template-columns: repeat(24, 1fr); font-size: 11px; color: var(--muted); }
+  .b1 { background: var(--hm1); } .b2 { background: var(--hm2); } .b3 { background: var(--hm3); }
+  .b4 { background: var(--hm4); } .b5 { background: var(--hm5); }
+
+  /* ---------- realtime feed ---------- */
+  .active-now { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .active-now .n { font-size: 26px; font-weight: 600; }
+  .pulse { width: 9px; height: 9px; border-radius: 50%; background: var(--s3); }
+  @media (prefers-reduced-motion: no-preference) {
+    .pulse { animation: pulse 2s ease-out infinite; }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--s3) 45%, transparent); }
+      70% { box-shadow: 0 0 0 8px transparent; }
+      100% { box-shadow: 0 0 0 0 transparent; }
+    }
+  }
+  .feed { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+  .feed-row { display: flex; gap: 10px; align-items: baseline; padding: 3px 4px; border-radius: 5px; }
+  .feed-row:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
+  .feed-row .ago { color: var(--muted); font-variant-numeric: tabular-nums; width: 34px; flex-shrink: 0; }
+  .feed-row .where { color: var(--ink-2); flex-shrink: 0; }
+  .feed-row .path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
+  .feed-row .evt-dot {
+    display: inline-block; width: 7px; height: 7px; border-radius: 2px;
+    background: var(--s2); margin-right: 5px; vertical-align: 1px;
+  }
+
+  /* ---------- all-sites cards ---------- */
+  .sites { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; padding-top: 4px; }
+  .site-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 16px 18px; cursor: pointer; transition: border-color 0.15s;
+  }
+  .site-card:hover { border-color: color-mix(in srgb, var(--ink) 25%, transparent); }
+  .site-card .top { display: flex; align-items: center; gap: 8px; }
+  .site-card .domain { font-weight: 600; }
+  .site-card .active { margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-2); }
+  .site-card .active .pulse { width: 7px; height: 7px; }
+  .site-card .idle { width: 7px; height: 7px; border-radius: 50%; background: var(--axis); }
+  .site-card .nums { display: flex; align-items: flex-end; gap: 10px; margin-top: 10px; }
+  .site-card .today { font-size: 24px; font-weight: 600; line-height: 1.1; }
+  .site-card .sub { font-size: 12px; color: var(--muted); }
+  .site-card svg { display: block; margin-top: 10px; width: 100%; }
+  .chip {
+    display: inline-block; margin-top: 10px; padding: 2px 9px; border-radius: 99px;
+    font-size: 12px; font-weight: 600; color: var(--good);
+    background: color-mix(in srgb, var(--good) 12%, transparent);
+  }
+  .site-card .pages {
+    margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border);
+    display: flex; flex-direction: column; gap: 3px;
+  }
+  .page-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+  .page-row .p { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
+  .site-card .page-row svg { flex-shrink: 0; width: 52px; margin-top: 0; }
+  .page-row .d { font-size: 12px; }
+
+  /* ---------- journeys ---------- */
+  .j-row {
+    display: grid; grid-template-columns: minmax(0, 1fr) 96px 84px; align-items: center;
+    padding: 5px 8px; border-radius: 5px;
+  }
+  .j-row:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
+  .j-row.head { color: var(--muted); font-size: 12px; }
+  .j-row.head:hover { background: none; }
+  .j-steps { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .j-sep { color: var(--muted); padding: 0 6px; }
+  .j-note { color: var(--muted); }
+  .j-num { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-2); }
+
+  /* ---------- main chart ---------- */
+  .chart-wrap { position: relative; }
+  .chart-wrap svg { display: block; }
+
+  /* ---------- tooltip ---------- */
+  #tip {
+    position: fixed; z-index: 10; pointer-events: none; display: none;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 11px; font-size: 12.5px; box-shadow: 0 4px 14px rgba(0,0,0,0.12);
+    max-width: 260px;
+  }
+  #tip .tip-title { color: var(--muted); margin-bottom: 4px; }
+  #tip .tip-row { display: flex; align-items: center; gap: 7px; }
+  #tip .tip-key { width: 12px; height: 0; border-top: 2.5px solid; border-radius: 2px; flex-shrink: 0; }
+  #tip .tip-val { font-weight: 650; font-variant-numeric: tabular-nums; }
+  #tip .tip-name { color: var(--ink-2); }
+
+  footer.note {
+    margin-top: 28px; padding-top: 14px; border-top: 1px solid var(--border);
+    color: var(--muted); font-size: 12.5px;
+  }
+</style>
+
+<div class="shell">
+  <header class="top">
+    <div class="wordmark">Wakescope<span class="dot">.</span></div>
+    <nav class="tabs" role="tablist" aria-label="Views">
+      <button class="tab" id="tab-all" role="tab" aria-selected="false">All sites</button>
+      <button class="tab" id="tab-site" role="tab" aria-selected="true">deep-timeline.org</button>
+    </nav>
+    <div class="spacer"></div>
+    <button class="icon-btn" id="theme-toggle" title="Toggle light/dark" aria-label="Toggle light or dark theme">◐</button>
+  </header>
+
+  <!-- ============ SITE VIEW ============ -->
+  <section id="view-site">
+    <div class="filters" aria-label="Date range">
+      <button class="preset" aria-pressed="false">Today</button>
+      <button class="preset" aria-pressed="false">7 days</button>
+      <button class="preset" aria-pressed="true">30 days</button>
+      <button class="preset" aria-pressed="false">90 days</button>
+      <button class="preset" aria-pressed="false">Month to date</button>
+      <span class="compare-note">Jun 28 – Jul 27 · compared with previous 30 days</span>
+    </div>
+
+    <div class="kpis" id="kpis"></div>
+
+    <div class="grid" style="margin-top: 14px;">
+      <div class="card">
+        <div class="card-head">
+          <h2>Visitors &amp; pageviews</h2>
+          <div class="legend">
+            <span class="key"><span class="line" style="border-color: var(--s1);"></span>Visitors</span>
+            <span class="key"><span class="line" style="border-color: var(--s2);"></span>Pageviews</span>
+          </div>
+        </div>
+        <div class="chart-wrap" id="main-chart"></div>
+      </div>
+
+      <div class="card c6">
+        <h2>Top pages</h2>
+        <div class="bar-list" id="pages"></div>
+      </div>
+
+      <div class="card c6">
+        <h2>Referrers</h2>
+        <div class="bar-list" id="refs"></div>
+      </div>
+
+      <div class="card c4">
+        <h2>Countries</h2>
+        <div class="bar-list" id="countries"></div>
+      </div>
+
+      <div class="card c4">
+        <h2>Devices &amp; browsers</h2>
+        <div class="stack" id="devices"></div>
+        <div class="legend" id="device-legend" style="font-size: 12.5px; display: flex; gap: 14px; color: var(--ink-2);"></div>
+        <hr class="divider">
+        <div class="bar-list" id="browsers"></div>
+      </div>
+
+      <div class="card c4">
+        <h2>Realtime</h2>
+        <div class="active-now"><span class="pulse"></span><span class="n">7</span><span style="color: var(--ink-2);">active now</span></div>
+        <div class="feed" id="feed"></div>
+      </div>
+
+      <div class="card">
+        <h2>Top journeys</h2>
+        <div id="journeys"></div>
+      </div>
+
+      <div class="card">
+        <h2>Traffic by hour · last 30 days</h2>
+        <div class="heatmap">
+          <div class="hm-days" id="hm-days"></div>
+          <div class="hm-cells" id="hm-cells"></div>
+          <div class="hm-hours" id="hm-hours"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ ALL SITES VIEW ============ -->
+  <section id="view-all" hidden>
+    <div class="filters"><span class="compare-note">Today so far · deltas vs the same day last week · sparklines: 14 days</span></div>
+    <div class="sites" id="sites"></div>
+  </section>
+
+  <footer class="note">Design mockup — static sample data. Site view shows deep-timeline.org, last 30 days ending 2026-07-27.</footer>
+</div>
+
+<div id="tip" role="status"></div>
+
+<script>
+  'use strict';
+
+  // ---------- utilities ----------
+  const $ = (sel) => document.querySelector(sel);
+  const fmt = (n) => n.toLocaleString('en-US');
+  const compact = (n) => n >= 10000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') + 'K' : fmt(n);
+
+  function mulberry32(seed) {
+    return function () {
+      seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  // ---------- sample data (seeded, deterministic) ----------
+  const rand = mulberry32(42);
+  const DAYS = 30;
+  const END = new Date(2026, 6, 27); // Jul 27 2026
+  const dates = Array.from({ length: DAYS }, (_, i) => {
+    const d = new Date(END); d.setDate(d.getDate() - (DAYS - 1 - i)); return d;
+  });
+  const weekdayFactor = [0.62, 1.0, 1.06, 1.1, 1.07, 0.94, 0.7]; // Sun..Sat
+  const visitors = dates.map((d, i) => {
+    let v = 74 * weekdayFactor[d.getDay()] * (0.85 + rand() * 0.3);
+    if (i === 18) v *= 2.8; // HN front page day
+    if (i === 19) v *= 1.6; // afterglow
+    return Math.round(v);
+  });
+  const pageviews = visitors.map((v) => Math.round(v * (1.9 + rand() * 0.5)));
+
+  const pages = [
+    ['/', 1841], ['/timeline', 1204], ['/event/kt-extinction', 511],
+    ['/event/cambrian-explosion', 387], ['/about', 245], ['/event/snowball-earth', 198], ['/faq', 141],
+  ];
+  const refs = [
+    ['Direct', 986], ['google.com', 704], ['news.ycombinator.com', 421], ['en.wikipedia.org', 149],
+    ['reddit.com', 132], ['mastodon.social', 87], ['duckduckgo.com', 38],
+  ];
+  const countries = [
+    ['🇺🇸', 'United States', 1021], ['🇩🇪', 'Germany', 312], ['🇬🇧', 'United Kingdom', 296],
+    ['🇨🇦', 'Canada', 187], ['🇫🇷', 'France', 132], ['🇳🇱', 'Netherlands', 98], ['🇯🇵', 'Japan', 87],
+  ];
+  const browsers = [['Chrome', 1418], ['Safari', 611], ['Firefox', 402], ['Edge', 186]];
+  const devices = [
+    { name: 'Desktop', pct: 61, color: 'var(--s1)', label: '#fff' },
+    { name: 'Mobile', pct: 33, color: 'var(--s2)', label: '#0b0b0b' },
+    { name: 'Tablet', pct: 6, color: 'var(--s3)', label: null }, // too small for an inline label
+  ];
+  const feed = [
+    ['8s', '🇺🇸', 'Cambridge, US', '/timeline', false],
+    ['21s', '🇩🇪', 'Berlin, DE', '/event/kt-extinction', false],
+    ['48s', '🇺🇸', 'Denver, US', '/', false],
+    ['1m', '🇬🇧', 'Leeds, GB', 'share · copy-link', true],
+    ['2m', '🇯🇵', 'Osaka, JP', '/event/cambrian-explosion', false],
+    ['2m', '🇺🇸', 'Portland, US', '/timeline', false],
+    ['4m', '🇨🇦', 'Halifax, CA', '/about', false],
+    ['5m', '🇫🇷', 'Lyon, FR', '/', false],
+  ];
+  const sites = [
+    { domain: 'oberbrunner.com', active: 2, today: 214, delta: 9, spark: [],
+      pages: [['/blog/agentic-coding-notes', 32], ['/blog/openfx-color-pipelines', 8], ['/', -3]] },
+    { domain: 'deep-timeline.org', active: 3, today: 187, delta: 31, spark: [],
+      pages: [['/timeline', 41], ['/event/kt-extinction', 12], ['/', 28]] },
+    { domain: 'pcons.org', active: 1, today: 96, delta: 4, spark: [],
+      pages: [['/docs/quickstart', 6], ['/', 2], ['/docs/targets', -4]] },
+    { domain: 'pelorus-nav.com', active: 0, today: 42, delta: -6, spark: [],
+      pages: [['/', -8], ['/landing', -2], ['/docs', 1]] },
+    { domain: 'packzen.org', active: 1, today: 38, delta: 12, spark: [], chip: '3 signups today',
+      pages: [['/pricing', 22], ['/', 14], ['/docs', 3]] },
+    { domain: 'globe-viz.oberbrunner.com', active: 0, today: 21, delta: -2, spark: [],
+      pages: [['/', -2], ['/about', 5]] },
+  ];
+  sites.forEach((s, si) => {
+    const r = mulberry32(100 + si);
+    s.spark = Array.from({ length: 14 }, () => Math.round(s.today * (0.5 + r() * 0.9)));
+    s.spark[13] = s.today;
+  });
+
+  // ---------- tooltip ----------
+  const tip = $('#tip');
+  function showTip(x, y, build) {
+    tip.replaceChildren();
+    build(tip);
+    tip.style.display = 'block';
+    const r = tip.getBoundingClientRect();
+    const px = Math.min(x + 14, window.innerWidth - r.width - 8);
+    const py = Math.max(8, Math.min(y - r.height - 12, window.innerHeight - r.height - 8));
+    tip.style.left = px + 'px';
+    tip.style.top = (y - r.height - 12 < 8 ? y + 16 : py) + 'px';
+  }
+  function hideTip() { tip.style.display = 'none'; }
+  function tipTitle(el, text) {
+    const d = document.createElement('div'); d.className = 'tip-title'; d.textContent = text; el.appendChild(d);
+  }
+  function tipRow(el, color, value, name) {
+    const row = document.createElement('div'); row.className = 'tip-row';
+    if (color) { const k = document.createElement('span'); k.className = 'tip-key'; k.style.borderColor = color; row.appendChild(k); }
+    const v = document.createElement('span'); v.className = 'tip-val'; v.textContent = value; row.appendChild(v);
+    const n = document.createElement('span'); n.className = 'tip-name'; n.textContent = name; row.appendChild(n);
+    el.appendChild(row);
+  }
+
+  // ---------- KPI tiles ----------
+  function sparkline(data, w, h, big) {
+    const max = Math.max(...data), min = Math.min(...data);
+    const pad = 3;
+    const pt = (v, i) => [
+      pad + (i * (w - 2 * pad)) / (data.length - 1),
+      h - pad - ((v - min) / (max - min || 1)) * (h - 2 * pad),
+    ];
+    const pts = data.map(pt);
+    const line = pts.map((p) => p.map((c) => c.toFixed(1)).join(',')).join(' ');
+    const area = `${pad},${h - pad} ${line} ${(w - pad).toFixed(1)},${h - pad}`;
+    const [ex, ey] = pts[pts.length - 1];
+    return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true">
+      ${big ? `<polygon points="${area}" style="fill: var(--s1); opacity: 0.1;"></polygon>` : ''}
+      <polyline points="${line}" style="fill: none; stroke: ${big ? 'var(--s1)' : 'var(--axis)'}; stroke-width: 2;" stroke-linejoin="round" stroke-linecap="round"></polyline>
+      <circle cx="${ex.toFixed(1)}" cy="${ey.toFixed(1)}" r="3.5" style="fill: var(--s1); stroke: var(--surface); stroke-width: 2;"></circle>
+    </svg>`;
+  }
+
+  function renderKpis() {
+    const totV = visitors.reduce((a, b) => a + b, 0);
+    const totP = pageviews.reduce((a, b) => a + b, 0);
+    const half = Math.floor(DAYS / 2);
+    const spark = (data) => {
+      const buckets = [];
+      for (let i = 0; i < 12; i++) {
+        const lo = Math.floor((i * data.length) / 12), hi = Math.floor(((i + 1) * data.length) / 12);
+        buckets.push(data.slice(lo, hi).reduce((a, b) => a + b, 0));
+      }
+      return buckets;
+    };
+    const tiles = [
+      { label: 'Visitors', value: fmt(totV), delta: '+12.4%', dir: 'up', data: spark(visitors) },
+      { label: 'Pageviews', value: fmt(totP), delta: '+8.1%', dir: 'up', data: spark(pageviews) },
+      { label: 'Avg engagement', value: '1m 46s', delta: '+7s', dir: 'up', data: [88, 92, 90, 95, 91, 97, 99, 96, 102, 101, 104, 106] },
+      { label: 'Bounce rate', value: '31%', delta: '−2.1 pt', dir: 'up', data: [37, 36, 38, 35, 34, 35, 33, 34, 32, 33, 31, 31] },
+    ];
+    $('#kpis').innerHTML = tiles.map((t) => `
+      <div class="tile">
+        <div class="label">${t.label}</div>
+        <div class="row">
+          <div class="value">${t.value}</div>
+          <div class="delta ${t.dir}">${t.delta.startsWith('−') ? '▾' : '▴'} ${t.delta}</div>
+        </div>
+        ${sparkline(t.data, 150, 34, false)}
+      </div>`).join('');
+  }
+
+  // ---------- main time series ----------
+  const fmtDate = (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+  function renderMainChart() {
+    const wrap = $('#main-chart');
+    const w = wrap.clientWidth, h = 250;
+    const m = { l: 42, r: 14, t: 10, b: 26 };
+    const iw = w - m.l - m.r, ih = h - m.t - m.b;
+    const maxY = Math.ceil(Math.max(...pageviews) / 100) * 100;
+    const x = (i) => m.l + (i * iw) / (DAYS - 1);
+    const y = (v) => m.t + ih - (v / maxY) * ih;
+    const path = (data) => data.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+
+    const ticks = [];
+    for (let v = 0; v <= maxY; v += maxY / 4) {
+      ticks.push(`<line x1="${m.l}" y1="${y(v)}" x2="${w - m.r}" y2="${y(v)}" style="stroke: ${v === 0 ? 'var(--axis)' : 'var(--grid)'}; stroke-width: 1;"></line>
+        <text x="${m.l - 8}" y="${y(v) + 4}" text-anchor="end" style="fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums;">${fmt(v)}</text>`);
+    }
+    const xlabels = [];
+    for (let i = 0; i < DAYS; i += 5) {
+      xlabels.push(`<text x="${x(i)}" y="${h - 8}" text-anchor="middle" style="fill: var(--muted); font-size: 11px;">${fmtDate(dates[i])}</text>`);
+    }
+
+    wrap.innerHTML = `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img" aria-label="Daily visitors and pageviews, last 30 days">
+      ${ticks.join('')}${xlabels.join('')}
+      <polygon points="${m.l},${y(0)} ${path(visitors)} ${x(DAYS - 1)},${y(0)}" style="fill: var(--s1); opacity: 0.1;"></polygon>
+      <polyline points="${path(pageviews)}" style="fill: none; stroke: var(--s2); stroke-width: 2;" stroke-linejoin="round" stroke-linecap="round"></polyline>
+      <polyline points="${path(visitors)}" style="fill: none; stroke: var(--s1); stroke-width: 2;" stroke-linejoin="round" stroke-linecap="round"></polyline>
+      <g id="xhair" style="display: none;">
+        <line y1="${m.t}" y2="${m.t + ih}" style="stroke: var(--axis); stroke-width: 1;"></line>
+        <circle r="4" style="fill: var(--s2); stroke: var(--surface); stroke-width: 2;"></circle>
+        <circle r="4" style="fill: var(--s1); stroke: var(--surface); stroke-width: 2;"></circle>
+      </g>
+      <rect x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent" id="hover-zone"></rect>
+    </svg>`;
+
+    const svg = wrap.firstElementChild;
+    const xhair = svg.querySelector('#xhair');
+    const [xline, dotP, dotV] = xhair.children;
+    svg.querySelector('#hover-zone').addEventListener('pointermove', (e) => {
+      const rect = svg.getBoundingClientRect();
+      const i = Math.max(0, Math.min(DAYS - 1, Math.round(((e.clientX - rect.left - m.l) / iw) * (DAYS - 1))));
+      xhair.style.display = '';
+      xline.setAttribute('x1', x(i)); xline.setAttribute('x2', x(i));
+      dotV.setAttribute('cx', x(i)); dotV.setAttribute('cy', y(visitors[i]));
+      dotP.setAttribute('cx', x(i)); dotP.setAttribute('cy', y(pageviews[i]));
+      showTip(e.clientX, e.clientY, (el) => {
+        tipTitle(el, dates[i].toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }));
+        tipRow(el, 'var(--s1)', fmt(visitors[i]), 'visitors');
+        tipRow(el, 'var(--s2)', fmt(pageviews[i]), 'pageviews');
+      });
+    });
+    svg.querySelector('#hover-zone').addEventListener('pointerleave', () => { xhair.style.display = 'none'; hideTip(); });
+  }
+
+  // ---------- bar lists ----------
+  function barList(el, rows) {
+    const max = Math.max(...rows.map((r) => r.value));
+    el.replaceChildren(...rows.map((r) => {
+      const row = document.createElement('div'); row.className = 'bar-row';
+      const bar = document.createElement('span'); bar.className = 'bar';
+      bar.style.width = ((r.value / max) * 100).toFixed(1) + '%';
+      const name = document.createElement('span'); name.className = 'name';
+      if (r.flag) { const f = document.createElement('span'); f.className = 'flag'; f.textContent = r.flag; name.appendChild(f); }
+      name.appendChild(document.createTextNode(r.name));
+      const num = document.createElement('span'); num.className = 'num'; num.textContent = compact(r.value);
+      row.append(bar, name, num);
+      return row;
+    }));
+  }
+
+  // ---------- devices ----------
+  function renderDevices() {
+    const bar = $('#devices');
+    bar.replaceChildren(...devices.map((d) => {
+      const seg = document.createElement('div'); seg.className = 'seg';
+      seg.style.width = d.pct + '%'; seg.style.background = d.color;
+      if (d.label) {
+        const l = document.createElement('span'); l.className = 'seg-label'; l.style.color = d.label;
+        l.textContent = `${d.name} ${d.pct}%`; seg.appendChild(l);
+      }
+      seg.addEventListener('pointermove', (e) => showTip(e.clientX, e.clientY, (el) => tipRow(el, d.color, d.pct + '%', d.name)));
+      seg.addEventListener('pointerleave', hideTip);
+      return seg;
+    }));
+    $('#device-legend').innerHTML = devices.map((d) =>
+      `<span class="key"><span class="swatch" style="background: ${d.color};"></span>${d.name}</span>`).join('');
+  }
+
+  // ---------- heatmap ----------
+  function renderHeatmap() {
+    const daysEl = $('#hm-days'), cellsEl = $('#hm-cells'), hoursEl = $('#hm-hours');
+    const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    daysEl.innerHTML = dayNames.map((d) => `<span>${d}</span>`).join('');
+    hoursEl.innerHTML = Array.from({ length: 24 }, (_, hr) =>
+      `<span>${hr % 4 === 0 ? hr : ''}</span>`).join('');
+    const r = mulberry32(7);
+    const cells = [];
+    for (let d = 0; d < 7; d++) {
+      for (let hr = 0; hr < 24; hr++) {
+        const diurnal = Math.max(0, Math.sin(((hr - 6) / 24) * Math.PI * 2) * 0.5 + 0.5 - (hr < 6 ? 0.3 : 0));
+        const weekend = d >= 5 ? 0.55 : 1;
+        cells.push({ d, hr, v: Math.round(diurnal * weekend * 46 * (0.6 + r() * 0.8)) });
+      }
+    }
+    const sorted = [...cells.map((c) => c.v)].sort((a, b) => a - b).filter((v) => v > 0);
+    const q = (p) => sorted[Math.floor(p * (sorted.length - 1))];
+    const thresholds = [q(0.2), q(0.4), q(0.6), q(0.8), q(0.93)];
+    const bucket = (v) => v === 0 ? 0 : thresholds.filter((t) => v >= t).length;
+    cellsEl.replaceChildren(...cells.map((c) => {
+      const div = document.createElement('div');
+      div.className = 'hm-cell' + (bucket(c.v) ? ' b' + bucket(c.v) : '');
+      div.addEventListener('pointermove', (e) => showTip(e.clientX, e.clientY, (el) => {
+        tipTitle(el, `${dayNames[c.d]} ${String(c.hr).padStart(2, '0')}:00–${String(c.hr).padStart(2, '0')}:59`);
+        tipRow(el, null, fmt(c.v), 'pageviews');
+      }));
+      div.addEventListener('pointerleave', hideTip);
+      return div;
+    }));
+  }
+
+  // ---------- realtime feed ----------
+  function renderFeed() {
+    $('#feed').replaceChildren(...feed.map(([ago, flag, where, what, isEvent]) => {
+      const row = document.createElement('div'); row.className = 'feed-row';
+      const a = document.createElement('span'); a.className = 'ago'; a.textContent = ago;
+      const f = document.createElement('span'); f.textContent = flag;
+      const wh = document.createElement('span'); wh.className = 'where'; wh.textContent = where;
+      const p = document.createElement('span'); p.className = 'path';
+      if (isEvent) { const d = document.createElement('span'); d.className = 'evt-dot'; p.appendChild(d); }
+      p.appendChild(document.createTextNode(what));
+      row.append(a, f, wh, p);
+      return row;
+    }));
+  }
+
+  // ---------- all-sites view ----------
+  function microSpark(delta, seed) {
+    const r = mulberry32(seed);
+    const data = Array.from({ length: 8 }, (_, i) => 10 + (i * delta) / 7 + r() * 4);
+    const w = 52, h = 16, pad = 2;
+    const max = Math.max(...data), min = Math.min(...data);
+    const line = data.map((v, i) => [
+      pad + (i * (w - 2 * pad)) / (data.length - 1),
+      h - pad - ((v - min) / (max - min || 1)) * (h - 2 * pad),
+    ].map((c) => c.toFixed(1)).join(',')).join(' ');
+    return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true">
+      <polyline points="${line}" style="fill: none; stroke: var(--axis); stroke-width: 1.5;" stroke-linejoin="round" stroke-linecap="round"></polyline>
+    </svg>`;
+  }
+
+  function renderSites() {
+    $('#sites').replaceChildren(...sites.map((s, si) => {
+      const card = document.createElement('div'); card.className = 'site-card';
+      card.setAttribute('role', 'button'); card.tabIndex = 0;
+      const dir = s.delta >= 0 ? 'up' : 'down';
+      const dot = s.active > 0 ? '<span class="pulse"></span>' : '<span class="idle"></span>';
+      const pageRows = s.pages.map(([p, d], pi) => `
+        <div class="page-row"><span class="p">${p}</span>${microSpark(d, si * 10 + pi)}
+          <span class="d delta ${d >= 0 ? 'up' : 'down'}">${d >= 0 ? '▴ +' : '▾ '}${d}%</span></div>`).join('');
+      card.innerHTML = `
+        <div class="top"><span class="domain">${s.domain}</span>
+          <span class="active">${dot} ${s.active > 0 ? s.active + ' now' : 'quiet'}</span></div>
+        <div class="nums">
+          <span class="today">${fmt(s.today)}</span>
+          <span class="delta ${dir}">${s.delta >= 0 ? '▴ +' : '▾ '}${s.delta}%</span>
+          <span class="sub" style="margin-left: auto;">visitors today</span>
+        </div>
+        ${sparkline(s.spark, 280, 40, true)}
+        <div class="pages">${pageRows}</div>
+        ${s.chip ? `<span class="chip">${s.chip}</span>` : ''}`;
+      card.addEventListener('click', () => selectTab('site'));
+      card.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectTab('site'); } });
+      return card;
+    }));
+  }
+
+  // ---------- journeys ----------
+  const journeys = [
+    { steps: ['/'], note: 'read, then left · not a bounce', sessions: 391, time: '2m 04s' },
+    { steps: ['/', '/timeline', '/event/kt-extinction'], sessions: 187, time: '4m 02s' },
+    { steps: ['/', '/timeline'], note: 'exit', sessions: 142, time: '1m 51s' },
+    { steps: ['/timeline', '/event/kt-extinction', { event: 'share · copy-link' }], sessions: 43, time: '5m 18s' },
+    { steps: ['/', '/about', '/faq'], sessions: 38, time: '2m 40s' },
+  ];
+  function renderJourneys() {
+    const head = document.createElement('div'); head.className = 'j-row head';
+    ['Journey', 'Sessions', 'Avg time'].forEach((t, i) => {
+      const c = document.createElement('span'); if (i) c.className = 'j-num'; c.textContent = t; head.appendChild(c);
+    });
+    $('#journeys').replaceChildren(head, ...journeys.map((j) => {
+      const row = document.createElement('div'); row.className = 'j-row';
+      const steps = document.createElement('span'); steps.className = 'j-steps';
+      j.steps.forEach((s, i) => {
+        if (i) { const sep = document.createElement('span'); sep.className = 'j-sep'; sep.textContent = '→'; steps.appendChild(sep); }
+        if (typeof s === 'object') {
+          const d = document.createElement('span'); d.className = 'evt-dot'; steps.appendChild(d);
+          steps.appendChild(document.createTextNode(s.event));
+        } else {
+          steps.appendChild(document.createTextNode(s));
+        }
+      });
+      if (j.note) {
+        const sep = document.createElement('span'); sep.className = 'j-sep'; sep.textContent = '·'; steps.appendChild(sep);
+        const note = document.createElement('span'); note.className = 'j-note'; note.textContent = j.note; steps.appendChild(note);
+      }
+      const num = document.createElement('span'); num.className = 'j-num'; num.textContent = fmt(j.sessions);
+      const t = document.createElement('span'); t.className = 'j-num'; t.textContent = j.time;
+      row.append(steps, num, t);
+      return row;
+    }));
+  }
+
+  // ---------- tabs & theme ----------
+  function selectTab(which) {
+    $('#tab-all').setAttribute('aria-selected', which === 'all');
+    $('#tab-site').setAttribute('aria-selected', which === 'site');
+    $('#view-all').hidden = which !== 'all';
+    $('#view-site').hidden = which !== 'site';
+    if (which === 'site') renderMainChart(); // container was hidden; re-measure
+  }
+  $('#tab-all').addEventListener('click', () => selectTab('all'));
+  $('#tab-site').addEventListener('click', () => selectTab('site'));
+
+  $('#theme-toggle').addEventListener('click', () => {
+    const root = document.documentElement;
+    const dark = root.dataset.theme
+      ? root.dataset.theme === 'dark'
+      : window.matchMedia('(prefers-color-scheme: dark)').matches;
+    root.dataset.theme = dark ? 'light' : 'dark';
+  });
+
+  // ---------- boot ----------
+  renderKpis();
+  renderMainChart();
+  barList($('#pages'), pages.map(([name, value]) => ({ name, value })));
+  barList($('#refs'), refs.map(([name, value]) => ({ name, value })));
+  barList($('#countries'), countries.map(([flag, name, value]) => ({ flag, name, value })));
+  barList($('#browsers'), browsers.map(([name, value]) => ({ name, value })));
+  renderDevices();
+  renderHeatmap();
+  renderFeed();
+  renderJourneys();
+  renderSites();
+
+  // Live-by-default simulation: the feed ticks as "hits" arrive (in the real
+  // product every view revalidates off the SSE stream like this).
+  const liveQueue = [
+    ['🇺🇸', 'Chicago, US', '/timeline', false],
+    ['🇬🇧', 'London, GB', '/', false],
+    ['🇩🇪', 'Hamburg, DE', '/event/snowball-earth', false],
+    ['🇺🇸', 'Boston, US', 'share · copy-link', true],
+    ['🇫🇷', 'Paris, FR', '/timeline', false],
+    ['🇨🇦', 'Toronto, CA', '/event/kt-extinction', false],
+  ];
+  let liveIdx = 0;
+  setInterval(() => {
+    const [flag, where, what, isEvent] = liveQueue[liveIdx++ % liveQueue.length];
+    feed.pop();
+    for (const row of feed) if (row[0] === 'now') row[0] = Math.floor(4 + Math.random() * 40) + 's';
+    feed.unshift(['now', flag, where, what, isEvent]);
+    renderFeed();
+    const n = $('.active-now .n');
+    if (Math.random() < 0.4) n.textContent = Math.max(3, Number(n.textContent) + (Math.random() < 0.5 ? 1 : -1));
+  }, 5000);
+
+  let resizeTimer;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => { if (!$('#view-site').hidden) renderMainChart(); }, 120);
+  });
+</script>
+<!-- artifact:end -->
+</body>
+</html>

@@ -1,0 +1,178 @@
+# 02 — Architecture
+
+## Shape
+
+One Node process, one SQLite file, one container. Ingestion, query, realtime,
+background jobs, and static hosting of the dashboard SPA all live in the same
+process. This is a deliberate rejection of the Matomo shape (PHP-FPM + DB
+server + archiver cron), which is what made it slow and heavy on a small host.
+
+```mermaid
+flowchart LR
+  subgraph Browsers["Tracked sites"
+    ]
+    T1["matomo.js shim<br/>(existing tags)"]
+    T2["tracker.js ESM<br/>(new sites)"]
+    T3["Server-side hits<br/>(webhooks, curl)"]
+  end
+
+  subgraph Server["analytics server (one Node process)"]
+    IN["Ingest<br/>/matomo.php · /api/collect"]
+    PIPE["Pipeline<br/>validate → bot filter →<br/>UA parse → GeoIP →<br/>sessionize"]
+    Q["Write batcher<br/>(200 ms transactions)"]
+    DB[("SQLite<br/>WAL")]
+    QE["Query engine<br/>/api/query (batched)"]
+    RT["Realtime hub<br/>SSE"]
+    JOBS["Jobs<br/>GeoIP refresh · retention ·<br/>backup hook"]
+    SPA["Static SPA +<br/>/metrics /healthz"]
+  end
+
+  UI["Dashboard SPA"]
+
+  T1 --> IN
+  T2 --> IN
+  T3 --> IN
+  IN --> PIPE --> Q --> DB
+  PIPE --> RT
+  DB --> QE
+  QE --> UI
+  RT -. SSE .-> UI
+  SPA --> UI
+  JOBS --> DB
+```
+
+## Component walkthrough
+
+### Ingest endpoints
+
+`GET|POST /matomo.php` (alias `/piwik.php`) for compatibility, plus a native
+`POST /api/collect` JSON endpoint. Both normalize into the same internal `Hit`
+type, respond immediately (204 or 1×1 GIF), and hand off to the pipeline.
+Tracking endpoints are public by design: rate-limited per IP, strict payload
+caps, unknown parameters ignored. Full parameter mapping in
+[04-api.md](04-api.md).
+
+### Enrichment pipeline (pure functions, in-process)
+
+1. **Validate** — known site id, sane URL, clamp field lengths.
+2. **Bot filter** — `isbot(ua)` → drop, increment a per-site counter
+   (visible in a diagnostics view; bots are counted, never stored).
+3. **UA parse** — browser, browser version, OS, device type. Cached by UA
+   string (LRU) since the same UA repeats constantly.
+4. **GeoIP** — country/region/city + city centroid lat/lon from the local
+   `.mmdb`, read via a pure-JS mmdb reader. The raw IP is used here and then
+   discarded — it never touches disk.
+5. **Sessionize** — daily-rotating visitor hash → find-or-create session
+   (30 min idle timeout), update engagement. Details in
+   [03-data-model.md](03-data-model.md).
+
+### Write batcher
+
+Enriched events append to an in-memory queue; a 200 ms timer flushes the queue
+in a single SQLite transaction (events insert + sessions upsert). SQLite with
+WAL does this in microseconds at our volumes. Graceful shutdown flushes the
+queue. The accepted trade: a hard crash loses at most ~200 ms of hits.
+
+Single-writer discipline: all writes go through the batcher; reads happen
+anywhere (WAL readers don't block the writer).
+
+### Query engine
+
+`POST /api/query` takes an array of widget queries (metric + dimension +
+range + filters) and answers all of them inside one read transaction. Queries
+compile from a whitelisted vocabulary to parameterized SQL — the client can
+never send SQL. Responses carry an ETag derived from (site id, max event
+rowid, schema version), so an unchanged dashboard revalidates with a 304 and
+zero query work. This endpoint is the entire answer to Matomo's
+36-XHR problem. Spec in [04-api.md](04-api.md).
+
+### Realtime hub
+
+An in-memory ring buffer of recent enriched events feeds `GET /api/realtime`
+(SSE). New connections get a snapshot (active visitors in the last 5 min per
+site + last ~50 events), then deltas as they happen. `Last-Event-ID` resume;
+no polling anywhere. The stream also carries per-site data-version ticks —
+that is what lets **every** dashboard view be live-by-default (R22, see 05),
+not only the Realtime page: views revalidate their query batch when their
+site's version moves, and the ETag machinery makes a no-op revalidation free.
+
+### Background jobs (in-process timers, no cron container)
+
+- **GeoIP refresh** — monthly, port of the existing shell script: download the
+  date-stamped DB-IP City Lite, atomic swap, previous-month fallback.
+- **Retention** — optional pruning/aggregation of raw events past a
+  configurable age (default: keep forever; the data is small).
+- **Backup hook** — nothing built in beyond "the DB is one file";
+  Litestream runs as an optional sidecar if streaming backup is wanted.
+
+## Technology decisions
+
+| Decision | Choice | Rationale · rejected alternatives |
+| --- | --- | --- |
+| Runtime | **Node ≥ 24** (kept Bun-compatible) | Boring, deployable everywhere; no legacy-Node support burden. bun stays the package manager/test runner. Bun-as-runtime is a fine future switch; nothing may depend on Bun-only APIs. |
+| HTTP framework | **Hono** | Tiny, TS-first, fast router, middleware we need (compress, etag) and nothing we don't. *Rejected:* Express (legacy, untyped), Fastify (fine, heavier), raw `http` (needless austerity). |
+| Storage | **SQLite via better-sqlite3**, WAL mode | In-process (R8), synchronous API pairs perfectly with the batcher, fastest SQLite binding, trivial backup. *Rejected:* MariaDB/Postgres (a server process — the exact mistake being escaped), DuckDB (analytics-shaped but weak concurrent-writer story; SQLite is more than fast enough at ≤ millions of rows), `node:sqlite` (promising, revisit when boring). |
+| Validation | **zod** | One schema → runtime validation + inferred types shared across packages. |
+| UA / bots | **ua-parser-js** + **isbot** | Standard, maintained lists; both behind our own thin interface. |
+| GeoIP | **mmdb-lib** + DB-IP City Lite | Pure JS (no native dep), same free DB and monthly cadence already in use. MaxMind GeoLite2 works unchanged (same format) for users with a license key. |
+| Frontend | **Svelte 5 + Vite SPA**, served statically by the server | Smallest bundles and least ceremony for a dashboard; no SSR needed behind auth. *Rejected:* React (bigger bundles/boilerplate; larger contributor pool is real but not decisive), SvelteKit (SSR machinery with no job here), htmx/server-rendered (realtime + client-side chart interactions want a real SPA). |
+| Charts | **Apache ECharts**, tree-shaken, behind a thin `Chart` wrapper | One engine covering every planned viz (time series, bar-lists, heatmap, world map, journey sankey), canvas rendering, first-class theming for our palette. Proven in-house: globe-viz already pairs ECharts 6 (trend charts) with a hand-built three.js globe — the future realtime globe reuses that three.js approach rather than echarts-gl. Cost: bundle weight — mitigated by per-chart imports and code-splitting; budget in [05-dashboards.md](05-dashboards.md). *Rejected:* Observable Plot (elegant, but maps/interactions become DIY), uPlot (time-series-only), Chart.js (weak beyond basics), d3-from-scratch (maximum code for minimum leverage). The wrapper keeps a future engine swap contained. |
+| Auth | Single admin password (argon2id) + signed HttpOnly session cookie; bearer tokens for API; signed read-only share tokens | Matches the single-operator reality (R13). Multi-user is out of scope by design. |
+| Lint/format/test | **biome** + **vitest** | One fast tool for lint+format; vitest everywhere. Playwright e2e later, run via project scripts. |
+
+## Repository layout
+
+bun workspaces monorepo:
+
+```
+apps/server/       Hono app: ingest, pipeline, query engine, SSE, jobs, static hosting
+apps/web/          Svelte 5 + Vite dashboard SPA
+packages/tracker/  matomo.js compatibility shim + modern ESM tracker (build target < 3 KB gz each)
+packages/shared/   zod schemas + types: Hit, QueryRequest, WidgetSpec, dashboard JSON
+docs/              these documents
+```
+
+`packages/shared` is the contract: the tracker, server, and UI all import the
+same types, so a query-spec change that breaks the UI fails at compile time,
+not in production.
+
+## Performance budget
+
+Measured against the same e2-small class of host Matomo runs on now.
+
+| Metric | Budget | Matomo measured |
+| --- | --- | --- |
+| Dashboard server time (full widget batch, p95) | **< 50 ms** | 23–52 s summed across ~36 calls |
+| Dashboard interactive (warm cache, LAN) | **< 1 s** | 4–9 s |
+| Ingest handler (excluding batch flush) | **< 5 ms** | n/a |
+| Process RSS, steady state | **< 100 MB** | PHP + MariaDB ≥ 400 MB |
+| Container image | **< 120 MB** | ~1 GB (matomo + mariadb) |
+| Initial SPA JS (gz, before chart code-split) | **< 200 KB** | n/a |
+
+The budget is enforced, not aspirational: a tiny benchmark harness (replayed
+real traffic, see Testing) runs in CI and fails on regression.
+
+## Security posture
+
+- Tracking endpoints: public, rate-limited, size-capped, no auth (they must be
+  reachable from any visitor's browser). Nothing they accept is trusted;
+  everything is length-clamped and stored as data, never interpreted.
+- Dashboard + admin API: session auth; all mutations CSRF-protected;
+  cookies `HttpOnly; Secure; SameSite=Lax`.
+- Share links: signed tokens scoped to one dashboard, read-only, revocable.
+- All user-originated strings (URLs, titles, referrers, event names) are
+  untrusted at render time: `textContent` only, never innerHTML.
+- TLS, hostnames, and rate-limit backstop live in Traefik, as with every other
+  service on the host.
+
+## Testing strategy
+
+- **Golden compat tests**: a corpus of real `matomo.php` query strings
+  (captured from access logs + synthesized edge cases) with expected
+  normalized `Hit` output. This corpus *is* the compatibility contract for R1.
+- Unit: sessionization state machine, referrer classification, query
+  compiler (spec → SQL) with snapshot SQL.
+- Replay harness: N days of synthetic multi-site traffic piped through the
+  real ingest path into a temp DB; dashboard queries asserted against known
+  totals. Doubles as the perf benchmark.
+- e2e (later): Playwright against a seeded instance, run via project scripts.
