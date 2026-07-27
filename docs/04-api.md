@@ -79,6 +79,13 @@ differently, that's a failing test, not an opinion.
   `init({site, endpoint})`, auto pageviews with a `history` hook (opt-out),
   auto outlink/download, focus-gated engagement pings, `track(name, props?)`.
   CORS: `Access-Control-Allow-Origin: *` on collect only.
+- **Idle gating (native tracker only):** focus alone overstates engagement —
+  a tab left focused on a second monitor pings forever. The native tracker
+  additionally stops pinging when there has been no input signal (pointer,
+  key, scroll, touch) for ~60 s, resuming on the next one. The matomo.js shim
+  deliberately does NOT do this: it must match Matomo's focus-only semantics
+  during the bake, or the reconciliation numbers drift for tracker reasons
+  rather than definitional ones.
 
 ## 3. Query API — the performance contract
 

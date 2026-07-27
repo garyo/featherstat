@@ -67,6 +67,12 @@ If the new system misbehaves: point Traefik back. Blast radius ≈ zero.
   meaningfully lower than Matomo's** because engaged single-page sessions
   (dwell past the threshold, or any event) no longer count as bounces —
   that's the corrected definition (03), not an accounting error.
+- **Average times will read lower too, for the mirror-image reason.** Matomo's
+  "visit duration" is a *span* (last action − first action): read 2 min,
+  background the tab 20, return for 2 → a "24-minute visit". Our `engaged_ms`
+  is *accrued active time* (inter-ping gaps clamped at 20 s), so the same
+  visit reads ~4 min. Both metrics get more truthful at cutover; neither delta
+  is a regression.
 - Bot filtering differs (isbot list vs Matomo's): totals may dip a few
   percent. The diagnostics counter makes the delta visible instead of
   mysterious.
