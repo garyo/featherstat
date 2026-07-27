@@ -39,6 +39,16 @@ Semantics: respond immediately after normalization; enrichment and storage are
 asynchronous (see 02). Any parse failure inside a hit degrades to "record what
 was understood" — beacons are fire-and-forget and must never bounce.
 
+**Bot filtering vs server-side senders.** The pipeline drops hits whose
+User-Agent matches the isbot list — which includes `curl` and `node`, so a
+hand-rolled test hit needs a browser UA (drops are visible in the diagnostics
+counter, and the endpoint still answers 200/204 — the drop is silent by
+design). The packzen webhook passes today only because Workers `fetch` sends
+no UA. That's fragile: WP13's authenticated server-side senders (bearer
+token) bypass the bot check explicitly, and the bake-period reconciliation
+(06) should compare the signup-event count against Matomo's to prove none
+were lost.
+
 ### `GET /matomo.js` (alias `/piwik.js`)
 
 A compatibility shim, **not** Matomo's 200 KB tracker — target < 3 KB gz. It

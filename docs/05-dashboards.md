@@ -78,8 +78,10 @@ A dashboard is JSON: a grid of widget cards.
   and "show query" (the JSON it sent — self-documenting API).
 - **Everything is a widget, including the all-sites view**: a site card is
   just a `site-card` widget with its own settings (sparkline range, how many
-  top pages, which goal pills), so selecting/editing/reordering works there
-  with the same mechanism as everywhere else.
+  top pages, which goal pills, and **sort order** — traffic (default, with
+  site-id tiebreak so order is always deterministic), fixed by site id, or
+  name), so selecting/editing/reordering works there with the same mechanism
+  as everywhere else.
 
 ### What editability costs at runtime
 
