@@ -35,9 +35,11 @@ describe('matomo golden corpus', () => {
       const expectHits = HitSchema.array().parse(testCase.expectHits);
       const hits: Hit[] = [];
       const contexts: HitContext[] = [];
-      const app = createApp((batch, ctx) => {
-        hits.push(...batch);
-        contexts.push(ctx);
+      const app = createApp({
+        sink: (batch, ctx) => {
+          hits.push(...batch);
+          contexts.push(ctx);
+        },
       });
 
       const before = Date.now();

@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import type { Hit, HitContext } from '@analytics/shared';
+import { DAY_MS, type Hit, type HitContext } from '@analytics/shared';
 import {
   type Db,
   deleteSetting,
@@ -9,7 +9,6 @@ import {
   withWriteTransaction,
 } from '../db/index.ts';
 
-const DAY_MS = 86_400_000;
 const DAY_SALT_PREFIX = 'salt:';
 const UID_SALT_PREFIX = 'uidsalt:';
 const UID_ENABLED_PREFIX = 'uid_enabled:';

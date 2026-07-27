@@ -171,6 +171,15 @@ export function withWriteTransaction<T>(db: Db, fn: () => T): T {
   return db.transaction(fn).immediate();
 }
 
+/**
+ * One consistent read snapshot for every query inside `fn` (the query engine wraps
+ * each `/api/query` batch in one). BEGIN DEFERRED with reads only never takes the
+ * write lock, so this does not touch the single-writer discipline above.
+ */
+export function withReadSnapshot<T>(db: Db, fn: () => T): T {
+  return db.transaction(fn).deferred();
+}
+
 function assertWritable(db: Db): void {
   if (!db.inTransaction) {
     throw new Error('DB writes must run inside withWriteTransaction() — see docs/02 single writer');
@@ -179,8 +188,11 @@ function assertWritable(db: Db): void {
 
 const statementCache = new WeakMap<Db, Map<string, BetterSqlite3.Statement>>();
 
-/** Prepared statements are per-connection and reused; the hot path prepares nothing. */
-function stmt<Result = unknown>(db: Db, sql: string): BetterSqlite3.Statement<unknown[], Result> {
+/** Prepared statements are per-connection and reused; hot paths (ingest, query) prepare nothing. */
+export function stmt<Result = unknown>(
+  db: Db,
+  sql: string,
+): BetterSqlite3.Statement<unknown[], Result> {
   let bySql = statementCache.get(db);
   if (bySql === undefined) {
     bySql = new Map();
@@ -294,6 +306,13 @@ export function upsertSessions(db: Db, rows: readonly SessionRow[]): void {
   assertWritable(db);
   const upsert = stmt(db, SQL_UPSERT_SESSION);
   for (const row of rows) upsert.run({ ...SESSION_NULLS, ...row });
+}
+
+const SQL_DATA_VERSION = 'SELECT COALESCE(MAX(id), 0) FROM events';
+
+/** MAX(events.id): the rowid doubles as the data version for ETags (docs/03). */
+export function dataVersion(db: Db): number {
+  return stmt(db, SQL_DATA_VERSION).pluck().get() as number;
 }
 
 /** Restart recovery (docs/03): sessions seen since `since`, with their highest stored seq. */

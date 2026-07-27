@@ -4,6 +4,8 @@ import { z } from 'zod';
 // Constants (docs/03)
 // ---------------------------------------------------------------------------
 
+/** One day of UTC milliseconds — date arithmetic everywhere is plain UTC-ms math. */
+export const DAY_MS = 86_400_000;
 export const SESSION_TIMEOUT_MS = 30 * 60_000;
 /** A session with less engaged time than this (and 1 pageview, no events) is a bounce. */
 export const ENGAGEMENT_THRESHOLD_MS = 15_000;
@@ -12,6 +14,16 @@ export const PING_CLAMP_MS = 20_000;
 export const BATCH_INTERVAL_MS = 200;
 export const MAX_QUERIES_PER_BATCH = 32;
 export const MAX_WIDGETS_PER_DASHBOARD = 24;
+
+// Realtime SSE wire contract (docs/04 § 4)
+/** "Active" = distinct visitors seen inside this window. */
+export const ACTIVE_WINDOW_MS = 5 * 60_000;
+/** Cadence of the `active` recount event. */
+export const ACTIVE_TICK_MS = 10_000;
+/** Cadence of the keep-alive comment that stops proxies reaping the stream. */
+export const HEARTBEAT_MS = 25_000;
+/** Hits a fresh connection's `snapshot` is seeded with. */
+export const SNAPSHOT_HITS = 50;
 
 // ---------------------------------------------------------------------------
 // Sites (docs/03)
@@ -112,11 +124,16 @@ export type Dimension = z.infer<typeof DimensionSchema>;
 export const BucketSchema = z.enum(['hour', 'day', 'week', 'month']);
 export type Bucket = z.infer<typeof BucketSchema>;
 
-export const FilterSchema = z.object({
-  dim: DimensionSchema,
-  op: z.enum(['eq', 'neq', 'in', 'contains', 'starts']),
-  value: z.union([z.string().max(2048), z.array(z.string().max(2048)).max(100)]),
-});
+export const FilterSchema = z
+  .object({
+    dim: DimensionSchema,
+    op: z.enum(['eq', 'neq', 'in', 'contains', 'starts', 'is_null']),
+    /** Absent only for `is_null`, which names a group (e.g. direct traffic) that has no value. */
+    value: z.union([z.string().max(2048), z.array(z.string().max(2048)).max(100)]).optional(),
+  })
+  .refine((f) => (f.op === 'is_null' ? f.value === undefined : f.value !== undefined), {
+    message: "'is_null' takes no value; every other op requires one",
+  });
 export type Filter = z.infer<typeof FilterSchema>;
 
 export const MetricQuerySchema = z.object({
@@ -143,7 +160,14 @@ export type SequenceQuery = z.infer<typeof SequenceQuerySchema>;
 export const QuerySchema = z.union([SequenceQuerySchema, MetricQuerySchema]);
 export type Query = z.infer<typeof QuerySchema>;
 
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+/** A real calendar date — the regex alone admits impossible months and days. */
+const isoDate = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/)
+  .refine((date) => {
+    const ms = Date.parse(`${date}T00:00:00Z`);
+    return !Number.isNaN(ms) && new Date(ms).toISOString().startsWith(date);
+  }, 'not a calendar date');
 
 export const RangeSchema = z.union([
   z.object({ preset: z.enum(['today', '7d', '30d', '90d', 'mtd']) }),
@@ -167,10 +191,26 @@ export interface QueryResult {
   rows: ResultRow[];
   /** Present when the request asked for a comparison range. */
   compare?: ResultRow[];
+  /** Server-side execution time for this one query. */
+  ms?: number;
+}
+
+/**
+ * A per-query failure inside an otherwise-successful batch: `unsupported` for a
+ * combination the vocabulary cannot answer honestly, `not_implemented` for a
+ * kind scheduled for a later milestone (sequence queries, docs/08 M2).
+ */
+export interface QueryErrorResult {
+  error: { code: 'unsupported' | 'not_implemented'; message: string };
+}
+
+/** Narrows a batch entry (or a compile step's output) to its error shape. */
+export function isQueryError(entry: object): entry is QueryErrorResult {
+  return 'error' in entry;
 }
 
 export interface QueryResponse {
-  results: Record<string, QueryResult>;
+  results: Record<string, QueryResult | QueryErrorResult>;
   meta: { generatedInMs: number; dataVersion: number };
 }
 
@@ -212,6 +252,15 @@ export type Dashboard = z.infer<typeof DashboardSchema>;
 // ---------------------------------------------------------------------------
 // Realtime SSE (docs/04 § 4)
 // ---------------------------------------------------------------------------
+
+/** `GET /api/realtime?sites=`: `all` or a comma-separated list of site ids — anything else is a 400. */
+export const RealtimeSitesSchema = z.union([
+  z.literal('all'),
+  z
+    .string()
+    .regex(/^[1-9]\d*(,[1-9]\d*)*$/)
+    .transform((raw) => raw.split(',').map(Number)),
+]);
 
 export interface RealtimeHit {
   siteId: number;

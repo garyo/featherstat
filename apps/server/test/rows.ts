@@ -1,9 +1,44 @@
-import type { EventRow, SessionRow } from '../src/db/index.ts';
+import { isQueryError, type QueryResponse, type QueryResult } from '@analytics/shared';
+import {
+  createSite,
+  type Db,
+  type EventRow,
+  openDb,
+  type SessionRow,
+  withWriteTransaction,
+} from '../src/db/index.ts';
 
-/** Fixtures shared by the server test suites — one copy of every row factory. */
+/** Fixtures shared by the server test suites — one copy of every factory and scaffold. */
 
-export const VISITOR = Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 8]);
-export const SESSION = Uint8Array.from([9, 8, 7, 6, 5, 4, 3, 2]);
+/** An 8-byte id that reads unmistakably in hex dumps: byte `n`, eight times. */
+export function binId(n: number): Uint8Array {
+  return new Uint8Array(8).fill(n);
+}
+
+export const VISITOR = binId(1);
+export const SESSION = binId(2);
+
+const SITE_NAMES = ['one', 'two'] as const;
+
+/** In-memory DB seeded with site 1 ('one.test') and optionally site 2 ('two.test'). */
+export function openTestDb(siteCount: 1 | 2 = 1): Db {
+  const db = openDb(':memory:');
+  withWriteTransaction(db, () => {
+    for (const [index, name] of SITE_NAMES.slice(0, siteCount).entries()) {
+      createSite(db, { id: index + 1, name, domains: [`${name}.test`] });
+    }
+  });
+  return db;
+}
+
+/** Narrows a batch entry to rows, failing loudly on an unexpected error entry. */
+export function resultOf(response: QueryResponse, id: string): QueryResult {
+  const entry = response.results[id];
+  if (entry === undefined || isQueryError(entry)) {
+    throw new Error(`expected rows for '${id}', got ${JSON.stringify(entry)}`);
+  }
+  return entry;
+}
 
 /** 2026-07-27 14:00 UTC = 10:00 EDT. */
 export const T0 = Date.UTC(2026, 6, 27, 14);

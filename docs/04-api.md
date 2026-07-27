@@ -107,7 +107,10 @@ transaction.
 }
 ```
 
-Response: `{ results: { [id]: { rows, compare? } }, meta: { generatedIn } }`.
+Response: `{ results: { [id]: { rows, compare? } | { error } }, meta: { generatedInMs, dataVersion } }`.
+A query the vocabulary cannot answer honestly (e.g. `bounce_rate` × `title`) or
+a kind that ships in a later milestone yields a per-query `error` entry — the
+batch itself still succeeds, and never returns wrong numbers.
 
 - **Vocabulary, not SQL.** Metrics: `visitors`, `visits`, `pageviews`,
   `events`, `engaged_ms`, `bounce_rate` (engagement-aware — see 03),
@@ -115,8 +118,10 @@ Response: `{ results: { [id]: { rows, compare? } }, meta: { generatedIn } }`.
   `ref_type`, `utm_*`, `country`, `region`, `city`, `browser`, `os`,
   `device_type`, `screen`, `lang`, `event_category`, `event_action`,
   `event_name`, `local_hour`, `weekday`, plus `bucket`: `hour|day|week|month`.
-  Filter ops: `eq`, `neq`, `in`, `contains`, `starts`. The compiler maps this
-  vocabulary to parameterized SQL; anything outside it is a 400.
+  Filter ops: `eq`, `neq`, `in`, `contains`, `starts`, and `is_null` (no
+  value — matches the NULL group a breakdown returns, e.g. direct traffic
+  under `ref_domain`). The compiler maps this vocabulary to parameterized SQL;
+  anything outside it is a 400.
 - **Sequence queries** don't fit metric × dimension, so they are their own
   kinds, still inside the same batch envelope:
   `{ "id": "sankey", "kind": "transitions", "depth": 3 }` — weighted
@@ -127,9 +132,11 @@ Response: `{ results: { [id]: { rows, compare? } }, meta: { generatedIn } }`.
   visitors from HN" is just a filter).
 - **Click-to-filter falls out for free**: clicking a row in any breakdown adds
   a `filters` entry and re-issues the same batch.
-- **Caching**: response ETag = hash(site max event rowid, schema version,
-  request body). Unchanged data → 304 with zero queries executed. Realtime
-  SSE tells the client *when* to revalidate, so there's no polling loop.
+- **Caching**: response ETag = hash(max event rowid, schema version,
+  canonicalized request body, resolved per-site date windows — so a preset
+  like `today` expires at site-local midnight even when no data changed).
+  Unchanged data → 304 with zero queries executed. Realtime SSE tells the
+  client *when* to revalidate, so there's no polling loop.
 - `"site": "all"` grants the all-sites overview the same one-request property,
   with per-site grouping in the rows.
 
@@ -137,12 +144,25 @@ Response: `{ results: { [id]: { rows, compare? } }, meta: { generatedIn } }`.
 
 ### `GET /api/realtime?sites=all` (SSE)
 
+`sites` is `all` (the default) or a comma-separated list of site ids; every
+event below is scoped to it. Anything else is a 400 — a malformed filter
+fails closed, never widening to every site.
+
 - On connect: `snapshot` event — active visitors (distinct visitors, last
   5 min) per site + the last 50 enriched events (site, type, path, country,
-  city, lat/lon, device — never IP or visitor id).
-- Then: one `hit` event per ingested non-ping hit, same shape; `active`
-  recounts on a 10 s tick. `Last-Event-ID` resumes the ring buffer;
-  heartbeat comment every 25 s keeps proxies from reaping the stream.
+  city, lat/lon, device — never IP or visitor id). Active counts survive a
+  restart: they are seeded from the sessions last seen inside the window.
+- Then: one `hit` event per ingested non-ping hit, same shape, emitted
+  post-enrichment rather than post-flush — the feed never waits for a batch.
+  A ping keeps its visitor active but is not a feed item. `active` recounts on
+  a 10 s tick; `version` carries `{siteId, version}` for each site whose data
+  landed in a flush — the tick every dashboard view revalidates on (see 02).
+- Only `hit` events carry an SSE `id`, so `Last-Event-ID` always names a ring
+  entry: a resuming client gets a `snapshot` with an empty `recent` plus its
+  missed hits replayed as `hit` events. A heartbeat comment every 25 s keeps
+  proxies from reaping the stream. A connection that stops draining is
+  dropped once ~1000 frames are queued for it; reconnecting with
+  `Last-Event-ID` recovers what the ring still holds.
 
 This feeds the live counter, the realtime feed, and the map/globe from a
 single stream.
