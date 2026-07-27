@@ -18,7 +18,10 @@ bun install
 bun run check        # biome lint+format check, then tsc — green before every commit
 bun run test         # vitest, all packages
 bun run fix          # biome auto-fix
-bun run --cwd apps/server dev   # dev server (bun runtime)
+bun run --cwd apps/server seed  # seed data/dev.db (90 days × 6 sites, deterministic)
+bun run --cwd apps/server dev   # dev API on :8080 (script runs Node: better-sqlite3
+                                #   crashes under Bun 1.3.4 with a NAPI fatal error)
+bun run --cwd apps/web dev      # dashboard on :5173, proxies /api to :8080
 ```
 
 ## Layout

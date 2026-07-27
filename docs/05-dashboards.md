@@ -61,7 +61,9 @@ A dashboard is JSON: a grid of widget cards.
 ```
 
 - **Viz types (v1)**: `kpi-row` (stat tiles: value, signed delta vs compare
-  period, 12-point sparkline), `timeseries` (line/area, ≤ 4 series),
+  period, 12-point sparkline — omitted on a single-day range, where session
+  metrics like `engaged_ms`/`bounce_rate` cannot be bucketed by hour, so
+  `today` has no honest intraday companion), `timeseries` (line/area, ≤ 4 series),
   `bar-list` (the Plausible-style ranked list with inline bars — the
   workhorse for every breakdown), `table` (sortable, the accessibility
   fallback for every chart), `heatmap` (hour × weekday), `map` (world
