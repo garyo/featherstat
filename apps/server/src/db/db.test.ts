@@ -4,20 +4,25 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { event, SESSION, session, VISITOR } from '../../test/rows.ts';
 import {
+  countEvents,
   createSite,
   type Db,
+  databaseSizeBytes,
   deleteSetting,
   getBotDrops,
   getSetting,
   getSite,
   incrementBotDrops,
   insertEvents,
+  listBotDrops,
   listSites,
   migrate,
+  observeWriteTransactions,
   openDb,
   schemaVersion,
   setSetting,
   settingKeysWithPrefix,
+  updateSite,
   upsertSessions,
   withWriteTransaction,
 } from './index.ts';
@@ -33,6 +38,7 @@ describe('migrate', () => {
   it('brings an empty database up to the latest schema', () => {
     const db = openDb(':memory:');
     expect(tableNames(db)).toEqual([
+      'admin_sessions',
       'bot_drops',
       'events',
       'schema_migrations',
@@ -40,9 +46,10 @@ describe('migrate', () => {
       'settings',
       'sites',
     ]);
-    expect(schemaVersion(db)).toBe(1);
+    expect(schemaVersion(db)).toBe(2);
     expect(db.prepare('SELECT version, name FROM schema_migrations').all()).toEqual([
       { version: 1, name: 'init' },
+      { version: 2, name: 'admin-sessions' },
     ]);
     db.close();
   });
@@ -56,6 +63,7 @@ describe('migrate', () => {
       .pluck()
       .all();
     expect(indexes).toEqual([
+      'ix_admin_sessions_expiry',
       'ix_events_session',
       'ix_events_site_date',
       'ix_events_site_ts',
@@ -68,7 +76,7 @@ describe('migrate', () => {
   it('is a no-op when re-run on an already-migrated database', () => {
     const db = openDb(':memory:');
     const applied = db.prepare('SELECT applied_at FROM schema_migrations').pluck().all();
-    expect(migrate(db)).toBe(1);
+    expect(migrate(db)).toBe(2);
     expect(db.prepare('SELECT applied_at FROM schema_migrations').pluck().all()).toEqual(applied);
     db.close();
   });
@@ -95,12 +103,13 @@ describe('migrate', () => {
     expect(
       migrate(db, [
         { version: 1, name: 'init', sql: 'SELECT 1' },
-        { version: 2, name: 'later', sql: 'CREATE TABLE later (a INTEGER)' },
+        { version: 2, name: 'admin-sessions', sql: 'SELECT 1' },
+        { version: 3, name: 'later', sql: 'CREATE TABLE later (a INTEGER)' },
       ]),
-    ).toBe(2);
+    ).toBe(3);
     expect(tableNames(db)).toContain('later');
     expect(db.prepare('SELECT name FROM schema_migrations ORDER BY version').pluck().all()).toEqual(
-      ['init', 'later'],
+      ['init', 'admin-sessions', 'later'],
     );
     db.close();
   });
@@ -110,11 +119,12 @@ describe('migrate', () => {
     expect(() =>
       migrate(db, [
         { version: 1, name: 'init', sql: 'SELECT 1' },
-        { version: 2, name: 'broken', sql: 'CREATE TABLE half (a INTEGER); NOT SQL;' },
+        { version: 2, name: 'admin-sessions', sql: 'SELECT 1' },
+        { version: 3, name: 'broken', sql: 'CREATE TABLE half (a INTEGER); NOT SQL;' },
       ]),
     ).toThrow();
     expect(tableNames(db)).not.toContain('half');
-    expect(schemaVersion(db)).toBe(1);
+    expect(schemaVersion(db)).toBe(2);
     db.close();
   });
 });
@@ -142,8 +152,8 @@ describe('openDb on a file', () => {
     first.close();
 
     const second = openDb(path);
-    expect(schemaVersion(second)).toBe(1);
-    expect(second.prepare('SELECT count(*) FROM schema_migrations').pluck().get()).toBe(1);
+    expect(schemaVersion(second)).toBe(2);
+    expect(second.prepare('SELECT count(*) FROM schema_migrations').pluck().get()).toBe(2);
     expect(getSite(second, site.id)).toEqual(site);
     second.close();
   });
@@ -200,6 +210,25 @@ describe('helpers', () => {
       });
       expect(listSites(db).map((s) => s.id)).toEqual([1, 2]);
       expect(getSite(db, 99)).toBeUndefined();
+    });
+
+    it('updates only the patched columns; id and created_at never move', () => {
+      const created = write(() =>
+        createSite(db, { id: 1, name: 'One', domains: ['one.test'], created_at: 123 }),
+      );
+      const renamed = write(() => updateSite(db, 1, { name: 'Renamed' }));
+      expect(renamed).toEqual({ ...created, name: 'Renamed' });
+
+      const moved = write(() =>
+        updateSite(db, 1, { domains: ['one.test', 'alias.test'], timezone: 'UTC' }),
+      );
+      expect(moved).toEqual({
+        ...created,
+        name: 'Renamed',
+        domains: ['one.test', 'alias.test'],
+        timezone: 'UTC',
+      });
+      expect(write(() => updateSite(db, 99, { name: 'Ghost' }))).toBeUndefined();
     });
   });
 
@@ -345,6 +374,44 @@ describe('helpers', () => {
       expect(getBotDrops(db, 1, '2023-11-14')).toBe(5);
       expect(getBotDrops(db, 1, '2023-11-15')).toBe(1);
       expect(getBotDrops(db, 2, '2023-11-14')).toBe(1);
+    });
+
+    it('lists counters since a local date, newest first', () => {
+      write(() => {
+        incrementBotDrops(db, 1, '2023-11-14', 2);
+        incrementBotDrops(db, 1, '2023-11-15', 3);
+        incrementBotDrops(db, 2, '2023-11-15', 1);
+        incrementBotDrops(db, 1, '2023-10-01', 9);
+      });
+      expect(listBotDrops(db, '2023-11-14')).toEqual([
+        { site_id: 1, local_date: '2023-11-15', count: 3 },
+        { site_id: 2, local_date: '2023-11-15', count: 1 },
+        { site_id: 1, local_date: '2023-11-14', count: 2 },
+      ]);
+    });
+  });
+
+  describe('diagnostics gauges', () => {
+    it('counts event rows and reports a positive page-math size', () => {
+      expect(countEvents(db)).toBe(0);
+      write(() => insertEvents(db, [event(), event({ seq: 2 })]));
+      expect(countEvents(db)).toBe(2);
+      expect(databaseSizeBytes(db)).toBeGreaterThan(0);
+    });
+  });
+
+  describe('observeWriteTransactions', () => {
+    it('times top-level write transactions only, until unsubscribed', () => {
+      const seen: number[] = [];
+      const unsubscribe = observeWriteTransactions(db, (ms) => seen.push(ms));
+
+      write(() => withWriteTransaction(db, () => setSetting(db, 'k', 'v')));
+      expect(seen).toHaveLength(1); // the nested transaction is not re-observed
+      expect(seen[0]).toBeGreaterThanOrEqual(0);
+
+      unsubscribe();
+      write(() => setSetting(db, 'k', 'w'));
+      expect(seen).toHaveLength(1);
     });
   });
 

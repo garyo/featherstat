@@ -1,4 +1,10 @@
-import type { Dashboard, Query } from '@analytics/shared';
+import {
+  type Dashboard,
+  EVENT_ONLY_DIMENSIONS,
+  type Filter,
+  type Query,
+  SESSION_ONLY_METRICS,
+} from '@analytics/shared';
 import type { RangePreset } from '../lib/state.ts';
 import { isSparkCompanion, widgetQueries } from '../widgets/queries.ts';
 
@@ -50,4 +56,27 @@ export function hourlyWhenToday(queries: readonly Query[], range: RangePreset): 
       ? query
       : { ...query, bucket: 'hour' },
   );
+}
+
+const EVENT_ONLY = new Set<string>(EVENT_ONLY_DIMENSIONS);
+const SESSION_ONLY = new Set<string>(SESSION_ONLY_METRICS);
+
+/**
+ * Click-to-filter on a page or event row makes session-level metrics
+ * unanswerable (the compiler refuses the combination — docs/04 § 3). Rather
+ * than send a question that can only error — which would blank the whole KPI
+ * row — trim those metrics and let the tiles render "—". Queries that would
+ * lose every metric are left alone: their per-query error names the conflict.
+ */
+export function withoutBlockedMetrics(
+  queries: readonly Query[],
+  filters: readonly Filter[],
+): Query[] {
+  if (!filters.some((filter) => EVENT_ONLY.has(filter.dim))) return [...queries];
+  return queries.map((query) => {
+    if ('kind' in query) return query;
+    const kept = query.metrics.filter((metric) => !SESSION_ONLY.has(metric));
+    if (kept.length === 0 || kept.length === query.metrics.length) return query;
+    return { ...query, metrics: kept };
+  });
 }

@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { Dashboard, QueryResponse, WidgetSpec } from '@analytics/shared';
+import type { Dashboard, Filter, QueryResponse, SiteInfo, WidgetSpec } from '@analytics/shared';
 import { REGISTRY, spanClass } from '../widgets/registry.ts';
 import type { WidgetData } from '../widgets/types.ts';
 import { collectBatch } from './batch.ts';
@@ -10,11 +10,28 @@ interface Props {
   /** Batch-level failure — widgets surface it when there is nothing older to show. */
   error: string | undefined;
   refetching: boolean;
+  /** The requested site-local window, for charts to pad their series out to. */
+  window?: { from: string; to: string };
+  /** Range qualifier for widget titles ("last 30 days"). */
+  rangeLabel?: string;
   active?: Record<number, number>;
+  sites?: ReadonlyMap<number, SiteInfo>;
   onselectsite?: (site: number) => void;
+  onfilter?: (filter: Filter) => void;
 }
 
-let { dashboard, response, error, refetching, active, onselectsite }: Props = $props();
+let {
+  dashboard,
+  response,
+  error,
+  refetching,
+  window,
+  rangeLabel,
+  active,
+  sites,
+  onselectsite,
+  onfilter,
+}: Props = $props();
 
 const slots = $derived(collectBatch(dashboard).slots);
 
@@ -41,11 +58,29 @@ function dataFor(spec: WidgetSpec): WidgetData {
       {@const Widget = entry.component}
       {#if entry.frame === 'card'}
         <div class="card {spanClass(spec.w)}">
-          <Widget {spec} data={dataFor(spec)} {active} {onselectsite} />
+          <Widget
+            {spec}
+            data={dataFor(spec)}
+            {window}
+            {rangeLabel}
+            {active}
+            {sites}
+            {onselectsite}
+            {onfilter}
+          />
         </div>
       {:else}
         <div class="wide">
-          <Widget {spec} data={dataFor(spec)} {active} {onselectsite} />
+          <Widget
+            {spec}
+            data={dataFor(spec)}
+            {window}
+            {rangeLabel}
+            {active}
+            {sites}
+            {onselectsite}
+            {onfilter}
+          />
         </div>
       {/if}
     {/if}

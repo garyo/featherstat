@@ -1,0 +1,16 @@
+# Build context hygiene: dependencies are installed and outputs built inside
+# the image; local state, data and docs never belong in it.
+.git
+node_modules
+**/node_modules
+**/dist
+apps/server/data
+data
+*.db
+*.db-shm
+*.db-wal
+*.mmdb
+docs
+mockups
+Dockerfile
+.dockerignore

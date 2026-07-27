@@ -80,6 +80,61 @@ spyglass, skopos. Don't bake any placeholder name into code.
 Implementation in progress — M0 (walking skeleton), following
 [docs/08-implementation-plan.md](docs/08-implementation-plan.md).
 
+## Deploy (Docker)
+
+One container: SPA + query/admin API + tracking endpoints, SQLite on a volume.
+
+```bash
+docker build -t analytics .
+docker run -d --name analytics -p 8080:8080 -v analytics-data:/data \
+  -e METRICS_TOKEN=change-me analytics
+```
+
+First boot opens the setup screen: choose the admin password and enter the
+**setup token printed in the container log** (`docker logs analytics`) — proof
+of console access, so a network scanner can never claim a fresh install.
+Tracking endpoints and `/healthz` are public, everything else needs the session.
+
+| Env | Default (image) | Meaning |
+| --- | --- | --- |
+| `PORT` | `8080` | Listen port |
+| `DB_PATH` | `/data/analytics.db` | SQLite file (put it on the volume) |
+| `TRUSTED_PROXY_HOPS` | `1` | Reverse proxies in front (each appends one `X-Forwarded-For` entry). `1` fits the Traefik setup below; `0` = no proxy, forwarded headers are ignored |
+| `GEOIP_MMDB_PATH` | `/data/dbip-city-lite.mmdb` | GeoIP database the refresh job maintains |
+| `GEOIP_AUTO` | unset | `1` = download the GeoIP db when missing (a few hundred MB) |
+| `METRICS_TOKEN` | unset | Bearer token for `/metrics`; unset = endpoint is a 404 |
+| `MATOMO_FORWARD_URL` | unset | Tee mode: also forward every hit to a live Matomo (docs/06). Must be https, or loopback |
+| `MATOMO_TOKEN_AUTH` | unset | `token_auth` sent at the bulk level of teed requests |
+| `MATOMO_MYSQL_URL` | unset | Importer source DB (preferred over `--mysql-url`: command lines leak via `ps`/history) |
+| `ASSETS_DIR` / `WEB_DIR` | `/app/tracker` / `/app/web` | Built tracker bundles / SPA (preset in the image) |
+| `AUTH_DISABLED` | **never set** | Local-dev auth bypass; refused unless `NODE_ENV` is `development`/`test` |
+
+Compose + Traefik, matching the rest of the host (docs/02 § Security posture —
+TLS and the rate-limit backstop live in Traefik):
+
+```yaml
+services:
+  analytics:
+    build: .
+    restart: unless-stopped
+    volumes: ["analytics-data:/data"]
+    environment:
+      METRICS_TOKEN: change-me
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.analytics.rule: Host(`analytics.example.com`)
+      traefik.http.routers.analytics.entrypoints: websecure
+      traefik.http.routers.analytics.tls.certresolver: le
+      traefik.http.services.analytics.loadbalancer.server.port: "8080"
+volumes:
+  analytics-data:
+```
+
+Operations: `GET /healthz` (liveness, used by the image HEALTHCHECK) and
+`GET /metrics` (Prometheus text; `Authorization: Bearer $METRICS_TOKEN`).
+Sessions, CSRF and the admin API are documented in docs/02 § Security posture
+and docs/04 § 5.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

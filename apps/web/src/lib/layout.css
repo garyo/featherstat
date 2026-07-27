@@ -55,8 +55,41 @@ header.top {
   color: var(--ink);
 }
 
+/* The site switcher: a native <select> wearing the tab's clothes. */
+select.site-switch {
+  appearance: none;
+  -webkit-appearance: none;
+  max-width: 220px;
+  padding-right: 24px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, currentcolor 50%),
+    linear-gradient(135deg, currentcolor 50%, transparent 50%);
+  background-position:
+    right 13px top 50%,
+    right 9px top 50%;
+  background-size: 4px 4px;
+  background-repeat: no-repeat;
+  text-overflow: ellipsis;
+}
+
 .spacer {
   flex: 1;
+}
+
+/* Phones: the chrome shrinks and wraps instead of forcing a horizontal scroll. */
+@media (max-width: 599px) {
+  header.top {
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .tabs {
+    min-width: 0;
+  }
+
+  select.site-switch {
+    max-width: 136px;
+  }
 }
 
 .icon-btn {
@@ -76,7 +109,12 @@ header.top {
   color: var(--ink);
 }
 
-:is(.tab, .icon-btn, .preset, .retry):focus-visible {
+.icon-btn[aria-current="page"] {
+  color: var(--ink);
+  border-color: var(--s1);
+}
+
+:is(.tab, .icon-btn, .preset, .retry, .fchip):focus-visible {
   outline: 2px solid var(--s1);
   outline-offset: 2px;
 }
@@ -116,6 +154,41 @@ header.top {
   color: var(--muted);
   font-size: 13px;
   margin-left: 8px;
+}
+
+/* Active dimension filters as removable chips (docs/05); the whole chip removes. */
+.fchip {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 260px;
+  border: 1px solid color-mix(in srgb, var(--s1) 35%, transparent);
+  background: color-mix(in srgb, var(--s1) 10%, transparent);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 99px;
+  cursor: pointer;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.fchip:hover {
+  border-color: color-mix(in srgb, var(--s1) 70%, transparent);
+}
+
+.fchip .x {
+  color: var(--ink-2);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.fchip:hover .x {
+  color: var(--bad);
 }
 
 /* Recovery affordance after a failed batch — link-weight, never a loud control. */

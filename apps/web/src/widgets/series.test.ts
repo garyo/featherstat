@@ -61,6 +61,29 @@ describe('fillBuckets', () => {
     expect(fillBuckets([], ['visitors'])).toEqual([]);
     expect(fillBuckets([{ visitors: 3, bucket: null }], ['visitors'])).toEqual([]);
   });
+
+  it('pads a day series out to the requested window — quiet edges must not shrink the chart', () => {
+    const rows = [{ bucket: '2026-07-03', visitors: 5 }];
+    const points = fillBuckets(rows, ['visitors'], { from: '2026-07-01', to: '2026-07-05' });
+    expect(points.map((p) => p.bucket)).toEqual([
+      '2026-07-01',
+      '2026-07-02',
+      '2026-07-03',
+      '2026-07-04',
+      '2026-07-05',
+    ]);
+    expect(points.map((p) => p.values.visitors)).toEqual([0, 0, 5, 0, 0]);
+  });
+
+  it('never truncates data that spills past the window', () => {
+    const rows = [
+      { bucket: '2026-06-30', visitors: 1 },
+      { bucket: '2026-07-02', visitors: 2 },
+    ];
+    const points = fillBuckets(rows, ['visitors'], { from: '2026-07-01', to: '2026-07-02' });
+    expect(points[0]?.bucket).toBe('2026-06-30');
+    expect(points.at(-1)?.bucket).toBe('2026-07-02');
+  });
 });
 
 describe('sliceRanges', () => {

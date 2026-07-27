@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { type CityResponse, Reader } from 'mmdb-lib';
 
 export interface GeoResult {
@@ -21,23 +21,52 @@ export class NullProvider implements GeoProvider {
   }
 }
 
+/** How often a live provider re-stats its file for a newer edition. */
+const RECHECK_EVERY_MS = 60_000;
+
 /**
  * City-level lookups from a local `.mmdb` (DB-IP City Lite; GeoLite2 is the same
  * format). Loaded lazily on first lookup; a missing or unreadable file degrades
- * to null lookups so the server runs fine without geo data.
+ * to null lookups so the server runs fine without geo data. The file's mtime is
+ * re-checked (at most once a minute) so the monthly refresh job's atomic swap —
+ * or a download that finished after a failed first load — takes effect in the
+ * running process, no restart needed.
  */
 export class MmdbProvider implements GeoProvider {
-  /** `undefined` = not yet loaded; `null` = load failed, stay degraded. */
-  private reader: Reader<CityResponse> | null | undefined;
+  private reader: Reader<CityResponse> | null = null;
+  /** mtime of the loaded file; null = nothing loaded (missing/unreadable). */
+  private loadedMtimeMs: number | null = null;
+  private nextCheckAt = 0;
 
-  constructor(private readonly path: string) {}
+  constructor(
+    private readonly path: string,
+    private readonly now: () => number = Date.now,
+  ) {}
 
   lookup(ip: string): GeoResult | null {
-    if (this.reader === undefined) this.reader = this.load();
+    this.ensureFresh();
     if (this.reader === null || ip === '') return null;
     try {
       const record = this.reader.get(ip);
       return record === null ? null : geoFromCity(record);
+    } catch {
+      return null;
+    }
+  }
+
+  private ensureFresh(): void {
+    const now = this.now();
+    if (now < this.nextCheckAt) return;
+    this.nextCheckAt = now + RECHECK_EVERY_MS;
+    const mtime = this.statMtime();
+    if (mtime === this.loadedMtimeMs) return; // same edition (or still missing)
+    this.reader = mtime === null ? null : this.load();
+    this.loadedMtimeMs = this.reader === null ? null : mtime;
+  }
+
+  private statMtime(): number | null {
+    try {
+      return statSync(this.path).mtimeMs;
     } catch {
       return null;
     }

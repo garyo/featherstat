@@ -1,0 +1,113 @@
+/* Form vocabulary for the auth and settings views (WP13). Same grammar as
+ * layout.css: global classes, colors only from theme.css tokens. */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.field input,
+.field select {
+  appearance: none;
+  font: inherit;
+  font-weight: 400;
+  color: var(--ink);
+  background: var(--page);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 7px 10px;
+  min-width: 0;
+}
+
+.field input:focus-visible,
+.field select:focus-visible,
+.btn:focus-visible {
+  outline: 2px solid var(--s1);
+  outline-offset: 1px;
+}
+
+.btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  padding: 7px 14px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.btn:hover {
+  background: color-mix(in srgb, var(--ink) 6%, var(--surface));
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.btn.primary {
+  background: var(--s1);
+  border-color: var(--s1);
+  color: #fff;
+}
+
+.btn.primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--s1) 88%, var(--ink));
+}
+
+.btn.subtle {
+  border: 0;
+  background: none;
+  color: var(--s1);
+  padding: 5px 8px;
+}
+
+.btn.subtle:hover {
+  text-decoration: underline;
+  background: none;
+}
+
+.form-error {
+  color: var(--bad);
+  font-size: 13px;
+  margin: 0;
+}
+
+.form-ok {
+  color: var(--good);
+  font-size: 13px;
+  margin: 0;
+}
+
+/* ---------- the centered auth screens ---------- */
+.auth-wrap {
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.auth-card {
+  width: min(360px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.auth-card h1 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.auth-card .hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+}

@@ -1,4 +1,12 @@
-import { ENGAGEMENT_THRESHOLD_MS, isQueryError, type MetricQuery } from '@analytics/shared';
+import {
+  DimensionSchema,
+  ENGAGEMENT_THRESHOLD_MS,
+  EVENT_ONLY_DIMENSIONS,
+  isQueryError,
+  type MetricQuery,
+  MetricSchema,
+  SESSION_ONLY_METRICS,
+} from '@analytics/shared';
 import { describe, expect, it } from 'vitest';
 import { type CompiledQuery, compileMetricQuery } from './compiler.ts';
 
@@ -9,6 +17,24 @@ function compile(query: Partial<MetricQuery> & Pick<MetricQuery, 'metrics'>): Co
   }
   return compiled;
 }
+
+describe('shared vocabulary constants stay true to the compiler tables', () => {
+  it('EVENT_ONLY_DIMENSIONS = exactly the dims that break session metrics', () => {
+    const eventOnly = new Set<string>(EVENT_ONLY_DIMENSIONS);
+    for (const dim of DimensionSchema.options) {
+      const compiled = compileMetricQuery({ id: 'q', metrics: ['engaged_ms'], dim }, [], 1);
+      expect(isQueryError(compiled), dim).toBe(eventOnly.has(dim));
+    }
+  });
+
+  it('SESSION_ONLY_METRICS = exactly the metrics an event-level dim cannot answer', () => {
+    const sessionOnly = new Set<string>(SESSION_ONLY_METRICS);
+    for (const metric of MetricSchema.options) {
+      const compiled = compileMetricQuery({ id: 'q', metrics: [metric], dim: 'path' }, [], 1);
+      expect(isQueryError(compiled), metric).toBe(sessionOnly.has(metric));
+    }
+  });
+});
 
 describe('compileMetricQuery', () => {
   it('routes each metric to its preferred table', () => {

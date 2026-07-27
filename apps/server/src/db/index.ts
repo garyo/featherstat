@@ -163,12 +163,41 @@ export function openDb(path: string): Db {
   return db;
 }
 
+const writeObservers = new WeakMap<Db, Set<(ms: number) => void>>();
+
+/**
+ * Times every top-level write transaction on `db` — in steady state that is the
+ * batcher's flush, so this is the `/metrics` flush-duration feed. Nested
+ * transactions (savepoints) are not re-observed.
+ */
+export function observeWriteTransactions(db: Db, observer: (ms: number) => void): () => void {
+  let observers = writeObservers.get(db);
+  if (observers === undefined) {
+    observers = new Set();
+    writeObservers.set(db, observers);
+  }
+  observers.add(observer);
+  return () => {
+    observers.delete(observer);
+  };
+}
+
 /**
  * The only way to write. Single-writer discipline (docs/02): the ingest batcher wraps
  * each 200 ms flush in one of these; everything else is a read. Nests safely (savepoints).
  */
 export function withWriteTransaction<T>(db: Db, fn: () => T): T {
-  return db.transaction(fn).immediate();
+  const observers = writeObservers.get(db);
+  if (observers === undefined || observers.size === 0 || db.inTransaction) {
+    return db.transaction(fn).immediate();
+  }
+  const started = performance.now();
+  try {
+    return db.transaction(fn).immediate();
+  } finally {
+    const ms = performance.now() - started;
+    for (const observer of observers) observer(ms);
+  }
 }
 
 /**
@@ -251,6 +280,34 @@ export function createSite(db: Db, site: NewSite): Site {
     timezone,
     created_at,
   };
+}
+
+/** Admin edits (docs/04 § 5): name, domains and timezone move; id and created_at never do. */
+export interface SitePatch {
+  name?: string;
+  domains?: readonly string[];
+  timezone?: string;
+}
+
+const SQL_UPDATE_SITE =
+  'UPDATE sites SET name = ?, domains = ?, timezone = ? WHERE id = ? RETURNING id, name, domains, timezone, created_at';
+
+export function updateSite(db: Db, id: number, patch: SitePatch): Site | undefined {
+  assertWritable(db);
+  const current = getSite(db, id);
+  if (current === undefined) return undefined;
+  const next = {
+    name: patch.name ?? current.name,
+    domains: patch.domains === undefined ? current.domains : [...patch.domains],
+    timezone: patch.timezone ?? current.timezone,
+  };
+  const row = stmt<SiteColumns>(db, SQL_UPDATE_SITE).get(
+    next.name,
+    JSON.stringify(next.domains),
+    next.timezone,
+    id,
+  );
+  return row === undefined ? undefined : decodeSite(row);
 }
 
 function decodeSite(row: SiteColumns): Site {
@@ -366,4 +423,73 @@ export function incrementBotDrops(db: Db, siteId: number, localDate: string, cou
 
 export function getBotDrops(db: Db, siteId: number, localDate: string): number {
   return stmt<{ count: number }>(db, SQL_GET_BOT_DROPS).get(siteId, localDate)?.count ?? 0;
+}
+
+export interface BotDropRow {
+  site_id: number;
+  local_date: string;
+  count: number;
+}
+
+const SQL_LIST_BOT_DROPS =
+  'SELECT site_id, local_date, count FROM bot_drops WHERE local_date >= ? ORDER BY local_date DESC, site_id';
+
+/** Diagnostics (docs/04 § 5): per-site bot-drop counters since a local date (inclusive). */
+export function listBotDrops(db: Db, sinceLocalDate: string): BotDropRow[] {
+  return stmt<BotDropRow>(db, SQL_LIST_BOT_DROPS).all(sinceLocalDate) as BotDropRow[];
+}
+
+const SQL_COUNT_EVENTS = 'SELECT COUNT(*) FROM events';
+
+export function countEvents(db: Db): number {
+  return stmt(db, SQL_COUNT_EVENTS).pluck().get() as number;
+}
+
+/** Page math rather than fs.stat, so :memory: databases (tests) answer too. */
+export function databaseSizeBytes(db: Db): number {
+  const pages = db.pragma('page_count', { simple: true }) as number;
+  const pageSize = db.pragma('page_size', { simple: true }) as number;
+  return pages * pageSize;
+}
+
+// ---------------------------------------------------------------------------
+// Admin sessions (docs/02 § Security posture)
+// ---------------------------------------------------------------------------
+
+export interface AdminSessionRow {
+  id: string;
+  created_at: number;
+  expires_at: number;
+}
+
+const SQL_INSERT_ADMIN_SESSION =
+  'INSERT INTO admin_sessions (id, created_at, expires_at) VALUES (?, ?, ?)';
+const SQL_GET_ADMIN_SESSION = 'SELECT id, created_at, expires_at FROM admin_sessions WHERE id = ?';
+const SQL_DELETE_ADMIN_SESSION = 'DELETE FROM admin_sessions WHERE id = ?';
+const SQL_DELETE_ADMIN_SESSIONS_EXCEPT = 'DELETE FROM admin_sessions WHERE id <> ?';
+const SQL_DELETE_EXPIRED_ADMIN_SESSIONS = 'DELETE FROM admin_sessions WHERE expires_at <= ?';
+
+export function insertAdminSession(db: Db, row: AdminSessionRow): void {
+  assertWritable(db);
+  stmt(db, SQL_INSERT_ADMIN_SESSION).run(row.id, row.created_at, row.expires_at);
+}
+
+export function getAdminSession(db: Db, id: string): AdminSessionRow | undefined {
+  return stmt<AdminSessionRow>(db, SQL_GET_ADMIN_SESSION).get(id);
+}
+
+export function deleteAdminSession(db: Db, id: string): void {
+  assertWritable(db);
+  stmt(db, SQL_DELETE_ADMIN_SESSION).run(id);
+}
+
+/** Password change: every other device is logged out; the changing session stays. */
+export function deleteAdminSessionsExcept(db: Db, keepId: string): void {
+  assertWritable(db);
+  stmt(db, SQL_DELETE_ADMIN_SESSIONS_EXCEPT).run(keepId);
+}
+
+export function deleteExpiredAdminSessions(db: Db, now: number): void {
+  assertWritable(db);
+  stmt(db, SQL_DELETE_EXPIRED_ADMIN_SESSIONS).run(now);
 }

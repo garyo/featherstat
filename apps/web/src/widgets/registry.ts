@@ -1,6 +1,8 @@
 import type { VizType } from '@analytics/shared';
 import type { Component } from 'svelte';
 import BarList from './BarList.svelte';
+import Devices from './Devices.svelte';
+import Heatmap from './Heatmap.svelte';
 import KpiRow from './KpiRow.svelte';
 import SiteCards from './SiteCards.svelte';
 import Timeseries from './Timeseries.svelte';
@@ -28,6 +30,8 @@ export const REGISTRY: Partial<Record<VizType, RegistryEntry>> = {
   'kpi-row': { component: KpiRow, frame: 'wide' },
   timeseries: { component: Timeseries, frame: 'card' },
   'bar-list': { component: BarList, frame: 'card' },
+  heatmap: { component: Heatmap, frame: 'card' },
+  devices: { component: Devices, frame: 'card' },
   'site-cards': { component: SiteCards, frame: 'wide' },
 };
 

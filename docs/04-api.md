@@ -192,3 +192,12 @@ first-run setup). Read-only dashboard access via
 `GET /share/:token`. Operations: `/healthz` (liveness + last-flush age) and
 Prometheus `/metrics` (ingest rate, batch flush time, query p95, SSE clients,
 bot drops, DB size) for the existing Grafana stack (R15).
+
+First-run setup (`POST /api/admin/setup`) additionally requires the one-time
+**setup token** the server prints to its log at first boot: between `docker
+run` and the owner opening the page, an unconfigured install is reachable by
+anyone, and the token makes claiming it require console access. Setup and
+login share the same rate limits (per-IP plus a global budget). The client
+address comes from the `TRUSTED_PROXY_HOPS`-th `X-Forwarded-For` entry from
+the end (default 1 — one trusted proxy); with `0`, forwarded headers are
+ignored entirely.

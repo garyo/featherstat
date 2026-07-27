@@ -90,11 +90,14 @@
   gap: 4px;
 }
 
-/* Loading, empty and populated states share one footprint — no layout shift.
- * Positioned: it anchors the rows' shared tooltip. */
+/* Loading, empty and populated states share one footprint — no layout shift. */
 .list-pane {
-  position: relative;
   min-height: 236px;
+}
+
+/* Positioned: it anchors the rows' shared tooltip (BarRows.svelte). */
+.rows-pane {
+  position: relative;
 }
 
 .bar-row {
@@ -141,6 +144,237 @@
   z-index: 1;
   font-variant-numeric: tabular-nums;
   color: var(--ink-2);
+}
+
+/* Click-to-filter affordance (docs/05): rows that filter read as controls. */
+.bar-row.clickable {
+  cursor: pointer;
+}
+
+.flag {
+  margin-right: 6px;
+}
+
+/* ---------- stacked device bar (mockup: 2px surface gaps, inline labels) ---------- */
+.stack-wrap {
+  position: relative;
+}
+
+.stack {
+  display: flex;
+  gap: 2px;
+  height: 24px;
+  margin: 6px 0 10px;
+}
+
+.stack .seg {
+  position: relative;
+  cursor: default;
+  border-radius: 0;
+}
+
+.stack .seg:first-child {
+  border-radius: 4px 0 0 4px;
+}
+
+.stack .seg:last-child {
+  border-radius: 0 4px 4px 0;
+}
+
+.stack .seg:hover {
+  filter: brightness(1.12);
+}
+
+.stack .seg.clickable {
+  cursor: pointer;
+}
+
+.stack .seg:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 1px;
+}
+
+.seg-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11.5px;
+  font-weight: 600;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.divider {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 14px 0 12px;
+}
+
+/* ---------- heatmap (sequential --hm ramp; zero recedes to the surface) ---------- */
+/* Narrow screens scroll the grid inside its own pane; the floor keeps cells
+ * at usable hover/read size instead of 9px smears (docs/05 responsive). */
+.heatmap-scroll {
+  overflow-x: auto;
+}
+
+.heatmap {
+  position: relative;
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  gap: 6px;
+  min-width: 560px;
+}
+
+/* Screen-reader-only: the table fallback for chart values (docs/05 a11y). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.hm-days {
+  display: grid;
+  grid-template-rows: repeat(7, 1fr);
+  gap: 2px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.hm-days span {
+  display: flex;
+  align-items: center;
+}
+
+/* minmax(0, …): aspect-ratio cells transfer a min-content width that would
+ * otherwise force the 24 tracks past a narrow viewport (docs/05 responsive). */
+.hm-cells {
+  display: grid;
+  grid-template-columns: repeat(24, minmax(0, 1fr));
+  gap: 2px;
+}
+
+.hm-cell {
+  aspect-ratio: 1.4;
+  border-radius: 3px;
+  background: var(--hm0);
+}
+
+.hm-cell:hover {
+  outline: 2px solid var(--ink);
+  outline-offset: -1px;
+}
+
+.hm-hours {
+  grid-column: 2;
+  display: grid;
+  grid-template-columns: repeat(24, minmax(0, 1fr));
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.b1 {
+  background: var(--hm1);
+}
+
+.b2 {
+  background: var(--hm2);
+}
+
+.b3 {
+  background: var(--hm3);
+}
+
+.b4 {
+  background: var(--hm4);
+}
+
+.b5 {
+  background: var(--hm5);
+}
+
+/* ---------- realtime (hero + feed, mockup card grammar) ---------- */
+.active-now {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.active-now .n {
+  font-size: 26px;
+  font-weight: 600;
+}
+
+.active-now .idle {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--axis);
+}
+
+.active-now .active-label {
+  color: var(--ink-2);
+}
+
+.feed {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+}
+
+.feed-row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 3px 4px;
+  border-radius: 5px;
+}
+
+.feed-row:hover {
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
+}
+
+.feed-row .ago {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  width: 34px;
+  flex-shrink: 0;
+}
+
+.feed-row .flag {
+  margin-right: 0;
+  flex-shrink: 0;
+}
+
+.feed-row .where {
+  color: var(--ink-2);
+  flex-shrink: 0;
+}
+
+.feed-row .path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+}
+
+.evt-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background: var(--s2);
+  margin-right: 5px;
+  vertical-align: 1px;
 }
 
 /* ---------- time series ---------- */
@@ -263,11 +497,54 @@
   margin-top: 10px;
 }
 
+/* R20: the card's top pages with per-page trend (mockup .pages grammar). */
+.site-card .pages {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.page-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+}
+
+.page-row .p {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-2);
+}
+
+.page-row .micro {
+  flex-shrink: 0;
+  display: flex;
+}
+
+.page-row .d {
+  font-size: 12px;
+  min-width: 46px;
+  text-align: right;
+}
+
 .pulse {
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: var(--s3);
+}
+
+/* The realtime hero wears the larger mockup dot. After the base rule: specificity order. */
+.active-now .pulse {
+  width: 9px;
+  height: 9px;
 }
 
 @media (prefers-reduced-motion: no-preference) {

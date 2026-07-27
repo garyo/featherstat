@@ -9,6 +9,7 @@ import {
 import { createSite, openDb, withWriteTransaction } from '../db/index.ts';
 import { parseMatomoRequest } from '../ingest/matomo.ts';
 import { createPipeline } from '../pipeline/index.ts';
+import { DevGeoProvider } from './geo.ts';
 
 /**
  * Fills a development database with something worth looking at: the replay
@@ -43,7 +44,12 @@ function main(): void {
       for (const site of corpus.sites) createSite(db, site);
     });
 
-    const pipeline = createPipeline(db, { batchIntervalMs: MANUAL_FLUSH_INTERVAL_MS });
+    // Deterministic fake geo: TEST-NET addresses locate nowhere in a real mmdb,
+    // which would leave Countries/realtime/flags empty in every dev install.
+    const pipeline = createPipeline(db, {
+      batchIntervalMs: MANUAL_FLUSH_INTERVAL_MS,
+      geo: new DevGeoProvider(),
+    });
     let offered = 0;
     let queued = 0;
     for (const entry of corpus.hits) {

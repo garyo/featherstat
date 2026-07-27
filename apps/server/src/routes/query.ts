@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { QueryRequestSchema } from '@analytics/shared';
 import { Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import { type Db, dataVersion, schemaVersion } from '../db/index.ts';
 import {
   executeQueryRequest,
@@ -17,9 +18,12 @@ import {
  * query work — and a preset like `today` still expires at site-local midnight,
  * when its window moves even though no data did.
  */
+/** 32 queries × 16 filters of 2 KB values still fit comfortably — beyond this is abuse. */
+const MAX_QUERY_BODY_BYTES = 1024 * 1024;
+
 export function createQueryRoutes(db: Db): Hono {
   const app = new Hono();
-  app.post('/api/query', async (c) => {
+  app.post('/api/query', bodyLimit({ maxSize: MAX_QUERY_BODY_BYTES }), async (c) => {
     let body: unknown;
     try {
       body = await c.req.json();

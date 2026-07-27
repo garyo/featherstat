@@ -46,7 +46,9 @@ function countTile(metric: string, label: string): TileDef {
     format: compactNumber,
     exact: exactNumber,
     delta: (cur, prev) => {
-      if (prev <= 0) return { text: '—', dir: 0 };
+      // cur === 0 is "no traffic YET" on partial days (today) — a red −100%
+      // there is noise; a delta needs both sides (site cards use the same rule).
+      if (prev <= 0 || cur === 0) return { text: '—', dir: 0 };
       const pct = ((cur - prev) / prev) * 100;
       return { text: `${sign(pct)}${Math.abs(pct).toFixed(1)}%`, dir: Math.sign(pct) };
     },
@@ -58,8 +60,11 @@ const avgEngagement: TileDef = {
   label: 'Avg engagement',
   goodWhenUp: true,
   raw: (row) => {
+    // engaged_ms may be absent entirely (trimmed under an event-level filter,
+    // docs/04 § 3) — that is "no answer", never "0s".
+    if (typeof row.engaged_ms !== 'number') return null;
     const visits = num(row.visits);
-    return visits > 0 ? num(row.engaged_ms) / visits : null;
+    return visits > 0 ? row.engaged_ms / visits : null;
   },
   format: formatDuration,
   delta: (cur, prev) => {

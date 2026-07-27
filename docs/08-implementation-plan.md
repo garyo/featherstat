@@ -89,8 +89,9 @@ plumbing.
 heatmap, realtime view (feed + map), all-sites cards (top-3 pages w/ trends,
 goal pills). Site switcher, date presets, compare, click-to-filter chips.
 
-**WP13 · Ops & auth.** Single-admin auth (argon2id, sessions, CSRF,
-first-run setup), settings view, Docker image (< 120 MB), compose snippet +
+**WP13 · Ops & auth.** Single-admin auth (scrypt via node:crypto — argon2id
+would be the project's only native auth dependency; sessions, CSRF, first-run
+setup), settings view, Docker image (< 120 MB), compose snippet +
 Traefik labels, `/healthz`, `/metrics`.
 
 **WP14 · Importer + cutover.** Matomo MariaDB importer (idempotent,
@@ -101,8 +102,10 @@ Matomo off.*
 ## Phase 5 — M2 (post-cutover, order by appetite)
 
 Journeys (seq queries + sankey + flows table) · widget editor (code-split,
-per 05 § cost analysis) · share links · native ESM tracker · ntfy
-notifications · Litestream recipe.
+per 05 § cost analysis) with the widget chrome (`table` viz, expand,
+copy-as-image, show-query) · goals + goal pills on site cards · compare
+toggle · site delete · share links · native ESM tracker · ntfy notifications
+· Litestream recipe.
 
 ## Working agreement
 

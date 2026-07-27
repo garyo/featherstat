@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { barRows } from './bar-rows.ts';
 
 describe('barRows', () => {
-  it('ranks rows and scales bars against the leader', () => {
+  it('ranks rows, scales bars against the leader, and carries the filter value', () => {
     const rows = barRows(
       [
         { path: '/a', pageviews: 50 },
@@ -13,8 +13,8 @@ describe('barRows', () => {
       '(none)',
     );
     expect(rows).toEqual([
-      { name: '/b', value: 200, pct: '100.0' },
-      { name: '/a', value: 50, pct: '25.0' },
+      { name: '/b', value: 200, extra: 0, pct: '100.0', filterValue: '/b' },
+      { name: '/a', value: 50, extra: 0, pct: '25.0', filterValue: '/a' },
     ]);
   });
 
@@ -30,13 +30,13 @@ describe('barRows', () => {
       'path',
       '(none)',
     );
-    expect(rows.map((row) => [row.name, row.value])).toEqual([
-      ['/', 378],
-      ['/post', 20],
+    expect(rows.map((row) => [row.name, row.value, row.filterValue])).toEqual([
+      ['/', 378, '/'],
+      ['/post', 20, '/post'],
     ]);
   });
 
-  it('leaves non-path dimensions unmerged and labels the null group', () => {
+  it('labels the null group and marks it for an is_null filter', () => {
     const rows = barRows(
       [
         { ref_domain: 'news.ycombinator.com?x=1', visitors: 5 },
@@ -46,7 +46,10 @@ describe('barRows', () => {
       'ref_domain',
       'Direct',
     );
-    expect(rows.map((row) => row.name)).toEqual(['Direct', 'news.ycombinator.com?x=1']);
+    expect(rows.map((row) => [row.name, row.filterValue])).toEqual([
+      ['Direct', null],
+      ['news.ycombinator.com?x=1', 'news.ycombinator.com?x=1'],
+    ]);
   });
 
   it('merges a null-label collision instead of rendering duplicate names', () => {
@@ -59,13 +62,44 @@ describe('barRows', () => {
       'ref_domain',
       'example.com',
     );
-    expect(rows).toEqual([{ name: 'example.com', value: 7, pct: '100.0' }]);
+    expect(rows.map((row) => [row.name, row.value])).toEqual([['example.com', 7]]);
+  });
+
+  it('composes dim · dim2 labels and sums the extra metric (events card)', () => {
+    const rows = barRows(
+      [
+        { event_category: 'cta', event_action: 'click', events: 12, event_value_sum: 0 },
+        { event_category: 'pricing', event_action: 'toggle', events: 4, event_value_sum: 4 },
+        { event_category: 'signup', event_action: null, events: 3, event_value_sum: 0 },
+      ],
+      'events',
+      'event_category',
+      '(none)',
+      { dim2: 'event_action', extraMetric: 'event_value_sum' },
+    );
+    expect(rows.map((row) => [row.name, row.value, row.extra, row.filterValue])).toEqual([
+      ['cta · click', 12, 0, 'cta'],
+      ['pricing · toggle', 4, 4, 'pricing'],
+      ['signup', 3, 0, 'signup'],
+    ]);
+  });
+
+  it('drops zero-value groups — including the non-event null group of an events breakdown', () => {
+    const rows = barRows(
+      [
+        { event_category: null, event_action: null, events: 0 },
+        { event_category: 'cta', event_action: 'click', events: 2 },
+      ],
+      'events',
+      'event_category',
+      '(none)',
+      { dim2: 'event_action' },
+    );
+    expect(rows.map((row) => row.name)).toEqual(['cta · click']);
   });
 
   it('handles empty input and non-numeric cells', () => {
     expect(barRows([], 'pageviews', 'path', '(none)')).toEqual([]);
-    expect(barRows([{ path: '/a', pageviews: null }], 'pageviews', 'path', '(none)')).toEqual([
-      { name: '/a', value: 0, pct: '0.0' },
-    ]);
+    expect(barRows([{ path: '/a', pageviews: null }], 'pageviews', 'path', '(none)')).toEqual([]);
   });
 });

@@ -8,7 +8,26 @@ import {
   exactNumber,
   formatDuration,
   METRIC_LABELS,
+  presetWindow,
 } from './format.ts';
+
+describe('presetWindow', () => {
+  // 23:30 UTC: Berlin is already on the 28th — the window must follow the SITE's clock.
+  const lateNight = new Date('2026-07-27T23:30:00Z');
+
+  it('resolves presets to the site-local inclusive window, like the server does', () => {
+    expect(presetWindow('today', 'UTC', lateNight)).toEqual({
+      from: '2026-07-27',
+      to: '2026-07-27',
+    });
+    expect(presetWindow('7d', 'UTC', lateNight)).toEqual({ from: '2026-07-21', to: '2026-07-27' });
+    expect(presetWindow('30d', 'Europe/Berlin', lateNight)).toEqual({
+      from: '2026-06-29',
+      to: '2026-07-28',
+    });
+    expect(presetWindow('mtd', 'UTC', lateNight)).toEqual({ from: '2026-07-01', to: '2026-07-27' });
+  });
+});
 
 describe('numbers (docs/05 § Numbers)', () => {
   it('shows small values exactly and compacts from 10K up', () => {

@@ -1,4 +1,7 @@
 import { isQueryError, type Metric, type QueryResponse } from '@analytics/shared';
+import type { RangePreset } from '../lib/state.ts';
+import { addDaysIso } from './series.ts';
+import { localToday } from './site-stats.ts';
 
 /** Display names for the metric vocabulary — exhaustive, so a new metric cannot ship unlabeled. */
 export const METRIC_LABELS: Record<Metric, string> = {
@@ -68,11 +71,36 @@ function utcFormat(date: string, options: Intl.DateTimeFormatOptions): string {
 }
 
 /**
- * The site-local date window a batch's bucketed results span — what the filter
- * row shows as "Jun 28 – Jul 27". Scanned from the data because the response
- * meta does not (yet) carry the server-resolved window: this is the data
- * extent, so a range whose first or last days are empty reads slightly narrow.
- * When `meta.range` lands (docs/04), it replaces this.
+ * The REQUESTED site-local window of a range preset — mirrors the server's
+ * `resolveWindow` (docs/04 § 3): presets resolve in the site's timezone, ending
+ * on its local today. This is what the filter row labels and the charts pad to;
+ * the data extent (`bucketedWindow`) would shrink both on quiet edge days.
+ */
+export function presetWindow(
+  preset: RangePreset,
+  timezone: string,
+  now: Date = new Date(),
+): { from: string; to: string } {
+  const to = localToday(timezone, now);
+  switch (preset) {
+    case 'today':
+      return { from: to, to };
+    case '7d':
+      return { from: addDaysIso(to, -6), to };
+    case '30d':
+      return { from: addDaysIso(to, -29), to };
+    case '90d':
+      return { from: addDaysIso(to, -89), to };
+    case 'mtd':
+      return { from: `${to.slice(0, 8)}01`, to };
+  }
+}
+
+/**
+ * The site-local date window a batch's bucketed results span — the fallback
+ * label source when the site's timezone (and so the requested window) is not
+ * at hand. This is the data extent, so a range whose first or last days are
+ * empty reads slightly narrow.
  */
 export function bucketedWindow(
   response: QueryResponse | undefined,

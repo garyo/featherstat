@@ -11,10 +11,10 @@ is the visual reference for everything below (both views, light and dark).
 
 | View | Contents |
 | --- | --- |
-| **All sites** (home) | One card per site: name, active-now, today's visitors + delta, 14-day sparkline, the site's **top 3 pages with per-page trend** (micro-sparkline + delta vs previous period — how each blog article is doing, at a glance, R20), and goal/event pills (e.g. "3 signups today"). Sorted by traffic. The whole view is one `/api/query` batch + the SSE stream. |
-| **Site** | The workhorse. Filter row (date presets, compare toggle, active dimension filters as removable chips) → KPI row → main time series → breakdown grid (pages, referrers, geo, devices, events, hours heatmap) → top journeys. Every breakdown row is click-to-filter. |
+| **All sites** (home) | One card per site: name, active-now, today's visitors + delta ("today" = the SITE's local today, per its timezone), 14-day sparkline, the site's **top 3 pages with per-page trend** (micro-sparkline + delta vs previous period — how each blog article is doing, at a glance, R20), and goal/event pills (e.g. "3 signups today" — **M2**, alongside goals themselves). A site with no traffic yet gets a "waiting for the first hit" card, not a blank. Sorted by traffic. The whole view is one `/api/query` batch + the SSE stream. |
+| **Site** | The workhorse. Filter row (date presets, active dimension filters as removable chips; the compare mode is fixed to "previous period" until the compare toggle ships in **M2**) → KPI row → main time series → breakdown grid (pages, referrers, geo, devices, events, hours heatmap) → top journeys. Every breakdown row is click-to-filter; a filter on an event-level dimension renders the session-only KPI tiles (engagement, bounce) as "—" rather than erroring the row. |
 | **Journeys** (per site) | R21. A sankey of the first N steps from the entry page (pages and events as nodes, edge weight = sessions) over a top-journeys table: sequence · sessions · avg time · exit rate. Clicking a sankey edge filters the table; the view honors the global filter row, so "journeys of visitors from HN" is one click. |
-| **Realtime** | Active-now hero number, world map with fading dots (city centroids), live feed. Pure SSE, no queries. |
+| **Realtime** | Active-now hero number, live feed, country tally of the last 30 minutes. Pure SSE, no queries. The world map with fading dots (city centroids) moved to **M2**: it needs the map-outline data that arrives with the sankey work, so M1 ships hero + feed + country list and the map joins when that asset lands. |
 | **Settings** | Sites, tracking snippets, tokens, share links, retention, diagnostics (bot counts, ingest health). |
 
 Single-page app; site switcher in the header; every view state (site, range,
@@ -65,17 +65,22 @@ A dashboard is JSON: a grid of widget cards.
   metrics like `engaged_ms`/`bounce_rate` cannot be bucketed by hour, so
   `today` has no honest intraday companion), `timeseries` (line/area, ≤ 4 series),
   `bar-list` (the Plausible-style ranked list with inline bars — the
-  workhorse for every breakdown), `table` (sortable, the accessibility
-  fallback for every chart), `heatmap` (hour × weekday), `map` (world
-  choropleth + city dots), `feed` (realtime events). M2 adds the Journeys
-  pair: `sankey` (transitions) + `flows` (top-journeys table). Later:
-  `globe` — reusing globe-viz's hand-built three.js globe, not echarts-gl.
+  workhorse for every breakdown), `table` (sortable — **M2**, with the widget
+  editor; until then every chart carries its own accessibility fallback, see
+  § Accessibility), `heatmap` (hour × weekday), `devices` (the
+  mockup's stacked device bar + browsers list — one card, two breakdowns of
+  the same batch), `map` (world choropleth + city dots — **M2**, with the
+  map-outline data that arrives alongside the sankey work), `feed` (realtime
+  events). M2 adds the Journeys pair: `sankey` (transitions) + `flows`
+  (top-journeys table). Later: `globe` — reusing globe-viz's hand-built
+  three.js globe, not echarts-gl.
 - **The built-in dashboards are just shipped JSON files** — the default
   site-overview is the same document a user's customized dashboard is. Edit
   mode: add/remove/resize/reorder cards, pick query + viz from the same
   vocabulary the API speaks. Export/import = copy the JSON.
 - Every widget offers: expand (full-width with table view), copy-as-image,
-  and "show query" (the JSON it sent — self-documenting API).
+  and "show query" (the JSON it sent — self-documenting API). This widget
+  chrome ships in **M2** with the code-split editor chunk it belongs to.
 - **Everything is a widget, including the all-sites view**: a site card is
   just a `site-card` widget with its own settings (sparkline range, how many
   top pages, which goal pills, and **sort order** — traffic (default, with
@@ -156,7 +161,10 @@ per-day, approximate across ranges (see 03 — identity).
 ## Accessibility
 
 Keyboard: every interactive mark reachable (`tabindex` + focus tooltip);
-filter row and tables fully keyboard-native. Every chart has a table view.
+filter row and tables fully keyboard-native. Every chart's values are
+reachable without a pointer: bar-lists and KPI tiles are text, the heatmap
+carries a visually-hidden table of exact values; the sortable `table` viz
+(M2) becomes the universal fallback when it lands.
 Legends always present for ≥ 2 series; single series titled, unlegended.
 Color-blind safety is enforced by the palette validator in CI (the palette is
 data, so the check is automatable); texture fill available as the opt-in

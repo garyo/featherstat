@@ -1,7 +1,9 @@
 import {
+  type Filter,
   isQueryError,
   type QueryErrorResult,
   type QueryResult,
+  type SiteInfo,
   type WidgetSpec,
 } from '@analytics/shared';
 
@@ -17,9 +19,17 @@ export interface WidgetData {
 export interface WidgetProps {
   spec: WidgetSpec;
   data: WidgetData;
+  /** The requested site-local date window — charts pad their series out to it. */
+  window?: { from: string; to: string };
+  /** Range qualifier for titles (mockup: "Traffic by hour · last 30 days"). */
+  rangeLabel?: string;
   /** Live active-visitor counts by site id (SSE `snapshot`/`active`); site-cards reads it. */
   active?: Record<number, number>;
+  /** The site directory (`/api/sites`); site-cards names its cards from it. */
+  sites?: ReadonlyMap<number, SiteInfo>;
   onselectsite?: (site: number) => void;
+  /** Click-to-filter (docs/05): a breakdown row adds one chip to the view's filter row. */
+  onfilter?: (filter: Filter) => void;
 }
 
 export type Slice =

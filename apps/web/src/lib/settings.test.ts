@@ -1,0 +1,56 @@
+import { describe, expect, it } from 'vitest';
+import { botDropTotals, formatBytes, parseDomains, trackingSnippet } from './settings.ts';
+
+describe('trackingSnippet', () => {
+  it('targets this deployment and the chosen site', () => {
+    const snippet = trackingSnippet(7, 'https://analytics.example.com');
+    expect(snippet).toContain("var u = 'https://analytics.example.com/'");
+    expect(snippet).toContain("_paq.push(['setSiteId', '7'])");
+    expect(snippet).toContain("u + 'matomo.php'");
+    expect(snippet).toContain("u + 'matomo.js'");
+    expect(snippet.startsWith('<script>')).toBe(true);
+    expect(snippet.endsWith('</script>')).toBe(true);
+  });
+
+  it('never doubles the slash when the origin already ends with one', () => {
+    expect(trackingSnippet(1, 'https://a.test/')).toContain("var u = 'https://a.test/'");
+    expect(trackingSnippet(1, 'https://a.test/')).not.toContain('a.test//');
+  });
+});
+
+describe('formatBytes', () => {
+  it('picks the readable unit', () => {
+    expect(formatBytes(0)).toBe('0 B');
+    expect(formatBytes(512)).toBe('512 B');
+    expect(formatBytes(1536)).toBe('1.5 KB');
+    expect(formatBytes(10 * 1024 * 1024)).toBe('10 MB');
+    expect(formatBytes(3.4 * 1024 ** 4)).toBe('3.4 TB');
+  });
+});
+
+describe('parseDomains', () => {
+  it('splits, trims and drops empties', () => {
+    expect(parseDomains(' a.com , b.com ,, ')).toEqual(['a.com', 'b.com']);
+    expect(parseDomains('')).toEqual([]);
+    expect(parseDomains('one.test')).toEqual(['one.test']);
+  });
+});
+
+describe('botDropTotals', () => {
+  it('sums per site, largest first', () => {
+    expect(
+      botDropTotals([
+        { siteId: 1, localDate: '2026-07-27', count: 2 },
+        { siteId: 2, localDate: '2026-07-27', count: 9 },
+        { siteId: 1, localDate: '2026-07-26', count: 3 },
+      ]),
+    ).toEqual([
+      [2, 9],
+      [1, 5],
+    ]);
+  });
+
+  it('is empty for no drops', () => {
+    expect(botDropTotals([])).toEqual([]);
+  });
+});

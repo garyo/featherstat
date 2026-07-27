@@ -13,8 +13,8 @@ credentials).
 | Matomo source | Destination | Notes |
 | --- | --- | --- |
 | `matomo_site` | `sites` | ids preserved verbatim (R2); alias URLs → `domains` |
-| `matomo_log_visit` | `sessions` | `idvisitor` (8 bytes) → `visitor_id`; `visit_first_action_time`/`visit_last_action_time` → timestamps; `visit_total_time` → `engaged_ms` (best available proxy); `location_country/region/city` + lat/lon; `config_browser_name/os/device_type/resolution`; referrer fields → attribution |
-| `matomo_log_link_visit_action` ⨝ `matomo_log_action` | `events` | pageviews, events (category/action/name/value), outlinks, downloads; `server_time` → `ts`; page URL/title from the joined action rows |
+| `matomo_log_visit` | `sessions` | `idvisitor` (8 bytes) → `visitor_id`; `visit_first_action_time`/`visit_last_action_time` → timestamps; `visit_total_time` → `engaged_ms` (best available proxy); `location_country/region/city`; `config_browser_name/os/device_type/resolution`; referrer fields → attribution. (No lat/lon: the `sessions` schema carries none — see 03; the visit's lat/lon is denormalized onto its event rows instead) |
+| `matomo_log_link_visit_action` ⨝ `matomo_log_action` | `events` | pageviews, events (category/action/name/value), outlinks, downloads; `server_time` → `ts`; page URL/title from the joined action rows; visit lat/lon denormalized here |
 
 Import details:
 
@@ -23,9 +23,15 @@ Import details:
 - Historical visitor ids don't chain with the new daily-rotating scheme —
   fine: unique-visitor counts are per-day-exact in both systems, which is the
   only guarantee we make anyway (03).
-- Idempotent: source rows carry their Matomo ids in a scratch mapping table
-  during import, so re-running tops up instead of duplicating. This enables
-  the final top-up import at cutover.
+- Idempotent: high-water marks per source table (in `settings`) plus
+  deterministic session ids derived from `idvisit`, so re-running tops up
+  instead of duplicating. This enables the final top-up import at cutover.
+- `--since YYYY-MM-DD` bounds a top-up AND re-reads the window's visits
+  regardless of the watermark: Matomo mutates `log_visit` rows in place while
+  a visit accrues actions, and the deterministic ids let those sessions
+  upsert to their final state instead of staying frozen mid-visit.
+- `--until YYYY-MM-DD` (exclusive) fences a top-up off from the tee period —
+  see the cutover sequence below.
 - Validation gate: for three spot-check months, per-site daily
   visits/pageviews from `/api/query` must match Matomo's API within rounding.
   Known definitional deltas (bot filtering, ping handling) get documented
@@ -34,10 +40,14 @@ Import details:
 ## Live-traffic bake: tee mode
 
 Before cutover, the new server runs with `MATOMO_FORWARD_URL` set: every hit
-accepted at `/matomo.php` is **also forwarded verbatim** (async,
-fire-and-forget, with the original client IP in `cip` + `token_auth`) to the
-real Matomo. Then DNS/Traefik for `analytics.example.com` is pointed at
-the new server:
+accepted at `/matomo.php` is **also forwarded** to the real Matomo — async,
+fire-and-forget, **re-serialized from the normalized hit** (not byte-verbatim:
+params outside our model, e.g. `pv_id`/custom vars, don't survive the round
+trip), with the original client IP in `cip` (a sender's own `cip` override
+wins, so the packzen webhook keeps its geo) and `token_auth` at the bulk level
+only, never in the per-request strings Matomo logs. The forward URL must be
+https (or loopback) — the token rides in the body. Then DNS/Traefik for
+`analytics.example.com` is pointed at the new server:
 
 - Sites need no changes at any point (R1).
 - Matomo keeps recording everything, so it remains the fallback source of
@@ -51,11 +61,16 @@ If the new system misbehaves: point Traefik back. Blast radius ≈ zero.
 
 1. Deploy the new container on the GCE host (Traefik labels, new internal
    hostname), run the importer, eyeball dashboards against Matomo.
-2. Enable tee mode; repoint `analytics.example.com` to the new server.
-   Bake for 1–2 weeks; compare daily numbers.
-3. Cut over: final top-up import (fills the pre-tee gap exactly), disable
-   tee, stop the Matomo + MariaDB containers (compose entries commented, data
-   kept — same reversible pattern used when Umami was retired).
+2. Enable tee mode (note the date) and repoint `analytics.example.com` to
+   the new server. Bake for 1–2 weeks; compare daily numbers.
+3. Cut over: final top-up import with `--until <tee-start date>` — everything
+   from tee-start onward was already ingested live, and without the fence it
+   would import a second time under different ids (nothing could dedupe it).
+   Visits straddling the tee-start boundary are counted by whichever side
+   holds their first action — a bounded, one-day-deep approximation, not
+   "exact". Then disable tee and stop the Matomo + MariaDB containers
+   (compose entries commented, data kept — same reversible pattern used when
+   Umami was retired).
 4. After a quiet month: `mysqldump` archived off-host, containers removed,
    `matomo.example.com` router alias retired, MariaDB's ~190 MB of swap
    reclaimed.

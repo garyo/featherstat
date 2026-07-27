@@ -32,6 +32,15 @@ export const SNAPSHOT_HITS = 50;
 /** Shape of the `sites.domains` JSON column; the first entry is canonical. */
 export const SiteDomainsSchema = z.array(z.string());
 
+/** `GET /api/sites` row — the public site directory the dashboard header lists. */
+export const SiteInfoSchema = z.object({
+  id: z.number().int().positive(),
+  name: z.string(),
+  domains: SiteDomainsSchema,
+  timezone: z.string(),
+});
+export type SiteInfo = z.infer<typeof SiteInfoSchema>;
+
 // ---------------------------------------------------------------------------
 // Hits — normalized tracker input (docs/04 § 1–2)
 // ---------------------------------------------------------------------------
@@ -124,6 +133,31 @@ export type Dimension = z.infer<typeof DimensionSchema>;
 export const BucketSchema = z.enum(['hour', 'day', 'week', 'month']);
 export type Bucket = z.infer<typeof BucketSchema>;
 
+/**
+ * Dimensions only the events table carries: grouping or filtering by one makes
+ * session-level metrics unanswerable (docs/04 § 3). The compiler enforces this
+ * server-side; clients use the list to trim those metrics from a batch instead
+ * of asking a question that can only error.
+ */
+export const EVENT_ONLY_DIMENSIONS = [
+  'path',
+  'hostname',
+  'title',
+  'screen',
+  'lang',
+  'event_category',
+  'event_action',
+  'event_name',
+  'local_hour',
+] as const satisfies readonly Dimension[];
+
+/** Metrics only the sessions table can answer — unavailable under `EVENT_ONLY_DIMENSIONS`. */
+export const SESSION_ONLY_METRICS = [
+  'engaged_ms',
+  'bounce_rate',
+  'views_per_visit',
+] as const satisfies readonly Metric[];
+
 export const FilterSchema = z
   .object({
     dim: DimensionSchema,
@@ -215,6 +249,92 @@ export interface QueryResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Admin API (docs/04 § 5) — session auth + CSRF; the settings UI's contract
+// ---------------------------------------------------------------------------
+
+/** True when the runtime knows `tz` as an IANA timezone name. */
+export function isValidTimezone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export const AdminPasswordSchema = z.string().min(8).max(200);
+/** Login takes whatever was typed; only setup/change enforce the strength floor. */
+const TypedPasswordSchema = z.string().min(1).max(200);
+
+export const AdminLoginSchema = z.object({ password: TypedPasswordSchema });
+export const AdminSetupSchema = z.object({
+  password: AdminPasswordSchema,
+  /** First-boot token printed to the server log — proof of console access, so a
+   * network stranger cannot claim an unconfigured install (docs/04 § 5). */
+  setupToken: z.string().min(1).max(128),
+});
+export const AdminChangePasswordSchema = z.object({
+  current: TypedPasswordSchema,
+  next: AdminPasswordSchema,
+});
+
+const TimezoneSchema = z.string().refine(isValidTimezone, 'not an IANA timezone');
+/** Hostname shape (optionally `:port`) — a stored `<script>` or `javascript:` string
+ * must be rejected at the boundary, not trusted to render discipline downstream. */
+const DomainSchema = z
+  .string()
+  .min(1)
+  .max(253)
+  .regex(/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:\d{1,5})?$/i, 'not a hostname');
+
+export const AdminSiteCreateSchema = z.object({
+  name: z.string().min(1).max(200),
+  domains: z.array(DomainSchema).max(20).default([]),
+  timezone: TimezoneSchema.optional(),
+});
+export type AdminSiteCreate = z.infer<typeof AdminSiteCreateSchema>;
+
+export const AdminSitePatchSchema = z
+  .object({
+    name: z.string().min(1).max(200).optional(),
+    domains: z.array(DomainSchema).max(20).optional(),
+    timezone: TimezoneSchema.optional(),
+  })
+  .refine((patch) => Object.values(patch).some((value) => value !== undefined), {
+    message: 'a site patch must change something',
+  });
+export type AdminSitePatch = z.infer<typeof AdminSitePatchSchema>;
+
+/** `GET /api/admin/me` — the auth bootstrap: which screen the UI should show. */
+export interface AdminMe {
+  authenticated: boolean;
+  /** No password configured yet — the UI may only offer first-run setup. */
+  needsSetup: boolean;
+  /** Present when authenticated: the token mutations echo as `x-csrf-token`. */
+  csrf?: string;
+}
+
+/** Login/setup success: the session rides in cookies, the CSRF token in the body. */
+export interface AdminSessionGrant {
+  ok: true;
+  csrf: string;
+}
+
+export interface AdminBotDrops {
+  siteId: number;
+  localDate: string;
+  count: number;
+}
+
+/** `GET /api/admin/diagnostics` — the settings view's health panel. */
+export interface AdminDiagnostics {
+  dbSizeBytes: number;
+  eventCount: number;
+  /** Per site and site-local date, most recent first (last 7 days). */
+  botDrops: AdminBotDrops[];
+}
+
+// ---------------------------------------------------------------------------
 // Widgets & dashboards (docs/05)
 // ---------------------------------------------------------------------------
 
@@ -224,6 +344,7 @@ export const VizTypeSchema = z.enum([
   'bar-list',
   'table',
   'heatmap',
+  'devices',
   'map',
   'feed',
   'site-cards',
@@ -267,6 +388,7 @@ export interface RealtimeHit {
   ts: number;
   type: HitType;
   path?: string;
+  eventCategory?: string;
   eventAction?: string;
   country?: string;
   city?: string;

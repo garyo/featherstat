@@ -3,7 +3,7 @@ import { bucketLabel, bucketTitle, exactNumber, METRIC_LABELS } from './format.t
 import { fillBuckets, num } from './series.ts';
 import { sliceOf, type WidgetProps } from './types.ts';
 
-let { spec, data }: WidgetProps = $props();
+let { spec, data, window }: WidgetProps = $props();
 
 const HEIGHT = 250;
 const MARGIN = { l: 42, r: 14, t: 10, b: 26 };
@@ -19,7 +19,9 @@ const metrics = $derived(
     ? [...new Set(spec.query.metrics)].slice(0, MAX_SERIES)
     : [],
 );
-const points = $derived(slice.kind === 'ready' ? fillBuckets(slice.result.rows, metrics) : []);
+const points = $derived(
+  slice.kind === 'ready' ? fillBuckets(slice.result.rows, metrics, window) : [],
+);
 
 let width = $state(0);
 let svgEl: SVGSVGElement | undefined = $state();

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { DashboardSchema, HitSchema, MAX_QUERIES_PER_BATCH, QueryRequestSchema } from './index.ts';
+import {
+  AdminSiteCreateSchema,
+  DashboardSchema,
+  HitSchema,
+  MAX_QUERIES_PER_BATCH,
+  QueryRequestSchema,
+} from './index.ts';
 
 describe('HitSchema', () => {
   it('accepts a minimal pageview', () => {
@@ -74,5 +80,25 @@ describe('DashboardSchema', () => {
       grid: [{ id: 'cards', viz: 'site-cards', w: 12, h: 4 }],
     });
     expect(dash.grid[0]?.options).toEqual({});
+  });
+});
+
+describe('AdminSiteCreateSchema domains', () => {
+  const parse = (domain: string) =>
+    AdminSiteCreateSchema.safeParse({ name: 'S', domains: [domain] }).success;
+
+  it('accepts hostname shapes, with an optional port', () => {
+    expect(parse('example.com')).toBe(true);
+    expect(parse('www.Example-Site.co.uk')).toBe(true);
+    expect(parse('localhost:5173')).toBe(true);
+    expect(parse('xn--bcher-kva.example')).toBe(true);
+  });
+
+  it('rejects stored-XSS shapes: markup, schemes, spaces', () => {
+    expect(parse('<script>alert(2)</script>')).toBe(false);
+    expect(parse('javascript:alert(3)')).toBe(false);
+    expect(parse('https://example.com')).toBe(false);
+    expect(parse('two words')).toBe(false);
+    expect(parse('-leading.example')).toBe(false);
   });
 });

@@ -23,10 +23,15 @@ const MAX_FILL = 1_000;
 /**
  * Bucketed rows → a dense, time-ordered series. SQL GROUP BY skips empty
  * buckets, which would silently distort a line chart, so day gaps (and hour
- * gaps within a single day) are zero-filled. Other bucket shapes pass through
- * in sorted order.
+ * gaps within a single day) are zero-filled. Day series additionally pad out
+ * to `window` when given — the REQUESTED range, so a quiet first or last week
+ * doesn't silently shrink the chart. Other bucket shapes pass through sorted.
  */
-export function fillBuckets(rows: readonly ResultRow[], metrics: readonly string[]): SeriesPoint[] {
+export function fillBuckets(
+  rows: readonly ResultRow[],
+  metrics: readonly string[],
+  window?: { from: string; to: string },
+): SeriesPoint[] {
   const points: SeriesPoint[] = [];
   for (const row of rows) {
     const bucket = row.bucket;
@@ -39,10 +44,13 @@ export function fillBuckets(rows: readonly ResultRow[], metrics: readonly string
 
   const first = points[0];
   const last = points[points.length - 1];
-  if (first === undefined || last === undefined || points.length < 2) return points;
+  if (first === undefined || last === undefined) return points;
   if (points.every((p) => DATE_RE.test(p.bucket))) {
-    return fill(points, metrics, dateSequence(first.bucket, last.bucket));
+    const from = window !== undefined && window.from < first.bucket ? window.from : first.bucket;
+    const to = window !== undefined && window.to > last.bucket ? window.to : last.bucket;
+    return fill(points, metrics, dateSequence(from, to));
   }
+  if (points.length < 2) return points;
   const hours = points.map((p) => HOUR_RE.exec(p.bucket));
   if (
     hours.every((m): m is RegExpExecArray => m !== null) &&

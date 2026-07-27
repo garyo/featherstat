@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { QueryRequest } from '@analytics/shared';
+import type { QueryRequest, SiteInfo } from '@analytics/shared';
 import { allSites } from '../dashboards/all-sites.ts';
 import type { QueryClient } from '../lib/api.ts';
 import { createRevalidator, type LiveStream } from '../lib/live.ts';
@@ -12,23 +12,44 @@ interface Props {
   live: LiveStream;
   /** Active-now by site id, maintained at the app level from the SSE stream. */
   active: Record<number, number>;
+  /** The site directory; undefined while loading — the batch waits for it, so the
+   * view still issues exactly ONE `/api/query` (with the R20 page queries aboard). */
+  sites: SiteInfo[] | undefined;
+  byId: ReadonlyMap<number, SiteInfo>;
   onselectsite: (site: number) => void;
 }
 
-let { client, live, active, onselectsite }: Props = $props();
+let { client, live, active, sites, byId, onselectsite }: Props = $props();
 
-const { queries } = collectBatch(allSites);
 // The client is an app-lifetime singleton; capturing its initial value is the point.
 // svelte-ignore state_referenced_locally
 const runner = createBatchRunner(client);
 
-/** 30 daily buckets cover the 14-day sparkline and the same-weekday-last-week delta. */
-const request: QueryRequest = { site: 'all', range: { preset: '30d' }, queries };
+/**
+ * 30 daily buckets cover the 14-day sparklines, the same-weekday-last-week
+ * delta, and the per-page trends (R20) — one query for the cards plus one
+ * top-pages query per site, all in the same batch.
+ */
+const dashboard = $derived(allSites((sites ?? []).map((site) => site.id)));
+const request = $derived.by<QueryRequest>(() => ({
+  site: 'all',
+  range: { preset: '30d' },
+  queries: collectBatch(dashboard).queries,
+}));
 
 $effect(() => {
+  if (sites === undefined) return; // one batch, once the directory is in
   runner.run(request);
 });
-$effect(() => createRevalidator(live, () => runner.run(request), { site: () => 'all' }));
+$effect(() =>
+  createRevalidator(
+    live,
+    () => {
+      if (sites !== undefined) runner.run(request);
+    },
+    { site: () => 'all', key: () => request },
+  ),
+);
 
 const note = $derived(
   runner.error !== undefined && runner.response !== undefined
@@ -44,10 +65,11 @@ const note = $derived(
   {/if}
 </div>
 <DashboardGrid
-  dashboard={allSites}
+  {dashboard}
   response={runner.response}
   error={runner.error}
   refetching={runner.refetching}
   {active}
+  sites={byId}
   {onselectsite}
 />

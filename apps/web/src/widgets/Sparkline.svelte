@@ -1,8 +1,9 @@
 <script lang="ts">
 /**
- * The mockup's sparkline, both variants: plain (line in the de-emphasis hue,
- * accent end dot — KPI tiles) and accent (series-1 line over a 10% area wash —
- * site cards). `stretch` scales it to the container like the mockup's
+ * The mockup's sparkline, all three variants: plain (line in the de-emphasis
+ * hue, accent end dot — KPI tiles), accent (series-1 line over a 10% area
+ * wash — site cards), and micro (hairline, no dot — the per-page trend inside
+ * a site card). `stretch` scales it to the container like the mockup's
  * `.site-card svg { width: 100% }`.
  */
 interface Props {
@@ -10,10 +11,11 @@ interface Props {
   width: number;
   height: number;
   accent?: boolean;
+  micro?: boolean;
   stretch?: boolean;
 }
 
-let { data, width, height, accent = false, stretch = false }: Props = $props();
+let { data, width, height, accent = false, micro = false, stretch = false }: Props = $props();
 
 const PAD = 3;
 
@@ -46,8 +48,10 @@ const geometry = $derived.by(() => {
     style={stretch ? 'width: 100%; height: auto;' : undefined}
   >
     {#if accent}<polygon points={geometry.area} class="wash" />{/if}
-    <polyline points={geometry.line} class="line" class:accent />
-    <circle cx={geometry.end[0].toFixed(1)} cy={geometry.end[1].toFixed(1)} r="3.5" class="dot" />
+    <polyline points={geometry.line} class="line" class:accent class:micro />
+    {#if !micro}
+      <circle cx={geometry.end[0].toFixed(1)} cy={geometry.end[1].toFixed(1)} r="3.5" class="dot" />
+    {/if}
   </svg>
 {/if}
 
@@ -63,7 +67,9 @@ const geometry = $derived.by(() => {
 
   .line {
     fill: none;
-    stroke: var(--axis);
+    /* --muted, not the mockup's --axis: non-text graphics need >= 3:1 on
+       --surface in both themes (WCAG 1.4.11); --axis measures ~1.5–1.8:1. */
+    stroke: var(--muted);
     stroke-width: 2;
     stroke-linejoin: round;
     stroke-linecap: round;
@@ -71,6 +77,10 @@ const geometry = $derived.by(() => {
 
   .line.accent {
     stroke: var(--s1);
+  }
+
+  .line.micro {
+    stroke-width: 1.5;
   }
 
   .dot {

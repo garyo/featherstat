@@ -1,4 +1,8 @@
+import { mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { buildMmdb } from '../../test/mmdb.ts';
 import { geoFromCity, MmdbProvider, NullProvider } from './geo.ts';
 
 describe('NullProvider', () => {
@@ -16,6 +20,40 @@ describe('MmdbProvider', () => {
 
   it('returns null for an empty ip', () => {
     expect(new MmdbProvider('/nonexistent/geo.mmdb').lookup('')).toBeNull();
+  });
+
+  it('picks up a database installed AFTER a failed first load (boot race heals)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'geo-'));
+    const path = join(dir, 'city.mmdb');
+    let clock = 1_000_000;
+    const provider = new MmdbProvider(path, () => clock);
+    try {
+      expect(provider.lookup('8.8.8.8')).toBeNull(); // hit arrives before the download lands
+      writeFileSync(path, buildMmdb('Boston'));
+      expect(provider.lookup('8.8.8.8')).toBeNull(); // within the recheck window: still degraded
+      clock += 61_000;
+      expect(provider.lookup('8.8.8.8')?.city).toBe('Boston'); // healed, no restart
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reloads when the refresh job swaps the file in place', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'geo-'));
+    const path = join(dir, 'city.mmdb');
+    let clock = 1_000_000;
+    const provider = new MmdbProvider(path, () => clock);
+    try {
+      writeFileSync(path, buildMmdb('Boston'));
+      expect(provider.lookup('8.8.8.8')?.city).toBe('Boston');
+      writeFileSync(path, buildMmdb('Cambridge'));
+      utimesSync(path, new Date(), new Date(Date.now() + 5_000)); // distinct mtime
+      expect(provider.lookup('8.8.8.8')?.city).toBe('Boston'); // old edition until the recheck
+      clock += 61_000;
+      expect(provider.lookup('8.8.8.8')?.city).toBe('Cambridge');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

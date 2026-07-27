@@ -2,6 +2,7 @@ import { mount } from 'svelte';
 import App from './App.svelte';
 import './theme.css';
 import './lib/layout.css';
+import './lib/forms.css';
 
 // The remembered theme override is applied by the inline script in index.html —
 // before first paint, which no module in this graph can guarantee.

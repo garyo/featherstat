@@ -4,7 +4,7 @@ import Sparkline from './Sparkline.svelte';
 import { fillBuckets } from './series.ts';
 import { sliceOf, type WidgetProps } from './types.ts';
 
-let { spec, data }: WidgetProps = $props();
+let { spec, data, window }: WidgetProps = $props();
 
 const names = $derived(tileNames(spec.options));
 const main = $derived(sliceOf(data, 'main'));
@@ -16,7 +16,7 @@ const metrics = $derived(
 const tiles = $derived.by(() => {
   if (main.kind !== 'ready') return undefined;
   // A per-query error on the companion series only costs the sparklines.
-  const series = spark.kind === 'ready' ? fillBuckets(spark.result.rows, metrics) : [];
+  const series = spark.kind === 'ready' ? fillBuckets(spark.result.rows, metrics, window) : [];
   return tileModels(names, main.result.rows[0], main.result.compare?.[0], series);
 });
 </script>
@@ -39,7 +39,7 @@ const tiles = $derived.by(() => {
       <div class="tile">
         <div class="label">{tile.label}</div>
         <div class="row">
-          <div class="value" title={tile.exact}>{tile.value}</div>
+          <div class="value" class:na={tile.value === '—'} title={tile.exact}>{tile.value}</div>
           <div class="delta {tile.delta.tone}">{tile.delta.text}</div>
         </div>
         <!-- A one-point series (e.g. the day-bucketed spark under "today") draws
@@ -55,7 +55,9 @@ const tiles = $derived.by(() => {
 {/if}
 
 <style>
-  .value.loading {
+  .value.loading,
+  .value.na {
+    /* An empty tile must read as "no data", not as a redaction bar of full ink. */
     color: var(--muted);
   }
 </style>

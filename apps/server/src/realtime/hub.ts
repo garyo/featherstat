@@ -140,6 +140,7 @@ function toRealtimeHit(event: EventRow): RealtimeHit {
     ts: event.ts,
     type: event.type,
     path: event.path ?? undefined,
+    eventCategory: event.event_category ?? undefined,
     eventAction: event.event_action ?? undefined,
     country: event.country ?? undefined,
     city: event.city ?? undefined,
