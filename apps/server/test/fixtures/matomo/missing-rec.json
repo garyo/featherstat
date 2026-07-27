@@ -1,0 +1,7 @@
+{
+  "name": "missing rec=1: nothing recorded, still a normal tracking response",
+  "method": "GET",
+  "query": "idsite=1&url=https%3A%2F%2Fpcons.org%2F&action_name=pcons",
+  "expectStatus": 200,
+  "expectHits": []
+}

@@ -1,0 +1,14 @@
+{
+  "name": "link tracking: download",
+  "method": "GET",
+  "query": "idsite=1&rec=1&download=https%3A%2F%2Fpcons.org%2Fdist%2Fpcons-2.1.tar.gz&url=https%3A%2F%2Fpcons.org%2Fdownloads",
+  "expectStatus": 200,
+  "expectHits": [
+    {
+      "siteId": 1,
+      "type": "download",
+      "url": "https://pcons.org/downloads",
+      "targetUrl": "https://pcons.org/dist/pcons-2.1.tar.gz"
+    }
+  ]
+}

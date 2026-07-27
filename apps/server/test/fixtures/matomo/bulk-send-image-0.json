@@ -1,0 +1,20 @@
+{
+  "name": "send_image=0 inside a bulk entry downgrades the whole response to 204",
+  "method": "POST",
+  "query": "",
+  "contentType": "application/json",
+  "body": "{\"requests\":[\"?idsite=1&rec=1&url=https%3A%2F%2Fpcons.org%2F&send_image=0\",\"?idsite=1&rec=1&url=https%3A%2F%2Fpcons.org%2Fdocs\"]}",
+  "expectStatus": 204,
+  "expectHits": [
+    {
+      "siteId": 1,
+      "type": "pageview",
+      "url": "https://pcons.org/"
+    },
+    {
+      "siteId": 1,
+      "type": "pageview",
+      "url": "https://pcons.org/docs"
+    }
+  ]
+}

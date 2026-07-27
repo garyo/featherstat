@@ -17,7 +17,7 @@ ignored, never errors — a tracker must be impossible to break from the tag sid
 | `idsite` | site id | `site_id` (unknown id → 204, dropped; never 4xx to a browser beacon) |
 | `rec=1` | "record this" | required, else ignored |
 | `url` | page URL | split → `hostname`, `path` (query string kept, fragment dropped) |
-| `action_name` | page title | `title` |
+| `action_name` | page title | `title`; with no `url` it still records a pageview (Matomo title-only actions) |
 | `urlref` | referrer | attribution pipeline |
 | `e_c`,`e_a`,`e_n`,`e_v` | event cat/action/name/value | `type='event'` + fields |
 | `link` / `download` | outlink / download URL | `type='outlink'|'download'`, `target_url` |
@@ -26,7 +26,8 @@ ignored, never errors — a tracker must be impossible to break from the tag sid
 | `res` | screen resolution | `screen` |
 | `h`,`m`,`s`,`cdt` | client time | ignored — server clock is authoritative |
 | `_id` | visitor id (16 hex) | replaces fingerprint input (see 03) |
-| `uid` | site-provided user id | opt-in stable hash (see 03) |
+| `uid` | site-provided user id | opt-in stable hash (see 03); ignored unless the site's `uid_enabled` setting is on |
+| `cip` | client IP override (see 06, tee mode) | accepted and carried as `clientIpOverride`; deliberately inert until authenticated server-side senders exist — an unauthenticated override could spoof identity and geo |
 | `lang` | language | fallback; `Accept-Language` header preferred |
 | `rand`, `apiv`, `cookie`, `gt_ms` | noise | ignored |
 | `send_image=0` | response style | **204 No Content** (the packzen webhook depends on this); otherwise 200 + 1×1 GIF |

@@ -1,0 +1,19 @@
+{
+  "name": "event with name and numeric value, sent from a page",
+  "method": "GET",
+  "query": "idsite=4&rec=1&e_c=share&e_a=copy-link&e_n=Cambrian%20Explosion&e_v=2.5&url=https%3A%2F%2Fdeep-timeline.org%2Fera%2Fcambrian",
+  "expectStatus": 200,
+  "expectHits": [
+    {
+      "siteId": 4,
+      "type": "event",
+      "url": "https://deep-timeline.org/era/cambrian",
+      "event": {
+        "category": "share",
+        "action": "copy-link",
+        "name": "Cambrian Explosion",
+        "value": 2.5
+      }
+    }
+  ]
+}

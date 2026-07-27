@@ -1,0 +1,13 @@
+{
+  "name": "client clock, noise and future params are ignored, the pageview survives",
+  "method": "GET",
+  "query": "idsite=5&rec=1&url=https%3A%2F%2Fpelorus-nav.com%2F&h=13&m=45&s=02&cdt=2026-07-27%2013%3A45%3A02&rand=904712&apiv=1&cookie=1&gt_ms=87&pv_id=aB3dEf&_idts=1751000000&send_image=1&some_future_param=whatever",
+  "expectStatus": 200,
+  "expectHits": [
+    {
+      "siteId": 5,
+      "type": "pageview",
+      "url": "https://pelorus-nav.com/"
+    }
+  ]
+}

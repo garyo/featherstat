@@ -14,6 +14,13 @@ export const MAX_QUERIES_PER_BATCH = 32;
 export const MAX_WIDGETS_PER_DASHBOARD = 24;
 
 // ---------------------------------------------------------------------------
+// Sites (docs/03)
+// ---------------------------------------------------------------------------
+
+/** Shape of the `sites.domains` JSON column; the first entry is canonical. */
+export const SiteDomainsSchema = z.array(z.string());
+
+// ---------------------------------------------------------------------------
 // Hits — normalized tracker input (docs/04 § 1–2)
 // ---------------------------------------------------------------------------
 
@@ -46,7 +53,7 @@ export const HitSchema = z.object({
     .optional(),
   /** Site-provided user id; hashed with a stable per-site salt (opt-in, docs/03). */
   uid: z.string().max(200).optional(),
-  /** Matomo `cip` — honored only for authenticated server-side senders. */
+  /** Matomo `cip` — accepted and carried, consumed by nothing until authenticated server-side senders exist (docs/04). */
   clientIpOverride: z.string().max(45).optional(),
 });
 export type Hit = z.infer<typeof HitSchema>;

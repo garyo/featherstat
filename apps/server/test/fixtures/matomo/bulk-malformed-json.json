@@ -1,0 +1,9 @@
+{
+  "name": "malformed JSON bulk body degrades to zero hits, never a 4xx (invariant 4)",
+  "method": "POST",
+  "query": "",
+  "contentType": "application/json",
+  "body": "{\"requests\": [\"?idsite=1&rec=1&url=https",
+  "expectStatus": 200,
+  "expectHits": []
+}

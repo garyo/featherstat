@@ -1,0 +1,14 @@
+{
+  "name": "heartbeat ping keeps url and visitor id, drops client timing",
+  "method": "GET",
+  "query": "idsite=4&rec=1&ping=1&url=https%3A%2F%2Fdeep-timeline.org%2Fera%2Fcambrian&_id=0123456789abcdef&gt_ms=142",
+  "expectStatus": 200,
+  "expectHits": [
+    {
+      "siteId": 4,
+      "type": "ping",
+      "url": "https://deep-timeline.org/era/cambrian",
+      "visitorId": "0123456789abcdef"
+    }
+  ]
+}

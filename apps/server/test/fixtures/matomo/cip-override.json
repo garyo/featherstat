@@ -1,0 +1,14 @@
+{
+  "name": "server-side sender supplies cip; carried on the hit, honored only after auth (docs/04)",
+  "method": "GET",
+  "query": "idsite=6&rec=1&e_c=signup&e_a=account-created&cip=203.0.113.7&send_image=0",
+  "expectStatus": 204,
+  "expectHits": [
+    {
+      "siteId": 6,
+      "type": "event",
+      "event": { "category": "signup", "action": "account-created" },
+      "clientIpOverride": "203.0.113.7"
+    }
+  ]
+}

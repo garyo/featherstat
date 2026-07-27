@@ -1,0 +1,17 @@
+{
+  "name": "pageview with title, referrer, resolution and language; fragment dropped",
+  "method": "GET",
+  "query": "idsite=2&rec=1&url=https%3A%2F%2Fblog.oberbrunner.com%2Fposts%2Fhello%3Futm_source%3Dhn%23intro&action_name=Hello%20World&urlref=https%3A%2F%2Fnews.ycombinator.com%2F&res=1512x982&lang=en-us",
+  "expectStatus": 200,
+  "expectHits": [
+    {
+      "siteId": 2,
+      "type": "pageview",
+      "url": "https://blog.oberbrunner.com/posts/hello?utm_source=hn",
+      "title": "Hello World",
+      "referrer": "https://news.ycombinator.com/",
+      "screen": "1512x982",
+      "lang": "en-us"
+    }
+  ]
+}

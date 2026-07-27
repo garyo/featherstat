@@ -1,0 +1,7 @@
+{
+  "name": "non-numeric idsite: hit dropped silently, never a 4xx to a beacon",
+  "method": "GET",
+  "query": "idsite=six&rec=1&url=https%3A%2F%2Fpackzen.org%2F&send_image=0",
+  "expectStatus": 204,
+  "expectHits": []
+}

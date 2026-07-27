@@ -1,0 +1,26 @@
+{
+  "name": "Matomo JSON bulk POST: three requests in one beacon, unknown top-level keys ignored",
+  "method": "POST",
+  "query": "",
+  "contentType": "application/json",
+  "body": "{\"requests\":[\"?idsite=3&rec=1&url=https%3A%2F%2Fglobe-viz.example%2F&action_name=Globe\",\"?idsite=3&rec=1&e_c=globe&e_a=rotate&e_n=drag\",\"?idsite=3&rec=1&ping=1&url=https%3A%2F%2Fglobe-viz.example%2F\"],\"token_auth\":\"\"}",
+  "expectStatus": 200,
+  "expectHits": [
+    {
+      "siteId": 3,
+      "type": "pageview",
+      "url": "https://globe-viz.example/",
+      "title": "Globe"
+    },
+    {
+      "siteId": 3,
+      "type": "event",
+      "event": { "category": "globe", "action": "rotate", "name": "drag" }
+    },
+    {
+      "siteId": 3,
+      "type": "ping",
+      "url": "https://globe-viz.example/"
+    }
+  ]
+}

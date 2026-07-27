@@ -1,0 +1,15 @@
+{
+  "name": "link tracking: outlink keeps the source page and the destination",
+  "method": "GET",
+  "query": "idsite=1&rec=1&link=https%3A%2F%2Fgithub.com%2Fgaryo%2Fpcons&url=https%3A%2F%2Fpcons.org%2Fdocs&action_name=Docs",
+  "expectStatus": 200,
+  "expectHits": [
+    {
+      "siteId": 1,
+      "type": "outlink",
+      "url": "https://pcons.org/docs",
+      "title": "Docs",
+      "targetUrl": "https://github.com/garyo/pcons"
+    }
+  ]
+}

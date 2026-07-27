@@ -1,0 +1,16 @@
+{
+  "name": "form-encoded POST body, send_image=0 read from the body",
+  "method": "POST",
+  "query": "",
+  "contentType": "application/x-www-form-urlencoded",
+  "body": "idsite=5&rec=1&url=https%3A%2F%2Fpelorus-nav.com%2Fapp&action_name=App%20Shell&send_image=0",
+  "expectStatus": 204,
+  "expectHits": [
+    {
+      "siteId": 5,
+      "type": "pageview",
+      "url": "https://pelorus-nav.com/app",
+      "title": "App Shell"
+    }
+  ]
+}

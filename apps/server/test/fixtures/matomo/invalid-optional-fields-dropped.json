@@ -1,0 +1,13 @@
+{
+  "name": "malformed _id and over-long res are dropped field-by-field, the hit is kept",
+  "method": "GET",
+  "query": "idsite=1&rec=1&url=https%3A%2F%2Fpcons.org%2F&_id=not-a-hex-id&res=12345678901234567890123456",
+  "expectStatus": 200,
+  "expectHits": [
+    {
+      "siteId": 1,
+      "type": "pageview",
+      "url": "https://pcons.org/"
+    }
+  ]
+}

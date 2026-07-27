@@ -1,0 +1,13 @@
+{
+  "name": "action_name without url still records a pageview (Matomo title-only actions)",
+  "method": "GET",
+  "query": "idsite=2&rec=1&action_name=Reading%20List",
+  "expectStatus": 200,
+  "expectHits": [
+    {
+      "siteId": 2,
+      "type": "pageview",
+      "title": "Reading List"
+    }
+  ]
+}

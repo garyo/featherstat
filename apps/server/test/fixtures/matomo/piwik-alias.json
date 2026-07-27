@@ -1,0 +1,14 @@
+{
+  "name": "/piwik.php is an alias of /matomo.php",
+  "method": "GET",
+  "path": "/piwik.php",
+  "query": "idsite=1&rec=1&url=https%3A%2F%2Fpcons.org%2F",
+  "expectStatus": 200,
+  "expectHits": [
+    {
+      "siteId": 1,
+      "type": "pageview",
+      "url": "https://pcons.org/"
+    }
+  ]
+}
