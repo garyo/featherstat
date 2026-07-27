@@ -1,0 +1,91 @@
+/* Design tokens — the validated dataviz reference palette (docs/05, mockups/dashboard.html).
+ * Dark mode is a selected palette, not an inversion: the media query carries the OS
+ * preference; a data-theme stamp on <html> must win in both directions. */
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.1);
+  --s1: #2a78d6;
+  --s2: #eb6834;
+  --s3: #1baf7a;
+  --good: #006300;
+  --bad: #d03b3b;
+  --wash: #cde2fb;
+  --hm0: #efeee9;
+  --hm1: #cde2fb;
+  --hm2: #9ec5f4;
+  --hm3: #5598e7;
+  --hm4: #256abf;
+  --hm5: #0d366b;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255, 255, 255, 0.1);
+    --s1: #3987e5;
+    --s2: #d95926;
+    --s3: #199e70;
+    --good: #0ca30c;
+    --bad: #e66767;
+    --wash: #184f95;
+    --hm0: #232320;
+    --hm1: #0d366b;
+    --hm2: #184f95;
+    --hm3: #256abf;
+    --hm4: #3987e5;
+    --hm5: #86b6ef;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d;
+  --surface: #1a1a19;
+  --ink: #ffffff;
+  --ink-2: #c3c2b7;
+  --muted: #898781;
+  --grid: #2c2c2a;
+  --axis: #383835;
+  --border: rgba(255, 255, 255, 0.1);
+  --s1: #3987e5;
+  --s2: #d95926;
+  --s3: #199e70;
+  --good: #0ca30c;
+  --bad: #e66767;
+  --wash: #184f95;
+  --hm0: #232320;
+  --hm1: #0d366b;
+  --hm2: #184f95;
+  --hm3: #256abf;
+  --hm4: #3987e5;
+  --hm5: #86b6ef;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--ink);
+  font:
+    14px / 1.45 system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+}
