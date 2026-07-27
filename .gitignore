@@ -10,3 +10,4 @@ data/
 *.mmdb
 .env
 .env.*
+docs/*.html
