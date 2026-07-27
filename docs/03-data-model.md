@@ -100,7 +100,9 @@ visitor_id = first 8 bytes of SHA-256(day_salt ∥ site_id ∥ ip ∥ user_agent
   fingerprint input — it makes the shim's behavior identical to Matomo's
   cookieless config mode.
 - Sites that want logged-in continuity may send `uid`; it is hashed with a
-  *stable* per-site salt instead (opt-in, off by default).
+  *stable* per-site salt instead (opt-in via the `uid_enabled:<site id>`
+  settings key, off by default — otherwise `uid` is ignored, so a tag cannot
+  defeat the daily rotation unilaterally).
 
 ## Sessionization
 
