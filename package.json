@@ -10,6 +10,7 @@
     "node": ">=24"
   },
   "scripts": {
+    "bench": "node --experimental-transform-types --disable-warning=ExperimentalWarning --import ./apps/server/test/replay/shared-alias.ts apps/server/test/replay/bench.ts",
     "check": "biome check . && tsc --noEmit",
     "fix": "biome check --write .",
     "test": "vitest run",

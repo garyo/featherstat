@@ -1,0 +1,6 @@
+{
+  "minHitsPerSec": 5000,
+  "maxMeanFlushMs": 25,
+  "maxFlushMs": 100,
+  "maxBytesPerEvent": 400
+}

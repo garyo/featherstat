@@ -9,8 +9,7 @@ server + archiver cron), which is what made it slow and heavy on a small host.
 
 ```mermaid
 flowchart LR
-  subgraph Browsers["Tracked sites"
-    ]
+  subgraph Browsers["Tracked sites"]
     T1["matomo.js shim<br/>(existing tags)"]
     T2["tracker.js ESM<br/>(new sites)"]
     T3["Server-side hits<br/>(webhooks, curl)"]
