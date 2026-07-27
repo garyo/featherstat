@@ -16,6 +16,7 @@
     "hono": "^4.12.32",
     "isbot": "^5.2.1",
     "mmdb-lib": "^3.0.2",
+    "mysql2": "^3.23.2",
     "ua-parser-js": "^1"
   },
   "devDependencies": {
