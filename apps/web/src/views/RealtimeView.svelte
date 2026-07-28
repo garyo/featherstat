@@ -29,11 +29,9 @@ interface Props {
   site: SiteScope;
   /** Site directory for the per-row badges shown when the scope is 'all'. */
   sites: SiteInfo[] | undefined;
-  /** Re-scopes the view in place — realtime is useful both mixed and per-site. */
-  onscopechange: (site: SiteScope) => void;
 }
 
-let { active, recent, site, sites, onscopechange }: Props = $props();
+let { active, recent, site, sites }: Props = $props();
 
 /**
  * Alias dot colors: the chart-safe categorical tokens, CYCLED by index. That is
@@ -67,11 +65,6 @@ const shown = $derived(scoped.slice(0, FEED_SHOW));
 const tally = $derived(countryTally(scoped, now));
 const visitors = $derived(visitorTally(scoped, now));
 
-function onscope(event: Event): void {
-  const raw = (event.currentTarget as HTMLSelectElement).value;
-  onscopechange(raw === 'all' ? 'all' : Number(raw));
-}
-
 function dotColor(color: number): string {
   return ALIAS_COLORS[color % ALIAS_COLORS.length] ?? 'var(--s1)';
 }
@@ -98,12 +91,6 @@ function whatOf(hit: RealtimeHit): string {
 </script>
 
 <div class="filters">
-  <select class="preset scope" aria-label="Realtime scope" value={site === 'all' ? 'all' : String(site)} onchange={onscope}>
-    <option value="all">All sites</option>
-    {#each sites ?? [] as entry (entry.id)}
-      <option value={String(entry.id)}>{entry.name}</option>
-    {/each}
-  </select>
   <span class="compare-note">Live — every hit as it lands · one stream, no queries</span>
 </div>
 
@@ -199,11 +186,5 @@ function whatOf(hit: RealtimeHit): string {
     color: var(--muted);
     font-size: 12px;
     white-space: nowrap;
-  }
-  .scope {
-    border: 1px solid var(--border);
-    background: var(--surface);
-    color: var(--ink);
-    font-weight: 600;
   }
 </style>

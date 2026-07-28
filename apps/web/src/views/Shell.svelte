@@ -8,7 +8,7 @@ import { createLiveStream } from '../lib/live.ts';
 import { pushFeed, seedFeed } from '../lib/realtime.ts';
 import { createSiteDirectory } from '../lib/sites.svelte.ts';
 import { createViewState } from '../lib/state.svelte.ts';
-import type { RangePreset, SiteScope, ViewName } from '../lib/state.ts';
+import { type RangePreset, resolveNav, type SiteScope, type ViewName } from '../lib/state.ts';
 import { toggleTheme } from '../lib/theme.ts';
 import AllSitesView from './AllSitesView.svelte';
 import JourneysView from './JourneysView.svelte';
@@ -97,6 +97,13 @@ let siteTab = $state(typeof view.current.site === 'number' ? view.current.site :
 $effect(() => {
   if (typeof site === 'number') siteTab = site;
 });
+// Deep links can still say ?view=journeys&site=all — snap the scope to the
+// fallback site once, so the picker never wears a scope the page ignores.
+$effect(() => {
+  if (view.current.view === 'journeys' && view.current.site === 'all') {
+    view.update({ site: siteTab });
+  }
+});
 
 // Site names everywhere — including the tab bar of the browser.
 $effect(() => {
@@ -114,19 +121,12 @@ $effect(() => {
 });
 
 /** Opening a scope always lands on its dashboard — one history entry. */
-const selectSite = (next: SiteScope): void => {
-  // Realtime and Journeys are site-scoped views: picking a site re-scopes them
-  // in place; 'all' (and any other view) lands on the dashboard as before.
-  const current = view.current.view;
-  const stays = typeof next === 'number' && (current === 'realtime' || current === 'journeys');
-  view.update({ site: next, view: stays ? current : 'dash' });
-};
+const selectSite = (next: SiteScope): void =>
+  view.update(resolveNav(view.current, { site: next }, siteTab));
 /** Journeys is per-site (docs/05): entered from the overview, it opens on the
  * switcher's last-visited site so the URL stays honest. */
 const selectView = (next: ViewName): void =>
-  view.update(
-    next === 'journeys' && site === 'all' ? { view: next, site: siteTab } : { view: next },
-  );
+  view.update(resolveNav(view.current, { view: next }, siteTab));
 const selectRange = (range: RangePreset): void => view.update({ range });
 const setFilters = (filters: Filter[]): void => view.update({ filters });
 const logout = (): void => {
@@ -138,7 +138,6 @@ const logout = (): void => {
   <Header
     {site}
     view={current}
-    {siteTab}
     sites={directory.sites}
     {connected}
     onselect={selectSite}
@@ -156,13 +155,7 @@ const logout = (): void => {
       />
     {/if}
   {:else if current === 'realtime'}
-    <RealtimeView
-      {active}
-      {recent}
-      {site}
-      sites={directory.sites}
-      onscopechange={(next) => view.update({ site: next })}
-    />
+    <RealtimeView {active} {recent} {site} sites={directory.sites} />
   {:else if current === 'journeys'}
     <!-- A hand-edited ?view=journeys&site=all falls back to the switcher's site. -->
     {@const journeysSite = typeof site === 'number' ? site : siteTab}

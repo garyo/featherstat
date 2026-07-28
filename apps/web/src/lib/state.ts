@@ -28,6 +28,28 @@ export interface ViewState {
 /** What a control changes: one axis of the view state at a time. */
 export type ViewStatePatch = Partial<ViewState>;
 
+/**
+ * The nav rules of the Scope x View header (docs/05): scope changes keep the
+ * view and view changes keep the scope, except the one undefined cell —
+ * Journeys has no All-sites rendering, so entering it at All coerces the
+ * scope to the last-visited site (the picker then truthfully wears it), and
+ * choosing All while on Journeys lands on the overview.
+ */
+export function resolveNav(
+  current: ViewState,
+  patch: ViewStatePatch,
+  siteTab: number,
+): ViewStatePatch {
+  const next = { ...patch };
+  const view = next.view ?? current.view;
+  const site = next.site ?? current.site;
+  if (view === 'journeys' && site === 'all') {
+    if (next.site === 'all') next.view = 'dash';
+    else next.site = siteTab;
+  }
+  return next;
+}
+
 /** Exhaustive by construction: a new preset in `packages/shared` fails to compile until it is labeled. */
 export const RANGE_LABELS: Record<RangePreset, string> = {
   today: 'Today',

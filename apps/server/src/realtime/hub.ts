@@ -112,6 +112,21 @@ export class RealtimeHub {
     }
   }
 
+  /**
+   * Boot seeding of the feed itself: the newest stored non-ping events refill
+   * the ring, so a restart (every deploy) no longer blanks the realtime view.
+   * Same projection and aliaser as the live path — within a UTC day, seeded
+   * hits wear the same names live ones did. Pushed oldest-first so ring ids
+   * stay monotonic; pre-restart resume cursors keep the documented
+   * "gets what's left" semantics (docs/04 § 4).
+   */
+  seedRecent(db: Db, limit = SEED_RECENT_LIMIT): void {
+    const rows = stmt<EventRow>(db, SQL_RECENT_EVENTS).all(limit);
+    for (const row of rows.reverse()) {
+      this.ring.push(toRealtimeHit(row, this.aliaser));
+    }
+  }
+
   private emit(message: RealtimeMessage): void {
     for (const listener of this.listeners) listener(message);
   }
@@ -121,8 +136,16 @@ export class RealtimeHub {
 export function createRealtimeHub(db: Db, options: RealtimeHubOptions = {}): RealtimeHub {
   const hub = new RealtimeHub(options);
   hub.seedActive(db);
+  hub.seedRecent(db);
   return hub;
 }
+
+const SEED_RECENT_LIMIT = 50;
+
+const SQL_RECENT_EVENTS = `SELECT * FROM events
+WHERE type != 'ping'
+ORDER BY id DESC
+LIMIT ?`;
 
 interface ActiveSessionRow {
   site_id: number;

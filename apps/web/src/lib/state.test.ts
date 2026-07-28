@@ -5,6 +5,7 @@ import {
   parseViewState,
   RANGE_LABELS,
   RANGE_PRESETS,
+  resolveNav,
   type SiteScope,
   sameViewState,
   type ViewState,
@@ -91,5 +92,37 @@ describe('range presets', () => {
   it('offers every preset the query API accepts, in display order', () => {
     expect(RANGE_PRESETS).toEqual(['today', '7d', '30d', '90d', 'mtd']);
     for (const preset of RANGE_PRESETS) expect(RANGE_LABELS[preset]).toBeTruthy();
+  });
+});
+
+describe('resolveNav', () => {
+  const at = (site: 'all' | number, view: ViewState['view']): ViewState => ({
+    site,
+    view,
+    range: '30d',
+    filters: [],
+  });
+
+  it('scope changes keep the view', () => {
+    expect(resolveNav(at(2, 'realtime'), { site: 3 }, 2)).toEqual({ site: 3 });
+    expect(resolveNav(at(2, 'dash'), { site: 'all' }, 2)).toEqual({ site: 'all' });
+  });
+
+  it('view changes keep the scope', () => {
+    expect(resolveNav(at(4, 'dash'), { view: 'realtime' }, 4)).toEqual({ view: 'realtime' });
+  });
+
+  it('entering Journeys at All coerces the scope to the last-visited site', () => {
+    expect(resolveNav(at('all', 'dash'), { view: 'journeys' }, 5)).toEqual({
+      view: 'journeys',
+      site: 5,
+    });
+  });
+
+  it('choosing All while on Journeys lands on the overview', () => {
+    expect(resolveNav(at(5, 'journeys'), { site: 'all' }, 5)).toEqual({
+      site: 'all',
+      view: 'dash',
+    });
   });
 });

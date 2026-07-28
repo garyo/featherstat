@@ -1,7 +1,7 @@
 import { ACTIVE_WINDOW_MS, DAY_MS } from '@featherstat/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { binId, event, openTestDb, session, T0, VISITOR } from '../../test/rows.ts';
-import { type Db, upsertSessions, withWriteTransaction } from '../db/index.ts';
+import { type Db, insertEvents, upsertSessions, withWriteTransaction } from '../db/index.ts';
 import { createRealtimeHub, RealtimeHub, type RealtimeMessage } from './hub.ts';
 
 const OTHER = binId(9);
@@ -237,5 +237,52 @@ describe('RealtimeHub active visitors', () => {
     // A seeded visitor coming back is the same person, not a second one.
     hub.record(event({ ts: T0, visitor_id: VISITOR }));
     expect(hub.activeCounts(T0)).toEqual({ 1: 2, 2: 1 });
+  });
+});
+
+describe('RealtimeHub feed seeding', () => {
+  const store = (rows: Parameters<typeof insertEvents>[1]) =>
+    withWriteTransaction(db, () => insertEvents(db, rows));
+
+  it('refills the ring from stored events, oldest first, pings excluded', () => {
+    store([
+      event({ ts: T0 - 3_000, path: '/a' }),
+      event({ ts: T0 - 2_000, type: 'ping', path: '/a' }),
+      event({ ts: T0 - 1_000, path: '/b', visitor_id: OTHER }),
+    ]);
+    const hub = createRealtimeHub(db);
+    const recent = hub.recent(10);
+    expect(recent.map((hit) => hit.path)).toEqual(['/a', '/b']);
+    expect(recent.map((hit) => hit.type)).toEqual(['pageview', 'pageview']);
+  });
+
+  it('seeded hits wear the same alias a live hit gets within the day', () => {
+    store([event({ ts: T0 - 5_000, path: '/stored' })]);
+    const hub = createRealtimeHub(db);
+    const seeded = hub.recent(10)[0];
+    hub.record(event({ ts: T0, path: '/live' }));
+    const live = hub.recent(10).at(-1);
+    expect(seeded?.visitor.name).toBe(live?.visitor.name);
+  });
+
+  it('is a no-op on an empty database and keeps ring ids monotonic after', () => {
+    const hub = createRealtimeHub(db);
+    expect(hub.recent(10)).toEqual([]);
+    const seen: number[] = [];
+    hub.subscribe((message) => {
+      if (message.kind === 'hit') seen.push(message.entry.id);
+    });
+    hub.record(event({ ts: T0 }));
+    hub.record(event({ ts: T0 + 1 }));
+    expect(seen).toEqual([...seen].sort((a, b) => a - b));
+  });
+
+  it('caps the seed at the requested limit, keeping the newest rows', () => {
+    store(
+      Array.from({ length: 6 }, (_, i) => event({ ts: T0 - 6_000 + i * 1_000, path: `/${i}` })),
+    );
+    const hub = new RealtimeHub();
+    hub.seedRecent(db, 3);
+    expect(hub.recent(10).map((hit) => hit.path)).toEqual(['/3', '/4', '/5']);
   });
 });

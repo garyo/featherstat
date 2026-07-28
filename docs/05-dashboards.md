@@ -17,8 +17,17 @@ is the visual reference for everything below (both views, light and dark).
 | **Realtime** | Active-now hero number, live feed, country tally of the last 30 minutes. Pure SSE, no queries. The world map with fading dots (city centroids) moved to **M2**: it needs the map-outline data that arrives with the sankey work, so M1 ships hero + feed + country list and the map joins when that asset lands. |
 | **Settings** | Sites, tracking snippets, tokens, share links, retention, diagnostics (bot counts, ingest health). |
 
-Single-page app; site switcher in the header; every view state (site, range,
-filters) lives in the URL so views are linkable and back-button-correct.
+Single-page app. The header is **Scope × View**: one scope picker (All sites
+| each site) beside three view tabs (Dashboard | Journeys | Realtime) —
+"overview" is simply Dashboard at All-sites scope. Scope changes keep the
+view and view changes keep the scope, with the one undefined cell resolved
+explicitly: Journeys has no All-sites rendering, so entering it at All
+coerces the scope to the last-visited site (the picker truthfully wears it),
+and choosing All while on Journeys lands on the overview. Realtime at All
+scope badges every feed/tally row with its site. Every view state (site,
+range, filters, view) lives in the URL so views are linkable and
+back-button-correct; the realtime feed also survives server restarts (the
+hub ring boot-seeds from the newest stored events).
 
 ## The one-fetch rule
 
