@@ -1,4 +1,5 @@
-<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" role="img">
+  <title>featherstat</title>
   <style>
     .m { fill: #2a78d6; }
     .q { stroke: #2a78d6; }
