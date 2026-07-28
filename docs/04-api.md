@@ -169,6 +169,15 @@ fails closed, never widening to every site.
   5 min) per site + the last 50 enriched events (site, type, path, country,
   city, lat/lon, device — never IP or visitor id). Active counts survive a
   restart: they are seeded from the sessions last seen inside the window.
+- Every hit (snapshot and live) carries `visitor: {name, color}` — an
+  **ephemeral per-day alias** (`Avaricious Aardvark` plus a categorical
+  palette index), derived one-way from `sha256(UTC day ∥ visitor_id)` against
+  the curated word lists in `packages/shared` (see docs/03 § Visitor
+  identity). It exists so several hits from one city read as one visitor or
+  several; it resets at 00:00 UTC, collides harmlessly at this fleet's scale,
+  and is the ONLY identity-shaped field on the wire — the visitor id itself
+  never appears, and there is still no visitor dimension in the query
+  vocabulary.
 - Then: one `hit` event per ingested non-ping hit, same shape, emitted
   post-enrichment rather than post-flush — the feed never waits for a batch.
   A ping keeps its visitor active but is not a feed item. `active` recounts on

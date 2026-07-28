@@ -1,13 +1,16 @@
 import type { RealtimeHit } from '@analytics/shared';
 import { describe, expect, it } from 'vitest';
-import { countryTally, pushFeed, relativeAgo, seedFeed } from './realtime.ts';
+import { countryTally, pushFeed, relativeAgo, seedFeed, visitorTally } from './realtime.ts';
 
 const hit = (over: Partial<RealtimeHit>): RealtimeHit => ({
   siteId: 1,
   ts: 0,
   type: 'pageview',
+  visitor: { name: 'Amiable Aardvark', color: 0 },
   ...over,
 });
+
+const visitor = (name: string, color = 0) => ({ name, color });
 
 describe('relativeAgo', () => {
   it('formats seconds, minutes and hours', () => {
@@ -30,6 +33,48 @@ describe('feed', () => {
     for (let i = 0; i < 150; i++) feed = pushFeed(feed, hit({ ts: i }));
     expect(feed).toHaveLength(100);
     expect(feed[0]?.ts).toBe(149);
+  });
+});
+
+describe('visitorTally', () => {
+  it('groups newest-first hits by alias, ranks by count and keeps the latest place', () => {
+    const now = 100 * 60_000;
+    const hits = [
+      hit({ ts: now - 1_000, visitor: visitor('Bashful Badger', 1) }), // newest: no geo yet
+      hit({ ts: now - 2_000, visitor: visitor('Bashful Badger', 1), city: 'Hanoi', country: 'VN' }),
+      hit({ ts: now - 3_000, visitor: visitor('Bashful Badger', 1), city: 'Hue', country: 'VN' }),
+      hit({ ts: now - 4_000, visitor: visitor('Zesty Zebra', 2), country: 'DE' }),
+      hit({ ts: now - 31 * 60_000, visitor: visitor('Zesty Zebra', 2) }), // outside the window
+    ];
+    expect(visitorTally(hits, now)).toEqual([
+      { name: 'Bashful Badger', color: 1, count: 3, city: 'Hanoi', country: 'VN' },
+      { name: 'Zesty Zebra', color: 2, count: 1, city: undefined, country: 'DE' },
+    ]);
+  });
+
+  it('breaks count ties by name and caps the list', () => {
+    const now = 60_000;
+    const names = ['Merry Marmot', 'Curious Capybara', 'Zany Zebra', 'Amiable Aardvark'];
+    const hits = names.flatMap((name, i) =>
+      Array.from({ length: 9 - i }, (_, j) => hit({ ts: now - j, visitor: visitor(name) })),
+    );
+    hits.push(hit({ ts: now, visitor: visitor('Keen Kiwi') }));
+    hits.push(hit({ ts: now, visitor: visitor('Jaunty Jackrabbit') }));
+
+    const tally = visitorTally(hits, now);
+    expect(tally.map((row) => row.name)).toEqual([
+      'Merry Marmot', // 9 hits … down to 6
+      'Curious Capybara',
+      'Zany Zebra',
+      'Amiable Aardvark',
+      'Jaunty Jackrabbit', // 1 hit each — alphabetical
+      'Keen Kiwi',
+    ]);
+    const capped = visitorTally(
+      Array.from({ length: 12 }, (_, i) => hit({ ts: now, visitor: visitor(`Visitor ${i}`) })),
+      now,
+    );
+    expect(capped).toHaveLength(8);
   });
 });
 

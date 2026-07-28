@@ -1,6 +1,7 @@
 import { ACTIVE_WINDOW_MS, type RealtimeHit, type VersionTick } from '@analytics/shared';
 import { type Db, type EventRow, listSites, stmt } from '../db/index.ts';
 import type { FlushSummary } from '../pipeline/batcher.ts';
+import { VisitorAliaser } from './alias.ts';
 
 /**
  * The realtime hub (docs/02 § Realtime hub, docs/04 § 4): a ring buffer of the
@@ -11,7 +12,9 @@ import type { FlushSummary } from '../pipeline/batcher.ts';
  *
  * Privacy is structural here: `toRealtimeHit` is the only path from a stored row
  * to a wire shape, and visitor ids never leave `ActiveVisitors`, where they
- * exist purely to make a count distinct (CLAUDE.md invariant 3).
+ * exist purely to make a count distinct (CLAUDE.md invariant 3). The one
+ * identity-shaped thing on the wire is the ephemeral per-day alias, a one-way
+ * derivation that resets at 00:00 UTC (docs/03 § Visitor identity).
  */
 
 /** Hits retained for `Last-Event-ID` resume; a slower reconnect gets what is left. */
@@ -36,6 +39,7 @@ export interface RealtimeHubOptions {
 export class RealtimeHub {
   private readonly ring: HitRing;
   private readonly active: ActiveVisitors;
+  private readonly aliaser = new VisitorAliaser();
   private readonly versions = new Map<number, number>();
   private readonly listeners = new Set<RealtimeListener>();
 
@@ -51,7 +55,7 @@ export class RealtimeHub {
   record(event: EventRow): void {
     this.active.touch(event.site_id, event.visitor_id, event.ts);
     if (event.type === 'ping') return;
-    this.emit({ kind: 'hit', entry: this.ring.push(toRealtimeHit(event)) });
+    this.emit({ kind: 'hit', entry: this.ring.push(toRealtimeHit(event, this.aliaser)) });
   }
 
   /** One tick per site whose data changed in a batch — dashboards revalidate on it. */
@@ -134,11 +138,12 @@ FROM sessions WHERE last_seen_at >= ? GROUP BY site_id, visitor_id`;
  * than spreading the row — is what keeps the IP-derived visitor id, and anything
  * else added to `events` later, off the wire. Undefined members vanish in JSON.
  */
-function toRealtimeHit(event: EventRow): RealtimeHit {
+function toRealtimeHit(event: EventRow, aliaser: VisitorAliaser): RealtimeHit {
   return {
     siteId: event.site_id,
     ts: event.ts,
     type: event.type,
+    visitor: aliaser.alias(event.visitor_id, event.ts),
     path: event.path ?? undefined,
     eventCategory: event.event_category ?? undefined,
     eventAction: event.event_action ?? undefined,

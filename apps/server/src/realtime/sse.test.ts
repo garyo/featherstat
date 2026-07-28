@@ -64,9 +64,10 @@ describe('GET /api/realtime', () => {
     const frames = await connect();
     const snapshot = (await frames.next()).data as RealtimeSnapshot;
     expect(snapshot.active).toEqual({ 1: 1, 2: 1 });
+    const geo = { country: 'US', city: 'Boston' };
     expect(snapshot.recent).toEqual([
-      { siteId: 1, ts: T0, type: 'pageview', path: '/a', country: 'US', city: 'Boston', ...POINT },
-      { siteId: 2, ts: T0, type: 'pageview', path: '/b', country: 'US', city: 'Boston', ...POINT },
+      { siteId: 1, ts: T0, type: 'pageview', visitor: ALIAS, path: '/a', ...geo, ...POINT },
+      { siteId: 2, ts: T0, type: 'pageview', visitor: ALIAS, path: '/b', ...geo, ...POINT },
     ]);
   });
 
@@ -105,7 +106,7 @@ describe('GET /api/realtime', () => {
     expect(hit.data).toMatchObject({ type: 'pageview' });
   });
 
-  it('never serializes an IP or a visitor id', async () => {
+  it('carries a stable alias name — never an IP, nor anything shaped like a visitor id', async () => {
     await track(`idsite=1&url=https://one.test/a&_id=${MATOMO_ID}`);
     const frames = await connect();
     const snapshot = await frames.next();
@@ -119,12 +120,22 @@ describe('GET /api/realtime', () => {
       .get() as string;
     expect(visitorHex).toHaveLength(16);
 
+    // Identity on the wire is the per-day alias, one per visitor within the day.
+    const seeded = (snapshot.data as RealtimeSnapshot).recent[0]?.visitor;
+    const live = (hit.data as RealtimeHit).visitor;
+    expect(seeded).toEqual(ALIAS);
+    expect(live).toEqual(seeded);
+
     const wire = `${snapshot.raw}\n${hit.raw}`.toLowerCase();
-    expect(wire).toContain('/a'); // the assertion below is not vacuous
+    expect(wire).toContain('/a'); // the assertions below are not vacuous
     expect(wire).toContain('/b');
     expect(wire).not.toContain(CLIENT_IP);
+    // Subsumed by the hex sweep below, but named so a failure reads precisely.
     expect(wire).not.toContain(MATOMO_ID);
     expect(wire).not.toContain(visitorHex);
+    // The stronger property: nothing even shaped like a visitor id or an IP.
+    expect(wire).not.toMatch(/[0-9a-f]{16}/);
+    expect(wire).not.toMatch(/\b\d{1,3}(\.\d{1,3}){3}\b/);
   });
 
   it('recounts active visitors on a 10 s tick as the window slides', async () => {
@@ -230,6 +241,12 @@ describe('GET /api/realtime', () => {
 
 /** Geo of every hit in this suite, spread into the expected wire shapes. */
 const POINT = { lat: 42.36, lon: -71.06, deviceType: 'desktop' };
+
+/** The alias every wire hit must carry: a two-word name, never an id (docs/03). */
+const ALIAS = {
+  name: expect.stringMatching(/^[A-Z][a-z]+ [A-Z][a-z]+$/),
+  color: expect.any(Number),
+};
 
 interface ActiveFrame {
   active: Record<number, number>;

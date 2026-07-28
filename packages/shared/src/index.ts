@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { RealtimeVisitor } from './alias.ts';
 
 // ---------------------------------------------------------------------------
 // Constants (docs/03)
@@ -479,6 +480,8 @@ export interface RealtimeHit {
   siteId: number;
   ts: number;
   type: HitType;
+  /** Ephemeral per-UTC-day alias — never the visitor id itself (see ./alias.ts). */
+  visitor: RealtimeVisitor;
   path?: string;
   eventCategory?: string;
   eventAction?: string;
@@ -501,4 +504,5 @@ export interface VersionTick {
   version: number;
 }
 
+export * from './alias.ts';
 export * from './widgets.ts';

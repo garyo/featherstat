@@ -1,6 +1,13 @@
 <script lang="ts">
 import type { RealtimeHit } from '@analytics/shared';
-import { countryTally, FEED_SHOW, inScope, relativeAgo } from '../lib/realtime.ts';
+import {
+  countryTally,
+  FEED_SHOW,
+  inScope,
+  relativeAgo,
+  type VisitorCount,
+  visitorTally,
+} from '../lib/realtime.ts';
 import type { SiteScope } from '../lib/state.ts';
 import { countryName, flagEmoji } from '../widgets/geo.ts';
 
@@ -24,6 +31,16 @@ interface Props {
 
 let { active, recent, site }: Props = $props();
 
+/**
+ * Alias dot colors: the chart-safe categorical tokens, CYCLED by index. That is
+ * deliberate — visitor identity is carried by the NAME, the dot only aids
+ * scanning — so the dataviz never-cycle rule for data series does not apply.
+ */
+const ALIAS_COLORS = ['var(--s1)', 'var(--s2)', 'var(--s3)'];
+
+/** Alias under the cursor — its every row lights up, feed and tally alike. */
+let hover = $state<string | undefined>(undefined);
+
 /** Clock for the `ago` labels and the tally window — ticks while the view is up. */
 let now = $state(Date.now());
 $effect(() => {
@@ -41,6 +58,16 @@ const activeNow = $derived(
 const scoped = $derived(recent.filter((hit) => inScope(hit, site)));
 const shown = $derived(scoped.slice(0, FEED_SHOW));
 const tally = $derived(countryTally(scoped, now));
+const visitors = $derived(visitorTally(scoped, now));
+
+function dotColor(color: number): string {
+  return ALIAS_COLORS[color % ALIAS_COLORS.length] ?? 'var(--s1)';
+}
+
+function placeOf(row: VisitorCount): string | undefined {
+  if (row.city !== undefined) return row.city;
+  return row.country !== undefined ? countryName(row.country) : undefined;
+}
 
 function whereOf(hit: RealtimeHit): string {
   if (hit.city !== undefined && hit.country !== undefined) return `${hit.city}, ${hit.country}`;
@@ -70,13 +97,42 @@ function whatOf(hit: RealtimeHit): string {
       <span class="n">{activeNow}</span>
       <span class="active-label">active now</span>
     </div>
+    {#if visitors.length > 0}
+      <div class="visitor-tally" role="list">
+        {#each visitors as row (row.name)}
+          {@const place = placeOf(row)}
+          <div
+            class="visitor-row"
+            role="listitem"
+            class:hl={hover === row.name}
+            onmouseenter={() => (hover = row.name)}
+            onmouseleave={() => (hover = undefined)}
+          >
+            <span class="vdot" style="background: {dotColor(row.color)}"></span>
+            <span class="vname">{row.name}</span>
+            <span class="vmeta"
+              >· {row.count}
+              {row.count === 1 ? 'hit' : 'hits'}{place !== undefined ? ` · ${place}` : ''}</span
+            >
+          </div>
+        {/each}
+      </div>
+    {/if}
     {#if shown.length === 0}
       <p class="widget-note">Waiting for the first hit…</p>
     {:else}
-      <div class="feed">
+      <div class="feed" role="list">
         {#each shown as hit, i (i)}
-          <div class="feed-row">
+          <div
+            class="feed-row"
+            role="listitem"
+            class:hl={hover === hit.visitor.name}
+            onmouseenter={() => (hover = hit.visitor.name)}
+            onmouseleave={() => (hover = undefined)}
+          >
             <span class="ago">{relativeAgo(hit.ts, now)}</span>
+            <span class="vdot" style="background: {dotColor(hit.visitor.color)}"></span>
+            <span class="vname">{hit.visitor.name}</span>
             {#if hit.country !== undefined}
               {@const flag = flagEmoji(hit.country)}
               {#if flag !== undefined}<span class="flag" title={countryName(hit.country)}

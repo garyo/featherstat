@@ -42,7 +42,13 @@ const latest = (): FakeEventSource => {
   return source;
 };
 
-const hit: RealtimeHit = { siteId: 4, ts: 1_770_000_000_000, type: 'pageview', path: '/timeline' };
+const hit: RealtimeHit = {
+  siteId: 4,
+  ts: 1_770_000_000_000,
+  type: 'pageview',
+  visitor: { name: 'Nimble Narwhal', color: 1 },
+  path: '/timeline',
+};
 const tick: VersionTick = { siteId: 4, version: 12 };
 const snapshot: RealtimeSnapshot = { active: { 4: 2 }, recent: [] };
 

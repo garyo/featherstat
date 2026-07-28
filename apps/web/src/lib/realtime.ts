@@ -12,6 +12,8 @@ export const FEED_KEEP = 100;
 export const FEED_SHOW = 30;
 export const TALLY_WINDOW_MS = 30 * 60_000;
 export const TALLY_ROWS = 8;
+/** Per-visitor tally rows shown under the active-now hero. */
+export const VISITOR_ROWS = 8;
 
 export function inScope(hit: RealtimeHit, site: SiteScope): boolean {
   return site === 'all' || hit.siteId === site;
@@ -42,6 +44,48 @@ export interface CountryCount {
   count: number;
   /** Share of the leading country, 0–100 with one decimal — the inline bar width. */
   pct: string;
+}
+
+export interface VisitorCount {
+  /** The per-day alias — the visitor's identity here (docs/03 § Visitor identity). */
+  name: string;
+  /** Categorical palette index from the alias; cycling tokens is fine — see shared/alias. */
+  color: number;
+  count: number;
+  /** Newest located hit's city, else its country code; undefined when never located. */
+  city?: string;
+  country?: string;
+}
+
+/**
+ * Hits inside the window grouped by visitor alias, most hits first (ties by
+ * name), capped at `VISITOR_ROWS`. Expects the feed's newest-first order, so
+ * the first geo seen per visitor is their latest.
+ */
+export function visitorTally(
+  hits: readonly RealtimeHit[],
+  now: number,
+  windowMs = TALLY_WINDOW_MS,
+): VisitorCount[] {
+  const byName = new Map<string, VisitorCount>();
+  for (const hit of hits) {
+    if (now - hit.ts > windowMs) continue;
+    let row = byName.get(hit.visitor.name);
+    if (row === undefined) {
+      row = { name: hit.visitor.name, color: hit.visitor.color, count: 0 };
+      byName.set(row.name, row);
+    }
+    row.count += 1;
+    // First LOCATED hit wins (the newest, given the order) — an unlocated one
+    // must not blank a visitor an older hit can still place.
+    if (row.city === undefined && row.country === undefined && hit.country !== undefined) {
+      row.city = hit.city;
+      row.country = hit.country;
+    }
+  }
+  const rows = [...byName.values()];
+  rows.sort((a, b) => b.count - a.count || (a.name < b.name ? -1 : 1));
+  return rows.slice(0, VISITOR_ROWS);
 }
 
 /** Hits inside the window, counted by country, unknown geo skipped, ties by code. */

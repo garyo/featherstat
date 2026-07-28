@@ -104,6 +104,30 @@ visitor_id = first 8 bytes of SHA-256(day_salt ∥ site_id ∥ ip ∥ user_agent
   settings key, off by default — otherwise `uid` is ignored, so a tag cannot
   defeat the daily rotation unilaterally).
 
+### Realtime visitor aliases (SSE only)
+
+The realtime feed needs to tell several hits from one city apart — one
+visitor or several — without ever shipping the visitor id. Each wire hit
+therefore carries an **ephemeral alias**:
+
+```
+alias = word-lists[ sha256(UTC day ∥ visitor_id) ]   →  {name, color}
+```
+
+- `name` is a whimsical alliterating two-word name (`Avaricious Aardvark`)
+  drawn from two curated 48-entry lists in `packages/shared`, paired by
+  initial letter; `color` is a categorical palette index derived from the
+  name. ~96 distinct names: collisions at this fleet's scale (a handful of
+  concurrent visitors) are rare and accepted — two colliding visitors simply
+  merge in the live view.
+- The derivation is one-way and includes the **UTC day**, so aliases reset at
+  00:00 UTC exactly like the day salt. The day input is load-bearing for
+  `_id`- and `uid`-derived visitor ids, which do not rotate on their own.
+- Aliases exist **only on the SSE wire**: never stored, never logged, and the
+  line holds — there is **no visitor dimension in the query vocabulary**.
+  Nothing can list, filter, or aggregate by visitor; the alias merely lets
+  the live feed's reader see that two hits share an origin for one day.
+
 ## Sessionization
 
 In-memory map `(site_id, visitor_id) → { session_id, last_seen, … }`, 30 min

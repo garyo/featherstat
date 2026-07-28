@@ -1,4 +1,4 @@
-import { ACTIVE_WINDOW_MS } from '@analytics/shared';
+import { ACTIVE_WINDOW_MS, DAY_MS } from '@analytics/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { binId, event, openTestDb, session, T0, VISITOR } from '../../test/rows.ts';
 import { type Db, upsertSessions, withWriteTransaction } from '../db/index.ts';
@@ -44,6 +44,7 @@ describe('RealtimeHub feed', () => {
       siteId: 1,
       ts: T0,
       type: 'pageview',
+      visitor: { name: 'Exuberant Ermine', color: 1 },
       path: '/a',
       eventAction: 'click',
       country: 'US',
@@ -52,8 +53,6 @@ describe('RealtimeHub feed', () => {
       lon: -71.06,
       deviceType: 'desktop',
     });
-    // The row's identity columns have no wire representation at all.
-    expect(JSON.stringify(hit)).not.toContain(Buffer.from(VISITOR).toString('hex'));
   });
 
   it('keeps pings out of the feed but still counts them as active', () => {
@@ -126,6 +125,68 @@ describe('RealtimeHub feed', () => {
       { siteId: 2, version: 1 },
       { siteId: 2, version: 2 },
     ]);
+  });
+});
+
+describe('RealtimeHub visitor aliases', () => {
+  it('gives one visitor one alias for the whole UTC day', () => {
+    const hub = new RealtimeHub();
+    hub.record(event({ ts: T0, visitor_id: VISITOR }));
+    hub.record(event({ ts: T0 + 3_600_000, visitor_id: VISITOR, seq: 2 }));
+
+    const aliases = hub.recent(50).map((hit) => hit.visitor);
+    expect(aliases).toEqual([
+      { name: 'Exuberant Ermine', color: 1 },
+      { name: 'Exuberant Ermine', color: 1 },
+    ]);
+  });
+
+  it('re-mints the alias when the UTC day rolls over', () => {
+    const hub = new RealtimeHub();
+    hub.record(event({ ts: T0, visitor_id: VISITOR }));
+    vi.setSystemTime(T0 + DAY_MS);
+    hub.record(event({ ts: T0 + DAY_MS, visitor_id: VISITOR, seq: 2 }));
+
+    const [today, tomorrow] = hub.recent(50).map((hit) => hit.visitor);
+    expect(today).toEqual({ name: 'Exuberant Ermine', color: 1 });
+    expect(tomorrow).toEqual({ name: 'Wistful Wallaby', color: 2 });
+  });
+
+  it('keeps one alias through a backward clock step across midnight', () => {
+    // Midnight after T0 (14:00 UTC) is T0 + 10h. First hit lands just past it;
+    // an NTP step then times the next hit just before it. The salt is
+    // forward-only (identity.ts), so the alias day must hold too — otherwise
+    // one visitor wears two names for the rest of the day.
+    const midnight = T0 + 10 * 3_600_000;
+    const hub = new RealtimeHub();
+    hub.record(event({ ts: midnight + 60_000, visitor_id: VISITOR }));
+    hub.record(event({ ts: midnight - 60_000, visitor_id: VISITOR, seq: 2 }));
+
+    const names = hub.recent(50).map((hit) => hit.visitor.name);
+    expect(names).toEqual(['Wistful Wallaby', 'Wistful Wallaby']);
+  });
+
+  it('tells two visitors apart by name', () => {
+    const hub = new RealtimeHub();
+    hub.record(event({ ts: T0, visitor_id: VISITOR }));
+    hub.record(event({ ts: T0, visitor_id: OTHER }));
+
+    const names = hub.recent(50).map((hit) => hit.visitor.name);
+    expect(names).toEqual(['Exuberant Ermine', 'Humble Hedgehog']);
+  });
+
+  it('puts alias names on the wire but never a 16-hex token or an IP shape', () => {
+    const hub = new RealtimeHub();
+    hub.record(event({ ts: T0, visitor_id: VISITOR, path: '/a' }));
+    hub.record(event({ ts: T0, visitor_id: OTHER, path: '/b', country: 'VN', city: 'Hanoi' }));
+
+    const wire = JSON.stringify(hub.recent(50));
+    expect(wire).toContain('"name":"Exuberant Ermine"');
+    expect(wire).toContain('"name":"Humble Hedgehog"');
+    // The stronger property: no visitor hex — and nothing even shaped like one.
+    expect(wire).not.toContain(Buffer.from(VISITOR).toString('hex'));
+    expect(wire).not.toMatch(/[0-9a-f]{16}/i);
+    expect(wire).not.toMatch(/\b\d{1,3}(\.\d{1,3}){3}\b/);
   });
 });
 
