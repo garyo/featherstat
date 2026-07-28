@@ -128,7 +128,7 @@ export function teeSinkFromEnv(
 /** Matomo bulk format: one request string per hit of the original request. */
 function bulkBody(hits: readonly Hit[], ctx: HitContext, tokenAuth: string | undefined): string {
   const body: { requests: string[]; token_auth?: string } = {
-    requests: hits.map((hit) => serializeHit(hit, ctx)),
+    requests: hits.map((hit) => serializeHit(hit, ctx, tokenAuth !== undefined)),
   };
   // Bulk-level only: Matomo honors it for every request in the batch, and the
   // per-request strings routinely end up in logs — no token copies there.
@@ -142,7 +142,7 @@ function bulkBody(hits: readonly Hit[], ctx: HitContext, tokenAuth: string | und
  * IP — the sender's own override wins, e.g. a server-side webhook), `cdt`
  * (original receive time) and `ua`; the bulk-level `token_auth` authorizes them.
  */
-function serializeHit(hit: Hit, ctx: HitContext): string {
+function serializeHit(hit: Hit, ctx: HitContext, authorized: boolean): string {
   const params = new URLSearchParams();
   params.set('idsite', String(hit.siteId));
   params.set('rec', '1');
@@ -177,6 +177,10 @@ function serializeHit(hit: Hit, ctx: HitContext): string {
   if (hit.uid !== undefined) params.set('uid', hit.uid);
   if (ctx.userAgent !== '') params.set('ua', ctx.userAgent);
   params.set('cdt', String(Math.floor(ctx.receivedAt / 1000)));
-  params.set('cip', hit.clientIpOverride ?? ctx.ip);
+  // Matomo does not merely ignore an unauthorized cip — it invalidates the
+  // whole request inside an HTTP 200 (verified against Matomo 5.4 during the
+  // reference cutover). Without a token, forwarding without cip loses only
+  // Matomo-side geo, not the hit.
+  if (authorized) params.set('cip', hit.clientIpOverride ?? ctx.ip);
   return `?${params.toString()}`;
 }

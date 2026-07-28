@@ -91,7 +91,7 @@ describe('createTeeSink', () => {
 
   it("forwards the sender's own cip override, not the transport peer", async () => {
     const { fetchFn, calls } = deferredFetch();
-    const tee = createTeeSink(() => {}, { forwardUrl: FORWARD_URL, fetchFn });
+    const tee = createTeeSink(() => {}, { forwardUrl: FORWARD_URL, fetchFn, tokenAuth: 'tok' });
     // A server-side webhook: transport peer is the worker's egress, cip is the visitor.
     tee.sink([hit({ clientIpOverride: '198.51.100.77' })], ctx({ ip: '203.0.113.5' }));
     await flush();
@@ -130,7 +130,7 @@ describe('createTeeSink', () => {
 
   it('round-trips: the forwarded body re-parses to the original hit', async () => {
     const { fetchFn, calls } = deferredFetch();
-    const tee = createTeeSink(() => {}, { forwardUrl: FORWARD_URL, fetchFn });
+    const tee = createTeeSink(() => {}, { forwardUrl: FORWARD_URL, fetchFn, tokenAuth: 'tok' });
     const original = hit({
       type: 'event',
       title: 'Page',
@@ -252,5 +252,27 @@ describe('teeSinkFromEnv', () => {
     expect(
       teeSinkFromEnv(() => {}, { MATOMO_FORWARD_URL: 'http://localhost:8081/matomo.php' }),
     ).toBeDefined();
+  });
+});
+
+describe('cip authorization gate', () => {
+  it('omits cip when no tokenAuth is configured (Matomo invalidates unauthorized cip)', async () => {
+    const { fetchFn, calls } = deferredFetch();
+    const tee = createTeeSink(() => {}, { forwardUrl: FORWARD_URL, fetchFn });
+    tee.sink([hit()], ctx());
+    await Promise.resolve();
+    const body = JSON.parse(calls[0]?.body ?? '') as { requests: string[]; token_auth?: string };
+    expect(body.requests[0]).not.toContain('cip=');
+    expect(body.token_auth).toBeUndefined();
+  });
+
+  it('includes cip when tokenAuth is configured', async () => {
+    const { fetchFn, calls } = deferredFetch();
+    const tee = createTeeSink(() => {}, { forwardUrl: FORWARD_URL, fetchFn, tokenAuth: 'tok' });
+    tee.sink([hit()], ctx());
+    await Promise.resolve();
+    const body = JSON.parse(calls[0]?.body ?? '') as { requests: string[]; token_auth?: string };
+    expect(body.requests[0]).toContain('cip=');
+    expect(body.token_auth).toBe('tok');
   });
 });
