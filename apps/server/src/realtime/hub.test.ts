@@ -1,4 +1,10 @@
-import { ACTIVE_WINDOW_MS, DAY_MS } from '@featherstat/shared';
+import {
+  ACTIVE_WINDOW_MS,
+  DAY_MS,
+  PING_CLAMP_MS,
+  SESSION_TIMEOUT_MS,
+  TALLY_WINDOW_MS,
+} from '@featherstat/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { binId, event, openTestDb, session, T0, VISITOR } from '../../test/rows.ts';
 import { type Db, insertEvents, upsertSessions, withWriteTransaction } from '../db/index.ts';
@@ -237,6 +243,142 @@ describe('RealtimeHub active visitors', () => {
     // A seeded visitor coming back is the same person, not a second one.
     hub.record(event({ ts: T0, visitor_id: VISITOR }));
     expect(hub.activeCounts(T0)).toEqual({ 1: 2, 2: 1 });
+  });
+});
+
+describe('RealtimeHub visitor engagement', () => {
+  /** `{ name: engagedMs }` — the wire rows keyed for readable assertions. */
+  const timeByName = (hub: RealtimeHub, now: number): Record<string, number> =>
+    Object.fromEntries(hub.visitors(now).map((entry) => [entry.name, entry.engagedMs]));
+
+  it('accrues every gap, pings included — the heartbeat is what makes it honest', () => {
+    const hub = new RealtimeHub();
+    hub.record(event({ ts: T0, visitor_id: VISITOR }));
+    hub.record(event({ ts: T0 + 5_000, type: 'ping', visitor_id: VISITOR, seq: 2 }));
+    hub.record(event({ ts: T0 + 12_000, visitor_id: VISITOR, seq: 3 }));
+
+    expect(hub.visitors(T0 + 12_000)).toEqual([
+      {
+        name: 'Exuberant Ermine',
+        color: 1,
+        siteId: 1,
+        engagedMs: 12_000,
+        lastTs: T0 + 12_000,
+      },
+    ]);
+  });
+
+  it('credits at most PING_CLAMP_MS per gap, so an idle tab cannot inflate the figure', () => {
+    const hub = new RealtimeHub();
+    hub.record(event({ ts: T0, visitor_id: VISITOR }));
+    hub.record(event({ ts: T0 + 60_000, visitor_id: VISITOR, seq: 2 }));
+
+    expect(timeByName(hub, T0 + 60_000)).toEqual({ 'Exuberant Ermine': PING_CLAMP_MS });
+  });
+
+  it('starts the figure over when a visitor returns on a new session', () => {
+    const hub = new RealtimeHub();
+    hub.record(event({ ts: T0, visitor_id: VISITOR }));
+    // Another visitor at the window edge: the sweep runs, and an entry exactly
+    // at the cutoff must survive it — otherwise this proves nothing below.
+    hub.record(event({ ts: T0 + TALLY_WINDOW_MS, visitor_id: OTHER }));
+    expect(timeByName(hub, T0 + TALLY_WINDOW_MS)['Exuberant Ermine']).toBe(0);
+
+    const returning = T0 + SESSION_TIMEOUT_MS + 1_000;
+    hub.record(event({ ts: returning, visitor_id: VISITOR, seq: 2 }));
+    hub.record(event({ ts: returning + 3_000, visitor_id: VISITOR, seq: 3 }));
+
+    // The card reads as time on THIS visit, not a day's worth of them.
+    expect(timeByName(hub, returning + 3_000)['Exuberant Ermine']).toBe(3_000);
+  });
+
+  it('forgets a visitor once the tally window has passed, reader or none', () => {
+    const hub = new RealtimeHub();
+    hub.record(event({ ts: T0, visitor_id: VISITOR }));
+    hub.record(event({ ts: T0, site_id: 2, visitor_id: OTHER }));
+    expect(hub.trackedEngagement()).toBe(2);
+
+    // No reader in between: ingest alone must evict what aged out.
+    const late = T0 + 2 * TALLY_WINDOW_MS;
+    hub.record(event({ ts: late, visitor_id: STALE }));
+    expect(hub.trackedEngagement()).toBe(1);
+
+    // The reader's own sweep: an entry exactly at the cutoff still counts.
+    expect(hub.visitors(late + TALLY_WINDOW_MS)).toHaveLength(1);
+    expect(hub.visitors(late + TALLY_WINDOW_MS + 1)).toEqual([]);
+  });
+
+  it('tracks a visitor per site, and keys every entry by the alias its hits wear', () => {
+    const hub = new RealtimeHub();
+    hub.record(event({ ts: T0, visitor_id: VISITOR }));
+    hub.record(event({ ts: T0 + 1_000, site_id: 2, visitor_id: VISITOR }));
+    hub.record(event({ ts: T0 + 2_000, visitor_id: OTHER }));
+
+    expect(hub.visitors(T0 + 2_000)).toEqual([
+      expect.objectContaining({ name: 'Exuberant Ermine', siteId: 1 }),
+      expect.objectContaining({ name: 'Exuberant Ermine', siteId: 2 }),
+      expect.objectContaining({ name: 'Humble Hedgehog', siteId: 1 }),
+    ]);
+    // Same names the feed carries, so the two views merge into one row per visitor.
+    expect(hub.recent(50).map((hit) => hit.visitor.name)).toEqual([
+      'Exuberant Ermine',
+      'Exuberant Ermine',
+      'Humble Hedgehog',
+    ]);
+
+    const wire = JSON.stringify(hub.visitors(T0 + 2_000));
+    expect(wire).not.toContain(Buffer.from(VISITOR).toString('hex'));
+    expect(wire).not.toMatch(/[0-9a-f]{16}/i);
+    expect(wire).not.toMatch(/\b\d{1,3}(\.\d{1,3}){3}\b/);
+  });
+
+  it('seeds engaged time from the same sessions the counter is seeded from', () => {
+    withWriteTransaction(db, () => {
+      upsertSessions(db, [
+        session({
+          id: Uint8Array.of(1),
+          visitor_id: VISITOR,
+          last_seen_at: T0 - 60_000,
+          engaged_ms: 90_000,
+        }),
+        // Outside the 5-min active window, inside the 30-min tally window.
+        session({
+          id: Uint8Array.of(2),
+          site_id: 2,
+          visitor_id: OTHER,
+          last_seen_at: T0 - 20 * 60_000,
+          engaged_ms: 45_000,
+        }),
+        session({
+          id: Uint8Array.of(3),
+          visitor_id: STALE,
+          last_seen_at: T0 - TALLY_WINDOW_MS - 1,
+          engaged_ms: 5_000,
+        }),
+      ]);
+    });
+
+    const hub = createRealtimeHub(db);
+    expect(timeByName(hub, T0)).toEqual({ 'Exuberant Ermine': 90_000, 'Humble Hedgehog': 45_000 });
+    // The wider seed query must not widen the counter itself.
+    expect(hub.activeCounts(T0)).toEqual({ 1: 1, 2: 0 });
+
+    // A deploy is not a break in the visit: the next hit continues the figure.
+    hub.record(event({ ts: T0, visitor_id: VISITOR }));
+    expect(timeByName(hub, T0)['Exuberant Ermine']).toBe(90_000 + PING_CLAMP_MS);
+  });
+
+  it('restores the newest session of a visitor who has more than one', () => {
+    withWriteTransaction(db, () => {
+      upsertSessions(db, [
+        session({ id: Uint8Array.of(1), last_seen_at: T0 - 25 * 60_000, engaged_ms: 300_000 }),
+        session({ id: Uint8Array.of(2), last_seen_at: T0 - 60_000, engaged_ms: 12_000 }),
+      ]);
+    });
+
+    expect(createRealtimeHub(db).visitors(T0)).toEqual([
+      { name: 'Exuberant Ermine', color: 1, siteId: 1, engagedMs: 12_000, lastTs: T0 - 60_000 },
+    ]);
   });
 });
 

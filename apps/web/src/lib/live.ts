@@ -1,5 +1,6 @@
 import {
   ACTIVE_TICK_MS,
+  type RealtimeActive,
   type RealtimeHit,
   type RealtimeSnapshot,
   type VersionTick,
@@ -41,7 +42,7 @@ export const REVALIDATE_DEBOUNCE_MS = 3_000;
 export interface LiveEvents {
   snapshot: RealtimeSnapshot;
   hit: RealtimeHit;
-  active: { active: Record<number, number> };
+  active: RealtimeActive;
   version: VersionTick;
   /**
    * Client-synthesized: the snapshot of a RE-connection. Version ticks during the

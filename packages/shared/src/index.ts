@@ -25,6 +25,8 @@ export const ACTIVE_TICK_MS = 10_000;
 export const HEARTBEAT_MS = 25_000;
 /** Hits a fresh connection's `snapshot` is seeded with. */
 export const SNAPSHOT_HITS = 50;
+/** Window the realtime view's per-visitor tally covers — and how long the hub retains a visitor's engaged time. */
+export const TALLY_WINDOW_MS = 30 * 60_000;
 
 // ---------------------------------------------------------------------------
 // Sites (docs/03)
@@ -492,10 +494,33 @@ export interface RealtimeHit {
   deviceType?: string;
 }
 
+/**
+ * One visitor's engaged time inside `TALLY_WINDOW_MS`, keyed by the same per-day
+ * alias its hits wear — the visitor id itself never reaches the wire (docs/03 §
+ * Visitor identity). `engagedMs` covers the CURRENT session only: a gap past the
+ * session timeout starts it over, so the figure reads as time on site.
+ */
+export interface RealtimeEngagement {
+  name: string;
+  color: number;
+  siteId: number;
+  engagedMs: number;
+  /** Last event (ping included) from this visitor — what ages the entry out. */
+  lastTs: number;
+}
+
 export interface RealtimeSnapshot {
   /** Distinct visitors in the last 5 minutes, by site id. */
   active: Record<number, number>;
   recent: RealtimeHit[];
+  /** Engaged time per visitor seen in the last 30 minutes. */
+  visitors: RealtimeEngagement[];
+}
+
+/** The 10 s `active` recount: the counts every view shows, plus per-visitor engaged time. */
+export interface RealtimeActive {
+  active: Record<number, number>;
+  visitors: RealtimeEngagement[];
 }
 
 /** Emitted when a site's data changes; dashboards revalidate their query batch. */

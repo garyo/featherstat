@@ -1,6 +1,14 @@
-import type { RealtimeHit } from '@featherstat/shared';
+import type { RealtimeEngagement, RealtimeHit } from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
-import { countryTally, pushFeed, relativeAgo, seedFeed, visitorTally } from './realtime.ts';
+import {
+  countryTally,
+  engagementByName,
+  pushFeed,
+  relativeAgo,
+  seedFeed,
+  visitorMeta,
+  visitorTally,
+} from './realtime.ts';
 
 const hit = (over: Partial<RealtimeHit>): RealtimeHit => ({
   siteId: 1,
@@ -11,6 +19,14 @@ const hit = (over: Partial<RealtimeHit>): RealtimeHit => ({
 });
 
 const visitor = (name: string, color = 0) => ({ name, color });
+
+const engagement = (over: Partial<RealtimeEngagement> & { name: string }): RealtimeEngagement => ({
+  color: 0,
+  siteId: 1,
+  engagedMs: 0,
+  lastTs: 0,
+  ...over,
+});
 
 describe('relativeAgo', () => {
   it('formats seconds, minutes and hours', () => {
@@ -76,6 +92,46 @@ describe('visitorTally', () => {
       now,
     );
     expect(capped).toHaveLength(8);
+  });
+});
+
+describe('visitor engagement', () => {
+  const entries = [
+    engagement({ name: 'Observant Ocelot', engagedMs: 100_000, siteId: 1 }),
+    engagement({ name: 'Observant Ocelot', engagedMs: 60_000, siteId: 2 }),
+    engagement({ name: 'Quiet Quokka', engagedMs: 0, siteId: 1 }),
+  ];
+
+  it('sums a visitor across their sites, scopes to one, and drops a fresh 0', () => {
+    expect(engagementByName(entries, 'all')).toEqual(new Map([['Observant Ocelot', 160_000]]));
+    expect(engagementByName(entries, 2)).toEqual(new Map([['Observant Ocelot', 60_000]]));
+    expect(engagementByName(entries, 3)).toEqual(new Map());
+  });
+
+  it('merges the time into the tally by alias and reads as one row', () => {
+    const now = 60_000;
+    const hits = [
+      hit({ ts: now, visitor: visitor('Observant Ocelot'), city: 'Masterton', country: 'NZ' }),
+      hit({ ts: now - 1_000, visitor: visitor('Observant Ocelot') }),
+      hit({ ts: now - 2_000, visitor: visitor('Observant Ocelot') }),
+      hit({ ts: now - 3_000, visitor: visitor('Quiet Quokka') }),
+    ];
+    const [ocelot, quokka] = visitorTally(hits, now, engagementByName(entries, 'all'));
+    if (ocelot === undefined || quokka === undefined) throw new Error('expected two rows');
+
+    expect(ocelot).toMatchObject({ count: 3, engagedMs: 160_000 });
+    expect(visitorMeta(ocelot, 'Masterton, NZ', 'deep-timeline.org')).toBe(
+      '3 hits · 2m 40s · Masterton, NZ · deep-timeline.org',
+    );
+
+    // Nothing on the clock yet: the row reads `1 hit`, never `1 hit · 0s`.
+    expect(quokka.engagedMs).toBeUndefined();
+    expect(visitorMeta(quokka)).toBe('1 hit');
+  });
+
+  it('leaves the tally alone when no engagement has arrived', () => {
+    const rows = visitorTally([hit({ ts: 0, visitor: visitor('Quiet Quokka') })], 0);
+    expect(rows[0]?.engagedMs).toBeUndefined();
   });
 });
 

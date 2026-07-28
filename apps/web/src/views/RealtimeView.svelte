@@ -1,11 +1,13 @@
 <script lang="ts">
-import type { RealtimeHit, SiteInfo } from '@featherstat/shared';
+import type { RealtimeEngagement, RealtimeHit, SiteInfo } from '@featherstat/shared';
 import {
   countryTally,
+  engagementByName,
   FEED_SHOW,
   inScope,
   relativeAgo,
   type VisitorCount,
+  visitorMeta,
   visitorTally,
 } from '../lib/realtime.ts';
 import type { SiteScope } from '../lib/state.ts';
@@ -26,12 +28,14 @@ interface Props {
   active: Record<number, number>;
   /** App-level rolling feed, newest first, all sites. */
   recent: readonly RealtimeHit[];
+  /** Engaged time per visitor, recounted by the server every 10 s. */
+  visitorTimes: readonly RealtimeEngagement[];
   site: SiteScope;
   /** Site directory for the per-row badges shown when the scope is 'all'. */
   sites: SiteInfo[] | undefined;
 }
 
-let { active, recent, site, sites }: Props = $props();
+let { active, recent, visitorTimes, site, sites }: Props = $props();
 
 /**
  * Alias dot colors: the chart-safe categorical tokens, CYCLED by index. That is
@@ -63,7 +67,7 @@ const activeNow = $derived(
 const scoped = $derived(recent.filter((hit) => inScope(hit, site)));
 const shown = $derived(scoped.slice(0, FEED_SHOW));
 const tally = $derived(countryTally(scoped, now));
-const visitors = $derived(visitorTally(scoped, now));
+const visitors = $derived(visitorTally(scoped, now, engagementByName(visitorTimes, site)));
 
 function dotColor(color: number): string {
   return ALIAS_COLORS[color % ALIAS_COLORS.length] ?? 'var(--s1)';
@@ -121,11 +125,7 @@ function whatOf(hit: RealtimeHit): string {
             <span class="vdot" style="background: {dotColor(row.color)}"></span>
             <span class="vname">{row.name}</span>
             <span class="vmeta"
-              >· {row.count}
-              {row.count === 1 ? 'hit' : 'hits'}{place !== undefined ? ` · ${place}` : ''}{site ===
-              'all'
-                ? ` · ${siteNameOf(row.siteId)}`
-                : ''}</span
+              >· {visitorMeta(row, place, site === 'all' ? siteNameOf(row.siteId) : undefined)}</span
             >
           </div>
         {/each}

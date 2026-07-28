@@ -3,6 +3,7 @@ import {
   ACTIVE_WINDOW_MS,
   BATCH_INTERVAL_MS,
   HEARTBEAT_MS,
+  type RealtimeActive,
   type RealtimeHit,
   type RealtimeSnapshot,
 } from '@featherstat/shared';
@@ -112,6 +113,8 @@ describe('GET /api/realtime', () => {
     const snapshot = await frames.next();
     await track(`idsite=1&url=https://one.test/b&_id=${MATOMO_ID}`);
     const hit = await frames.next();
+    vi.advanceTimersByTime(ACTIVE_TICK_MS);
+    const recount = await frames.until('active');
 
     pipeline.flush();
     const visitorHex = db
@@ -125,10 +128,14 @@ describe('GET /api/realtime', () => {
     const live = (hit.data as RealtimeHit).visitor;
     expect(seeded).toEqual(ALIAS);
     expect(live).toEqual(seeded);
+    // The engagement rows are identity-shaped too, and get swept with the rest.
+    expect((snapshot.data as RealtimeSnapshot).visitors).toEqual([engaged(0, T0)]);
+    expect((recount.data as RealtimeActive).visitors).toEqual([engaged(0, T0)]);
 
-    const wire = `${snapshot.raw}\n${hit.raw}`.toLowerCase();
+    const wire = `${snapshot.raw}\n${hit.raw}\n${recount.raw}`.toLowerCase();
     expect(wire).toContain('/a'); // the assertions below are not vacuous
     expect(wire).toContain('/b');
+    expect(wire).toContain('"engagedms":0');
     expect(wire).not.toContain(CLIENT_IP);
     // Subsumed by the hex sweep below, but named so a failure reads precisely.
     expect(wire).not.toContain(MATOMO_ID);
@@ -145,11 +152,43 @@ describe('GET /api/realtime', () => {
 
     vi.advanceTimersByTime(ACTIVE_TICK_MS);
     const first = await frames.until('active');
-    expect(first.data).toEqual({ active: { 1: 1, 2: 0 } });
+    expect(first.data).toEqual({ active: { 1: 1, 2: 0 }, visitors: [engaged(0, T0)] });
 
     vi.advanceTimersByTime(ACTIVE_WINDOW_MS);
-    const later = await frames.until('active', (data) => (data as ActiveFrame).active[1] === 0);
-    expect(later.data).toEqual({ active: { 1: 0, 2: 0 } });
+    const later = await frames.until('active', (data) => (data as RealtimeActive).active[1] === 0);
+    // Still inside the wider tally window: gone from the hero, not from the card.
+    expect(later.data).toEqual({ active: { 1: 0, 2: 0 }, visitors: [engaged(0, T0)] });
+  });
+
+  it('carries per-visitor engaged time in the snapshot and on every recount', async () => {
+    await track('idsite=1&url=https://one.test/a');
+    vi.advanceTimersByTime(5_000);
+    await track('idsite=1&url=https://one.test/a&ping=1'); // the heartbeat, off the feed
+
+    const frames = await connect();
+    const snapshot = (await frames.next()).data as RealtimeSnapshot;
+    expect(snapshot.visitors).toEqual([engaged(5_000, T0 + 5_000)]);
+    // Keyed by the alias the feed already shows — that is what merges the two.
+    expect(snapshot.visitors[0]?.name).toBe(snapshot.recent[0]?.visitor.name);
+
+    vi.advanceTimersByTime(5_000);
+    await track('idsite=1&url=https://one.test/b');
+    vi.advanceTimersByTime(ACTIVE_TICK_MS);
+
+    const recount = await frames.until('active');
+    expect(recount.data).toEqual({
+      active: { 1: 1, 2: 0 },
+      visitors: [engaged(10_000, T0 + 10_000)],
+    });
+  });
+
+  it('scopes the engagement rows to ?sites= like everything else', async () => {
+    await track('idsite=1&url=https://one.test/a');
+    await track('idsite=2&url=https://two.test/b', '203.0.113.9');
+
+    const frames = await connect({}, '?sites=2');
+    const snapshot = (await frames.next()).data as RealtimeSnapshot;
+    expect(snapshot.visitors).toEqual([engaged(0, T0, 2)]);
   });
 
   it('keeps the connection warm with a comment every 25 s', async () => {
@@ -248,9 +287,13 @@ const ALIAS = {
   color: expect.any(Number),
 };
 
-interface ActiveFrame {
-  active: Record<number, number>;
-}
+/** The engagement row for this suite's one visitor, at `engagedMs` of engaged time. */
+const engaged = (engagedMs: number, lastTs: number, siteId = 1) => ({
+  ...ALIAS,
+  siteId,
+  engagedMs,
+  lastTs,
+});
 
 interface Frame {
   /** Exactly the bytes on the wire, for assertions about what must never be there. */

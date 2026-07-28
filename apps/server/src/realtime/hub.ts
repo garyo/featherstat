@@ -1,20 +1,31 @@
-import { ACTIVE_WINDOW_MS, type RealtimeHit, type VersionTick } from '@featherstat/shared';
+import {
+  ACTIVE_WINDOW_MS,
+  PING_CLAMP_MS,
+  type RealtimeEngagement,
+  type RealtimeHit,
+  type RealtimeVisitor,
+  SESSION_TIMEOUT_MS,
+  TALLY_WINDOW_MS,
+  type VersionTick,
+} from '@featherstat/shared';
 import { type Db, type EventRow, listSites, stmt } from '../db/index.ts';
 import type { FlushSummary } from '../pipeline/batcher.ts';
 import { VisitorAliaser } from './alias.ts';
 
 /**
  * The realtime hub (docs/02 § Realtime hub, docs/04 § 4): a ring buffer of the
- * most recent enriched hits plus per-site active-visitor counts, fanned out to
- * every SSE subscriber. It is fed straight from the pipeline — the live feed
- * must not wait for the 200 ms batch flush — and from the batcher's flush hook,
- * whose per-site version ticks are what make every dashboard live by default.
+ * most recent enriched hits, per-site active-visitor counts, and per-visitor
+ * engaged time, fanned out to every SSE subscriber. It is fed straight from the
+ * pipeline — the live feed must not wait for the 200 ms batch flush — and from
+ * the batcher's flush hook, whose per-site version ticks are what make every
+ * dashboard live by default.
  *
  * Privacy is structural here: `toRealtimeHit` is the only path from a stored row
- * to a wire shape, and visitor ids never leave `ActiveVisitors`, where they
- * exist purely to make a count distinct (CLAUDE.md invariant 3). The one
- * identity-shaped thing on the wire is the ephemeral per-day alias, a one-way
- * derivation that resets at 00:00 UTC (docs/03 § Visitor identity).
+ * to a wire shape, and visitor ids never leave `ActiveVisitors` and
+ * `VisitorEngagement`, where they exist purely as map keys (CLAUDE.md
+ * invariant 3). The one identity-shaped thing on the wire is the ephemeral
+ * per-day alias, a one-way derivation that resets at 00:00 UTC (docs/03 §
+ * Visitor identity).
  */
 
 /** Hits retained for `Last-Event-ID` resume; a slower reconnect gets what is left. */
@@ -39,6 +50,7 @@ export interface RealtimeHubOptions {
 export class RealtimeHub {
   private readonly ring: HitRing;
   private readonly active: ActiveVisitors;
+  private readonly engagement = new VisitorEngagement(TALLY_WINDOW_MS);
   private readonly aliaser = new VisitorAliaser();
   private readonly versions = new Map<number, number>();
   private readonly listeners = new Set<RealtimeListener>();
@@ -50,12 +62,15 @@ export class RealtimeHub {
 
   /**
    * Post-enrichment hook: called for every stored hit as it happens. Pings keep
-   * their visitor active but are not feed items (docs/04 § 4).
+   * their visitor active and accrue engaged time, but are not feed items
+   * (docs/04 § 4) — the heartbeat is precisely what makes the time honest.
    */
   record(event: EventRow): void {
+    const visitor = this.aliaser.alias(event.visitor_id, event.ts);
     this.active.touch(event.site_id, event.visitor_id, event.ts);
+    this.engagement.touch(event.site_id, event.visitor_id, event.ts, visitor);
     if (event.type === 'ping') return;
-    this.emit({ kind: 'hit', entry: this.ring.push(toRealtimeHit(event, this.aliaser)) });
+    this.emit({ kind: 'hit', entry: this.ring.push(toRealtimeHit(event, visitor)) });
   }
 
   /** One tick per site whose data changed in a batch — dashboards revalidate on it. */
@@ -70,6 +85,11 @@ export class RealtimeHub {
   /** Distinct visitors per site inside the active window; sites idle since boot report 0. */
   activeCounts(now = Date.now()): Record<number, number> {
     return this.active.counts(now);
+  }
+
+  /** Engaged time per visitor seen inside the tally window — aliases only, never identity. */
+  visitors(now = Date.now()): RealtimeEngagement[] {
+    return this.engagement.entries(now);
   }
 
   /**
@@ -91,6 +111,11 @@ export class RealtimeHub {
     return this.active.size();
   }
 
+  /** Retained engagement entries — the same diagnostic for the wider window. */
+  trackedEngagement(): number {
+    return this.engagement.size();
+  }
+
   subscribe(listener: RealtimeListener): () => void {
     this.listeners.add(listener);
     return () => {
@@ -99,16 +124,27 @@ export class RealtimeHub {
   }
 
   /**
-   * Boot seeding (docs/04 § 4): sessions still inside the active window restore
-   * the live counter, so a restart does not blank it for five minutes. Every
-   * known site is registered too, so a quiet one reports 0 instead of nothing.
+   * Boot seeding (docs/04 § 4): stored sessions restore both live figures, so a
+   * deploy neither blanks the counter for five minutes nor zeroes everyone's
+   * engaged time. One query spans the wider of the two windows; the counter
+   * takes only the rows still inside its own. Every known site is registered
+   * too, so a quiet one reports 0 instead of nothing.
    */
-  seedActive(db: Db, now = Date.now()): void {
+  seedSessions(db: Db, now = Date.now()): void {
     for (const site of listSites(db)) this.active.register(site.id);
-    for (const row of stmt<ActiveSessionRow>(db, SQL_ACTIVE_SESSIONS).all(
-      now - this.active.windowMs,
+    for (const row of stmt<RecentSessionRow>(db, SQL_RECENT_SESSIONS).all(
+      now - this.engagement.windowMs,
     )) {
-      this.active.touch(row.site_id, row.visitor_id, row.last_seen_at);
+      if (row.last_seen_at >= now - this.active.windowMs) {
+        this.active.touch(row.site_id, row.visitor_id, row.last_seen_at);
+      }
+      this.engagement.seed(
+        row.site_id,
+        row.visitor_id,
+        row.engaged_ms,
+        row.last_seen_at,
+        this.aliaser.alias(row.visitor_id, row.last_seen_at),
+      );
     }
   }
 
@@ -123,7 +159,7 @@ export class RealtimeHub {
   seedRecent(db: Db, limit = SEED_RECENT_LIMIT): void {
     const rows = stmt<EventRow>(db, SQL_RECENT_EVENTS).all(limit);
     for (const row of rows.reverse()) {
-      this.ring.push(toRealtimeHit(row, this.aliaser));
+      this.ring.push(toRealtimeHit(row, this.aliaser.alias(row.visitor_id, row.ts)));
     }
   }
 
@@ -135,7 +171,7 @@ export class RealtimeHub {
 /** Builds the hub and seeds it from the open sessions already in the database. */
 export function createRealtimeHub(db: Db, options: RealtimeHubOptions = {}): RealtimeHub {
   const hub = new RealtimeHub(options);
-  hub.seedActive(db);
+  hub.seedSessions(db);
   hub.seedRecent(db);
   return hub;
 }
@@ -147,13 +183,20 @@ WHERE type != 'ping'
 ORDER BY id DESC
 LIMIT ?`;
 
-interface ActiveSessionRow {
+interface RecentSessionRow {
   site_id: number;
   visitor_id: Uint8Array;
   last_seen_at: number;
+  engaged_ms: number;
 }
 
-const SQL_ACTIVE_SESSIONS = `SELECT site_id, visitor_id, MAX(last_seen_at) AS last_seen_at
+/**
+ * Newest session per (site, visitor). `engaged_ms` is a bare column beside a
+ * lone `MAX()`, which SQLite defines as coming from the row that produced the
+ * maximum — so the engaged time restored is the one belonging to that last
+ * session, matching the in-memory rule that a new visit starts a new figure.
+ */
+const SQL_RECENT_SESSIONS = `SELECT site_id, visitor_id, MAX(last_seen_at) AS last_seen_at, engaged_ms
 FROM sessions WHERE last_seen_at >= ? GROUP BY site_id, visitor_id`;
 
 /**
@@ -161,12 +204,12 @@ FROM sessions WHERE last_seen_at >= ? GROUP BY site_id, visitor_id`;
  * than spreading the row — is what keeps the IP-derived visitor id, and anything
  * else added to `events` later, off the wire. Undefined members vanish in JSON.
  */
-function toRealtimeHit(event: EventRow, aliaser: VisitorAliaser): RealtimeHit {
+function toRealtimeHit(event: EventRow, visitor: RealtimeVisitor): RealtimeHit {
   return {
     siteId: event.site_id,
     ts: event.ts,
     type: event.type,
-    visitor: aliaser.alias(event.visitor_id, event.ts),
+    visitor,
     path: event.path ?? undefined,
     eventCategory: event.event_category ?? undefined,
     eventAction: event.event_action ?? undefined,
@@ -281,4 +324,82 @@ class ActiveVisitors {
       }
     }
   }
+}
+
+/**
+ * Engaged time per (site, visitor), accrued exactly as the sessionizer accrues
+ * `engaged_ms` (docs/03): every event — pings included — credits the gap since
+ * that visitor's last one, clamped at `PING_CLAMP_MS`.
+ *
+ * A gap past the session timeout starts the figure over rather than continuing
+ * it. That is the "time on site" reading the card wants: a visitor who returns
+ * after lunch is on a fresh visit, and their card should say how long THIS one
+ * has been going, not sum a day of them.
+ *
+ * As in `ActiveVisitors`, the visitor id is here only as a map key; what leaves
+ * is the per-day alias the hits already wear (CLAUDE.md invariant 3).
+ */
+class VisitorEngagement {
+  private readonly byVisitor = new Map<string, RealtimeEngagement>();
+  private lastPruneAt = 0;
+
+  constructor(readonly windowMs: number) {}
+
+  touch(siteId: number, visitorId: Uint8Array, ts: number, visitor: RealtimeVisitor): void {
+    // Opportunistic eviction, exactly as in ActiveVisitors: without it an
+    // unwatched server would retain every (site, visitor, day) forever.
+    if (ts - this.lastPruneAt >= this.windowMs) {
+      this.prune(ts);
+      this.lastPruneAt = ts;
+    }
+    const entry = this.byVisitor.get(visitorKey(siteId, visitorId));
+    if (entry === undefined || ts - entry.lastTs > SESSION_TIMEOUT_MS) {
+      this.seed(siteId, visitorId, 0, ts, visitor);
+      return;
+    }
+    entry.engagedMs += Math.min(Math.max(ts - entry.lastTs, 0), PING_CLAMP_MS);
+    entry.lastTs = ts;
+    // The alias re-mints at 00:00 UTC and the hits follow it, so this must too —
+    // otherwise the entry keeps a name no row in the feed still wears.
+    entry.name = visitor.name;
+    entry.color = visitor.color;
+  }
+
+  /** Boot seeding: a stored session's engaged time and last-seen resume the figure. */
+  seed(
+    siteId: number,
+    visitorId: Uint8Array,
+    engagedMs: number,
+    ts: number,
+    visitor: RealtimeVisitor,
+  ): void {
+    this.byVisitor.set(visitorKey(siteId, visitorId), {
+      name: visitor.name,
+      color: visitor.color,
+      siteId,
+      engagedMs,
+      lastTs: ts,
+    });
+  }
+
+  /** Copies, so a serialized frame can never be mutated by later ingest. */
+  entries(now: number): RealtimeEngagement[] {
+    this.prune(now);
+    return [...this.byVisitor.values()].map((entry) => ({ ...entry }));
+  }
+
+  size(): number {
+    return this.byVisitor.size;
+  }
+
+  private prune(now: number): void {
+    const cutoff = now - this.windowMs;
+    for (const [key, entry] of this.byVisitor) {
+      if (entry.lastTs < cutoff) this.byVisitor.delete(key);
+    }
+  }
+}
+
+function visitorKey(siteId: number, visitorId: Uint8Array): string {
+  return `${siteId}:${Buffer.from(visitorId).toString('hex')}`;
 }

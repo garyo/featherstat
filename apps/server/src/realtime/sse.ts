@@ -1,6 +1,8 @@
 import {
   ACTIVE_TICK_MS,
   HEARTBEAT_MS,
+  type RealtimeActive,
+  type RealtimeEngagement,
   RealtimeSitesSchema,
   type RealtimeSnapshot,
   SNAPSHOT_HITS,
@@ -25,7 +27,8 @@ type SiteFilter = ReadonlySet<number> | undefined;
  * `GET /api/realtime` (docs/04 § 4). One stream carries everything live: a
  * `snapshot` on connect, then `hit` per non-ping hit, `active` recounts, and a
  * `version` tick per site whose data landed — the signal that makes every
- * dashboard view live by default (docs/02, docs/05 R22).
+ * dashboard view live by default (docs/02, docs/05 R22). `snapshot` and
+ * `active` both carry `visitors`: engaged time per alias, pings included.
  *
  * Only `hit` frames carry an `id:`, so a client's `Last-Event-ID` always names a
  * ring-buffer entry.
@@ -57,7 +60,7 @@ export function createRealtimeRoutes(hub: RealtimeHub): Hono {
         }
       });
       const recount = setInterval(
-        () => send(frame('active', { active: activeFor(hub, sites) })),
+        () => send(frame('active', activeFrame(hub, sites))),
         ACTIVE_TICK_MS,
       );
       const heartbeat = setInterval(() => send(HEARTBEAT_FRAME), HEARTBEAT_MS);
@@ -108,7 +111,12 @@ function snapshotFor(
   // last 50 as well would double-deliver them.
   const recent =
     resumeFrom === undefined ? hub.recent(SNAPSHOT_HITS, (hit) => covers(sites, hit.siteId)) : [];
-  return { active: activeFor(hub, sites), recent };
+  return { ...activeFrame(hub, sites), recent };
+}
+
+/** The `active` recount, and the head of every snapshot: counts plus engaged time. */
+function activeFrame(hub: RealtimeHub, sites: SiteFilter): RealtimeActive {
+  return { active: activeFor(hub, sites), visitors: visitorsFor(hub, sites) };
 }
 
 function activeFor(hub: RealtimeHub, sites: SiteFilter): Record<number, number> {
@@ -120,6 +128,10 @@ function activeFor(hub: RealtimeHub, sites: SiteFilter): Record<number, number> 
     if (count !== undefined) active[siteId] = count;
   }
   return active;
+}
+
+function visitorsFor(hub: RealtimeHub, sites: SiteFilter): RealtimeEngagement[] {
+  return hub.visitors().filter((entry) => covers(sites, entry.siteId));
 }
 
 function hitFrame(entry: RealtimeEntry): SSEMessage {

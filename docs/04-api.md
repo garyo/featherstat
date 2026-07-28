@@ -169,6 +169,16 @@ fails closed, never widening to every site.
   5 min) per site + the last 50 enriched events (site, type, path, country,
   city, lat/lon, device — never IP or visitor id). Active counts survive a
   restart: they are seeded from the sessions last seen inside the window.
+- `snapshot` and `active` also carry `visitors`: one
+  `{name, color, siteId, engagedMs, lastTs}` per visitor seen in the last
+  30 minutes — the realtime card's tally window. `engagedMs` is accrued
+  exactly as the sessionizer accrues `engaged_ms` (docs/03: every event,
+  **pings included**, credits its gap clamped at 20 s), and covers the
+  visitor's CURRENT session: a gap past the 30-minute session timeout starts
+  it over, so the figure reads as time on site rather than a daily total. The
+  rows are keyed by the same per-day alias the hits wear — the join the
+  dashboard makes — and are seeded on boot from the same session rows the
+  active counts come from, so a deploy does not zero everyone's time.
 - Every hit (snapshot and live) carries `visitor: {name, color}` — an
   **ephemeral per-day alias** (`Avaricious Aardvark` plus a categorical
   palette index), derived one-way from `sha256(UTC day ∥ visitor_id)` against

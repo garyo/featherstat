@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { Filter, RealtimeHit } from '@featherstat/shared';
+import type { Filter, RealtimeEngagement, RealtimeHit } from '@featherstat/shared';
 import type { AdminClient } from '../lib/admin.ts';
 import { createQueryClient } from '../lib/api.ts';
 import type { AuthState } from '../lib/auth.svelte.ts';
@@ -55,12 +55,16 @@ $effect(() => () => {
 // when a view mounts — the SSE snapshot fires once per connection, not per view.
 let active = $state<Record<number, number>>({});
 let recent = $state<RealtimeHit[]>([]);
+/** Per-visitor engaged time: server-side, since only it sees the heartbeat pings. */
+let visitorTimes = $state<RealtimeEngagement[]>([]);
 live.on('snapshot', (snapshot) => {
   active = snapshot.active;
   recent = seedFeed(snapshot.recent, 'all');
+  visitorTimes = snapshot.visitors;
 });
 live.on('active', (payload) => {
   active = payload.active;
+  visitorTimes = payload.visitors;
 });
 live.on('hit', (hit) => {
   recent = pushFeed(recent, hit);
@@ -155,7 +159,7 @@ const logout = (): void => {
       />
     {/if}
   {:else if current === 'realtime'}
-    <RealtimeView {active} {recent} {site} sites={directory.sites} />
+    <RealtimeView {active} {recent} {visitorTimes} {site} sites={directory.sites} />
   {:else if current === 'journeys'}
     <!-- A hand-edited ?view=journeys&site=all falls back to the switcher's site. -->
     {@const journeysSite = typeof site === 'number' ? site : siteTab}

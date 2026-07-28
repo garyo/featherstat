@@ -50,7 +50,7 @@ const hit: RealtimeHit = {
   path: '/timeline',
 };
 const tick: VersionTick = { siteId: 4, version: 12 };
-const snapshot: RealtimeSnapshot = { active: { 4: 2 }, recent: [] };
+const snapshot: RealtimeSnapshot = { active: { 4: 2 }, recent: [], visitors: [] };
 
 beforeEach(() => {
   FakeEventSource.opened = [];
