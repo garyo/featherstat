@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { Dashboard } from '@analytics/shared';
+import type { Dashboard } from '@featherstat/shared';
 import Modal from '../editor/Modal.svelte';
 import type { AdminClient } from '../lib/admin.ts';
 import type { DashboardStore } from '../lib/dashboards.svelte.ts';

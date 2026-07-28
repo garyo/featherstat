@@ -1,4 +1,4 @@
-import { type Dashboard, DashboardSchema, dashboardBatchIssue } from '@analytics/shared';
+import { type Dashboard, DashboardSchema, dashboardBatchIssue } from '@featherstat/shared';
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { Auth, AuthEnv } from '../auth/auth.ts';

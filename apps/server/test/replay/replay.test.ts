@@ -1,4 +1,4 @@
-import { BATCH_INTERVAL_MS, ENGAGEMENT_THRESHOLD_MS } from '@analytics/shared';
+import { BATCH_INTERVAL_MS, ENGAGEMENT_THRESHOLD_MS } from '@featherstat/shared';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createSite, type Db, openDb, withWriteTransaction } from '../../src/db/index.ts';
 import { parseMatomoRequest } from '../../src/ingest/matomo.ts';

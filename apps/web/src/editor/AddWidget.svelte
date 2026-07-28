@@ -7,7 +7,7 @@ import {
   type VizType,
   VizTypeSchema,
   type WidgetSpec,
-} from '@analytics/shared';
+} from '@featherstat/shared';
 import { METRIC_LABELS } from '../widgets/format.ts';
 import { REGISTRY } from '../widgets/registry.ts';
 import Modal from './Modal.svelte';

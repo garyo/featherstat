@@ -1,4 +1,4 @@
-# analytics-new (working title)
+# featherstat
 
 A fast, small, self-hosted, multi-site web-analytics platform in TypeScript.
 
@@ -69,12 +69,9 @@ dashboards — with none of the weight.
 
 ## Name
 
-**Undecided** — the folder name and the "Wakescope" wordmark in the mockup are
-placeholders only; the repo stays local-git until a real name is chosen, then
-goes public on GitHub. Availability notes (checked 2026-07-27, npm + DNS):
-free on npm — wakescope (+ .com/.dev unregistered), taffrail, trafficscope,
-viewscope; taken/crowded — webscope (Yahoo), sitescope (Micro Focus),
-spyglass, skopos. Don't bake any placeholder name into code.
+**featherstat** — chosen 2026-07-28 (npm + featherstat.site/.com/.dev free at
+the time). Brand mark and favicon sources in `brand/`. The repo goes public on
+GitHub as `featherstat` when ready.
 
 ## Status
 

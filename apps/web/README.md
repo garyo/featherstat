@@ -1,4 +1,4 @@
-# @analytics/web
+# @featherstat/web
 
 The dashboard SPA: Svelte 5 (runes) + Vite, hand-rolled SVG charts, one
 `/api/query` batch per view state. Design tokens live in `src/theme.css` and the

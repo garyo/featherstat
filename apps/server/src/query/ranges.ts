@@ -1,4 +1,4 @@
-import { DAY_MS, type Range } from '@analytics/shared';
+import { DAY_MS, type Range } from '@featherstat/shared';
 import { localParts } from '../pipeline/sessionizer.ts';
 
 /**

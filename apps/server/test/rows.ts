@@ -1,4 +1,4 @@
-import { isQueryError, type QueryResponse, type QueryResult } from '@analytics/shared';
+import { isQueryError, type QueryResponse, type QueryResult } from '@featherstat/shared';
 import {
   createSite,
   type Db,

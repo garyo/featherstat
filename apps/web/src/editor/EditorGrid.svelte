@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { SiteInfo, WidgetSpec } from '@analytics/shared';
+import type { SiteInfo, WidgetSpec } from '@featherstat/shared';
 import { REGISTRY, spanClass } from '../widgets/registry.ts';
 import type { WidgetData } from '../widgets/types.ts';
 import { dropIndex, type Rect } from './drag.ts';

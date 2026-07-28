@@ -7,9 +7,10 @@ read the relevant one before implementing in an area: 01 requirements ·
 02 architecture/stack · 03 schema/sessionization · 04 APIs · 05 dashboards ·
 06 migration · 07 roadmap · 08 build order (work packages WP0–WP14).
 
-Project name is **undecided**. "Wakescope" appears only as the mockup
-wordmark. Package scope `@analytics/*` is a placeholder. Never bake a name
-into code, table names, or user-visible strings beyond the mockup.
+The project is named **featherstat** (chosen 2026-07-28). Package scope is
+`@featherstat/*`; the brand mark and favicon sources live in `brand/`
+(`brand/featherstat.svg` is the master — regenerate the PNGs with qlmanage
+after edits and keep the a11y `<title>`).
 
 ## Commands (bun, never npm)
 

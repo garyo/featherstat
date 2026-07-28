@@ -1,4 +1,4 @@
-import { NtfySettingsSchema } from '@analytics/shared';
+import { NtfySettingsSchema } from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
 import { draftFrom, emptyRule, fieldErrors, type NtfyDraft, settingsBody } from './ntfy.ts';
 

@@ -1,4 +1,4 @@
-import { DAY_MS } from '@analytics/shared';
+import { DAY_MS } from '@featherstat/shared';
 import { type Db, getSetting, stmt, withWriteTransaction } from '../db/index.ts';
 
 /** Settings key (docs/05 § Settings). Absent = keep raw events forever, the default (docs/03). */

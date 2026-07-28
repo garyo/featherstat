@@ -1,4 +1,4 @@
-import type { Filter, SequenceQuery } from '@analytics/shared';
+import type { Filter, SequenceQuery } from '@featherstat/shared';
 import {
   boundsCte,
   type CompileError,

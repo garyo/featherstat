@@ -1,4 +1,4 @@
-import type { Dashboard } from '@analytics/shared';
+import type { Dashboard } from '@featherstat/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AdminClient } from './admin.ts';
 import { createDashboardStore } from './dashboards.svelte.ts';

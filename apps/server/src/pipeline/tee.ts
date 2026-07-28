@@ -1,4 +1,4 @@
-import type { Hit, HitContext } from '@analytics/shared';
+import type { Hit, HitContext } from '@featherstat/shared';
 import type { HitSink } from './index.ts';
 
 /**

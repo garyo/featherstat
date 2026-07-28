@@ -10,7 +10,7 @@
  * a navigation, JSON for a fetch), `/share/<token>` renders the page too.
  */
 
-import type { Dashboard, QueryResponse } from '@analytics/shared';
+import type { Dashboard, QueryResponse } from '@featherstat/shared';
 
 /** `GET /share/:token` body (the server's `ShareView`): the layout and its batch, one response. */
 export interface SharePayload {

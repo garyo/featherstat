@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { type Hit, type HitContext, HitSchema } from '@analytics/shared';
+import { type Hit, type HitContext, HitSchema } from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../src/index.ts';
 

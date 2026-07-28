@@ -5,7 +5,7 @@ import {
   HEARTBEAT_MS,
   type RealtimeHit,
   type RealtimeSnapshot,
-} from '@analytics/shared';
+} from '@featherstat/shared';
 import type { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DESKTOP_UA, event, openTestDb, T0 } from '../../test/rows.ts';

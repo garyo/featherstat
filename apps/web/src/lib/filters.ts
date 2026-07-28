@@ -1,4 +1,4 @@
-import { type Dimension, type Filter, FilterSchema } from '@analytics/shared';
+import { type Dimension, type Filter, FilterSchema } from '@featherstat/shared';
 
 /**
  * Filter chips (docs/05: active dimension filters as removable chips, living in

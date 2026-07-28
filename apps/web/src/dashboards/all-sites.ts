@@ -1,4 +1,4 @@
-import { type Dashboard, DashboardSchema } from '@analytics/shared';
+import { type Dashboard, DashboardSchema } from '@featherstat/shared';
 
 /**
  * The all-sites overview is a dashboard like any other (docs/05: everything is

@@ -1,4 +1,4 @@
-import { isSecureWebhookUrl, type NtfySettingsView, NtfyUrlSchema } from '@analytics/shared';
+import { isSecureWebhookUrl, type NtfySettingsView, NtfyUrlSchema } from '@featherstat/shared';
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openTestDb, T0 } from '../../test/rows.ts';

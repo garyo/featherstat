@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { Filter, RealtimeHit } from '@analytics/shared';
+import type { Filter, RealtimeHit } from '@featherstat/shared';
 import type { AdminClient } from '../lib/admin.ts';
 import { createQueryClient } from '../lib/api.ts';
 import type { AuthState } from '../lib/auth.svelte.ts';

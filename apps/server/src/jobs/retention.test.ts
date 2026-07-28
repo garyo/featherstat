@@ -1,4 +1,4 @@
-import { DAY_MS } from '@analytics/shared';
+import { DAY_MS } from '@featherstat/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { binId, event, openTestDb, session } from '../../test/rows.ts';
 import {

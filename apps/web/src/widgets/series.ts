@@ -1,4 +1,4 @@
-import { DAY_MS, type ResultRow } from '@analytics/shared';
+import { DAY_MS, type ResultRow } from '@featherstat/shared';
 
 /** One bucket of a time series after gap-filling; absent metric values are 0. */
 export interface SeriesPoint {

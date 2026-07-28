@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { WidgetSpec } from '@analytics/shared';
+import type { WidgetSpec } from '@featherstat/shared';
 import { type SiteSort, siteSortOf } from '../widgets/site-stats.ts';
 import Modal from './Modal.svelte';
 

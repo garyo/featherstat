@@ -1,4 +1,4 @@
-import type { Hit, HitContext } from '@analytics/shared';
+import type { Hit, HitContext } from '@featherstat/shared';
 import { describe, expect, it, vi } from 'vitest';
 import { DESKTOP_UA, T0 } from '../../test/rows.ts';
 import { parseMatomoRequest } from '../ingest/matomo.ts';

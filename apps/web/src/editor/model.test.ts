@@ -1,4 +1,4 @@
-import { type Dashboard, MAX_WIDGETS_PER_DASHBOARD, type WidgetSpec } from '@analytics/shared';
+import { type Dashboard, MAX_WIDGETS_PER_DASHBOARD, type WidgetSpec } from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
 import { siteOverview } from '../dashboards/site-overview.ts';
 import {

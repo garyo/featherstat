@@ -9,7 +9,7 @@ import {
   type SiteInfo,
   type WidgetSpec,
   widgetQueries,
-} from '@analytics/shared';
+} from '@featherstat/shared';
 import type { QueryClient } from '../lib/api.ts';
 import { widgetData } from '../views/batch.ts';
 import type { WidgetData } from '../widgets/types.ts';

@@ -3,7 +3,7 @@ import {
   type Hit,
   PING_CLAMP_MS,
   SESSION_TIMEOUT_MS,
-} from '@analytics/shared';
+} from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
 import { T0, VISITOR } from '../../test/rows.ts';
 import {

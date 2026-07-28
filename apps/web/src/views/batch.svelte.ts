@@ -1,4 +1,4 @@
-import type { QueryRequest, QueryResponse } from '@analytics/shared';
+import type { QueryRequest, QueryResponse } from '@featherstat/shared';
 import { canonicalJson, type QueryClient } from '../lib/api.ts';
 
 /**

@@ -1,4 +1,4 @@
-import { type Dashboard, DashboardSchema } from '@analytics/shared';
+import { type Dashboard, DashboardSchema } from '@featherstat/shared';
 
 /**
  * The shipped default site dashboard — deliberately the same JSON document a

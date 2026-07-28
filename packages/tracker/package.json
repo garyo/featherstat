@@ -1,5 +1,5 @@
 {
-  "name": "@analytics/tracker",
+  "name": "@featherstat/tracker",
   "version": "0.0.0",
   "private": true,
   "license": "MIT",

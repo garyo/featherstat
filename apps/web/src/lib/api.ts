@@ -1,4 +1,4 @@
-import type { QueryRequest, QueryResponse } from '@analytics/shared';
+import type { QueryRequest, QueryResponse } from '@featherstat/shared';
 
 /**
  * The client half of the one-fetch rule (docs/05): a view hands over the whole

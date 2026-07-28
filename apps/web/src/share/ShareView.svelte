@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { QueryResponse } from '@analytics/shared';
+import type { QueryResponse } from '@featherstat/shared';
 import { type SharePayload, shareEndpoint } from '../lib/share.ts';
 import { toggleTheme } from '../lib/theme.ts';
 import DashboardGrid from '../views/DashboardGrid.svelte';

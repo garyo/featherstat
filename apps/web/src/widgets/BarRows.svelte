@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { Dimension, Filter } from '@analytics/shared';
+import type { Dimension, Filter } from '@featherstat/shared';
 import type { BarRow } from './bar-rows.ts';
 import { compactNumber, exactNumber } from './format.ts';
 import { countryName, flagEmoji } from './geo.ts';

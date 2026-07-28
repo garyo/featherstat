@@ -4,7 +4,7 @@ import {
   RealtimeSitesSchema,
   type RealtimeSnapshot,
   SNAPSHOT_HITS,
-} from '@analytics/shared';
+} from '@featherstat/shared';
 import { Hono } from 'hono';
 import { type SSEMessage, type SSEStreamingApi, streamSSE } from 'hono/streaming';
 import type { RealtimeEntry, RealtimeHub } from './hub.ts';

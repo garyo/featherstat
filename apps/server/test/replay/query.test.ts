@@ -1,4 +1,4 @@
-import type { QueryRequest, ResultRow } from '@analytics/shared';
+import type { QueryRequest, ResultRow } from '@featherstat/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createSite, type Db, openDb, withWriteTransaction } from '../../src/db/index.ts';
 import { parseMatomoRequest } from '../../src/ingest/matomo.ts';

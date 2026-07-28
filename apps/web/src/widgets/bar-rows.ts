@@ -1,4 +1,4 @@
-import type { ResultRow } from '@analytics/shared';
+import type { ResultRow } from '@featherstat/shared';
 import { num } from './series.ts';
 
 /** One ranked display row of a bar-list. */

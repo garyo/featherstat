@@ -1,4 +1,4 @@
-import type { Filter, QueryRequest, Range } from '@analytics/shared';
+import type { Filter, QueryRequest, Range } from '@featherstat/shared';
 import { parseFilters, sameFilters, serializeFilter } from './filters.ts';
 
 /**

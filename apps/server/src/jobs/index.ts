@@ -1,4 +1,4 @@
-import { DAY_MS } from '@analytics/shared';
+import { DAY_MS } from '@featherstat/shared';
 import type { Db } from '../db/index.ts';
 import {
   DEFAULT_MMDB_PATH,

@@ -1,4 +1,4 @@
-import type { Hit, HitContext } from '@analytics/shared';
+import type { Hit, HitContext } from '@featherstat/shared';
 import { type Db, type EventRow, getSite } from '../db/index.ts';
 import { type FlushHook, WriteBatcher } from './batcher.ts';
 import { isBotUserAgent, parseUserAgent, preferredLanguage } from './enrich.ts';

@@ -5,7 +5,7 @@ import {
   type QueryResponse,
   SESSION_ONLY_METRICS,
   type WidgetSpec,
-} from '@analytics/shared';
+} from '@featherstat/shared';
 import type { WidgetData } from '../widgets/types.ts';
 
 /**
@@ -15,7 +15,7 @@ import type { WidgetData } from '../widgets/types.ts';
  * so this module keeps only what needs the view: routing answers back to
  * widgets, and trimming metrics the active filters make unanswerable.
  */
-export { collectBatch, hourlyWhenToday } from '@analytics/shared';
+export { collectBatch, hourlyWhenToday } from '@featherstat/shared';
 
 /**
  * The routing half of `collectBatch`: one widget's slice of the batch response,

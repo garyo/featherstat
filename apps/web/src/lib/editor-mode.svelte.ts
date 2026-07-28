@@ -1,4 +1,4 @@
-import type { Dashboard } from '@analytics/shared';
+import type { Dashboard } from '@featherstat/shared';
 import type { DashboardStore } from './dashboards.svelte.ts';
 import type { SiteScope } from './state.ts';
 

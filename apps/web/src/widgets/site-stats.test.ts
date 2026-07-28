@@ -1,4 +1,4 @@
-import type { ResultRow, SiteInfo } from '@analytics/shared';
+import type { ResultRow, SiteInfo } from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
 import { addDaysIso } from './series.ts';
 import { localToday, SPARK_DAYS, siteSortOf, siteStats } from './site-stats.ts';

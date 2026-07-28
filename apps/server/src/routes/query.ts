@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { QueryRequestSchema } from '@analytics/shared';
+import { QueryRequestSchema } from '@featherstat/shared';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { type Db, dataVersion, schemaVersion } from '../db/index.ts';

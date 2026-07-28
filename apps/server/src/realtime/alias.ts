@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { aliasFromDigest, DAY_MS, type RealtimeVisitor } from '@analytics/shared';
+import { aliasFromDigest, DAY_MS, type RealtimeVisitor } from '@featherstat/shared';
 
 /**
  * The realtime alias for a hit: `sha256(UTC day ∥ visitor_id)` mapped onto the

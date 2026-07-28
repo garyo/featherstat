@@ -6,7 +6,7 @@ import {
   type MetricQuery,
   MetricSchema,
   SESSION_ONLY_METRICS,
-} from '@analytics/shared';
+} from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
 import { type CompiledQuery, compileMetricQuery } from './compiler.ts';
 

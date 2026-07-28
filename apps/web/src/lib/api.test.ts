@@ -1,4 +1,4 @@
-import type { QueryRequest, QueryResponse } from '@analytics/shared';
+import type { QueryRequest, QueryResponse } from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
 import { canonicalJson, createQueryClient, QueryError } from './api.ts';
 

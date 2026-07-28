@@ -1,5 +1,5 @@
 {
-  "name": "analytics-monorepo",
+  "name": "featherstat",
   "private": true,
   "type": "module",
   "workspaces": [

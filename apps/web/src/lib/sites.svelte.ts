@@ -1,4 +1,4 @@
-import { type SiteInfo, SiteInfoSchema } from '@analytics/shared';
+import { type SiteInfo, SiteInfoSchema } from '@featherstat/shared';
 
 /**
  * The site directory (`GET /api/sites`): names for the header switcher, cards

@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { DAY_MS, type Hit, type HitContext } from '@analytics/shared';
+import { DAY_MS, type Hit, type HitContext } from '@featherstat/shared';
 import {
   type Db,
   deleteSetting,

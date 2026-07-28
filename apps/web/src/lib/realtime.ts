@@ -1,4 +1,4 @@
-import type { RealtimeHit } from '@analytics/shared';
+import type { RealtimeHit } from '@featherstat/shared';
 import type { SiteScope } from './state.ts';
 
 /**

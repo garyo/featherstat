@@ -1,4 +1,4 @@
-import type { ResultRow } from '@analytics/shared';
+import type { ResultRow } from '@featherstat/shared';
 import { displayPath } from './bar-rows.ts';
 import { addDaysIso, num } from './series.ts';
 

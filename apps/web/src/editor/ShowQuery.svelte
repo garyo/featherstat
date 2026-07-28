@@ -1,5 +1,5 @@
 <script lang="ts">
-import { isQueryError, type WidgetSpec, widgetQueries } from '@analytics/shared';
+import { isQueryError, type WidgetSpec, widgetQueries } from '@featherstat/shared';
 import type { WidgetData } from '../widgets/types.ts';
 import Modal from './Modal.svelte';
 

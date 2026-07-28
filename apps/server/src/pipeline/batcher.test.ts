@@ -1,4 +1,4 @@
-import { BATCH_INTERVAL_MS } from '@analytics/shared';
+import { BATCH_INTERVAL_MS } from '@featherstat/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { event, session } from '../../test/rows.ts';
 import { type Db, getBotDrops, openDb } from '../db/index.ts';

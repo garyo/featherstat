@@ -1,4 +1,4 @@
-import type { Dashboard } from '@analytics/shared';
+import type { Dashboard } from '@featherstat/shared';
 import type { AdminClient } from './admin.ts';
 import { type DashboardInfo, storedDashboardFor } from './dashboards.ts';
 import type { SiteScope } from './state.ts';

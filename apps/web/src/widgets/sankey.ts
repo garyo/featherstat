@@ -1,4 +1,4 @@
-import type { ResultRow } from '@analytics/shared';
+import type { ResultRow } from '@featherstat/shared';
 import { journeyStep } from './flows.ts';
 import { num } from './series.ts';
 

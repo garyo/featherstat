@@ -1,4 +1,4 @@
-import type { RealtimeHit } from '@analytics/shared';
+import type { RealtimeHit } from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
 import { countryTally, pushFeed, relativeAgo, seedFeed, visitorTally } from './realtime.ts';
 

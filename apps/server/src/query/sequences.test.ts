@@ -1,4 +1,4 @@
-import type { HitType, QueryRequest } from '@analytics/shared';
+import type { HitType, QueryRequest } from '@featherstat/shared';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { binId, event, resultOf, session } from '../../test/rows.ts';
 import {

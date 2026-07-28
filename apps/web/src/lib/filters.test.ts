@@ -1,4 +1,4 @@
-import type { Filter } from '@analytics/shared';
+import type { Filter } from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
 import { chipLabel, parseFilter, parseFilters, sameFilters, serializeFilter } from './filters.ts';
 import { applyViewState, DEFAULT_VIEW_STATE, parseViewState } from './state.ts';

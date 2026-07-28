@@ -1,4 +1,4 @@
-import { type NtfyRule, NtfyRulesSchema, type NtfySettingsInput } from '@analytics/shared';
+import { type NtfyRule, NtfyRulesSchema, type NtfySettingsInput } from '@featherstat/shared';
 import { type Db, deleteSetting, getSetting, setSetting } from '../db/index.ts';
 
 /**

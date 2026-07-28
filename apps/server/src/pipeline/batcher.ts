@@ -1,4 +1,4 @@
-import { BATCH_INTERVAL_MS } from '@analytics/shared';
+import { BATCH_INTERVAL_MS } from '@featherstat/shared';
 import {
   type Db,
   type EventRow,

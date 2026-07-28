@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { RealtimeHit } from '@analytics/shared';
+import type { RealtimeHit } from '@featherstat/shared';
 import {
   countryTally,
   FEED_SHOW,

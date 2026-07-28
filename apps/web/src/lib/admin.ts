@@ -8,7 +8,7 @@ import type {
   NtfySettingsInput,
   NtfySettingsView,
   SiteInfo,
-} from '@analytics/shared';
+} from '@featherstat/shared';
 import type { DashboardDetail, DashboardInfo } from './dashboards.ts';
 
 /**

@@ -1,4 +1,4 @@
-import type { VizType } from '@analytics/shared';
+import type { VizType } from '@featherstat/shared';
 import type { Component } from 'svelte';
 import BarList from './BarList.svelte';
 import Devices from './Devices.svelte';

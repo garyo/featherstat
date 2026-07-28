@@ -1,4 +1,4 @@
-import type { NtfyRule } from '@analytics/shared';
+import type { NtfyRule } from '@featherstat/shared';
 import { type Db, type EventRow, getSite } from '../db/index.ts';
 import { type NtfySettings, readNtfySettings } from './settings.ts';
 

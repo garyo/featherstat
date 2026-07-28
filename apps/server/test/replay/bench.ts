@@ -153,7 +153,7 @@ function fmt(ms: number): string {
 /**
  * Hand-rolled rather than zod: the thresholds file is this script's private
  * config, not a cross-package contract, and `apps/server` deliberately has no
- * zod dependency to reach for (schemas live in `@analytics/shared`).
+ * zod dependency to reach for (schemas live in `@featherstat/shared`).
  */
 function readThresholds(): Thresholds {
   const parsed: unknown = JSON.parse(readFileSync(THRESHOLDS_PATH, 'utf8'));

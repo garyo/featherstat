@@ -1,4 +1,4 @@
-import type { Dashboard } from '@analytics/shared';
+import type { Dashboard } from '@featherstat/shared';
 import type { SiteScope } from './state.ts';
 
 /**

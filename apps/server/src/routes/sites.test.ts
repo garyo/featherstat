@@ -1,4 +1,4 @@
-import { SiteInfoSchema } from '@analytics/shared';
+import { SiteInfoSchema } from '@featherstat/shared';
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openTestDb } from '../../test/rows.ts';

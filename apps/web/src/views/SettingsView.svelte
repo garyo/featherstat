@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { AdminDiagnostics, SiteInfo } from '@analytics/shared';
+import type { AdminDiagnostics, SiteInfo } from '@featherstat/shared';
 import type { AdminClient } from '../lib/admin.ts';
 import { botDropTotals, formatBytes, parseDomains, trackingSnippet } from '../lib/settings.ts';
 import { exactNumber } from '../widgets/format.ts';

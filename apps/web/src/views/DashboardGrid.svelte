@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { Dashboard, Filter, QueryResponse, SiteInfo, WidgetSpec } from '@analytics/shared';
+import type { Dashboard, Filter, QueryResponse, SiteInfo, WidgetSpec } from '@featherstat/shared';
 import type { ShowQuery } from '../editor/editor.ts';
 import { loadEditor } from '../lib/editor-mode.svelte.ts';
 import { REGISTRY, spanClass } from '../widgets/registry.ts';

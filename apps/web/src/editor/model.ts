@@ -7,7 +7,7 @@ import {
   type Metric,
   type VizType,
   type WidgetSpec,
-} from '@analytics/shared';
+} from '@featherstat/shared';
 
 /**
  * The editor's pure half (docs/05 § Widgets): every mutation of the draft

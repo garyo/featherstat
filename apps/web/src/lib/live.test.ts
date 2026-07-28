@@ -1,4 +1,4 @@
-import type { RealtimeHit, RealtimeSnapshot, VersionTick } from '@analytics/shared';
+import type { RealtimeHit, RealtimeSnapshot, VersionTick } from '@featherstat/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createLiveStream,

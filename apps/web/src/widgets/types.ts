@@ -5,7 +5,7 @@ import {
   type QueryResult,
   type SiteInfo,
   type WidgetSpec,
-} from '@analytics/shared';
+} from '@featherstat/shared';
 
 /** A widget's share of the view batch, keyed by the slots `widgetQueries` declared. */
 export interface WidgetData {

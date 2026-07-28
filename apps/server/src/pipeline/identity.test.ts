@@ -1,4 +1,4 @@
-import type { Hit, HitContext } from '@analytics/shared';
+import type { Hit, HitContext } from '@featherstat/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type Db, getSetting, openDb, setSetting, withWriteTransaction } from '../db/index.ts';
 import { Identity, uidEnabledKey } from './identity.ts';

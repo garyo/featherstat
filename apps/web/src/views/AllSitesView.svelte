@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { Query, QueryRequest, SiteInfo } from '@analytics/shared';
+import type { Query, QueryRequest, SiteInfo } from '@featherstat/shared';
 import { allSites } from '../dashboards/all-sites.ts';
 import type { AdminClient } from '../lib/admin.ts';
 import type { QueryClient } from '../lib/api.ts';

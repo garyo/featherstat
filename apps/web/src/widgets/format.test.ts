@@ -1,4 +1,4 @@
-import { MetricSchema, type QueryResponse } from '@analytics/shared';
+import { MetricSchema, type QueryResponse } from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
 import {
   bucketedWindow,

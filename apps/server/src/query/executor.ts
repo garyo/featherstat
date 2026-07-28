@@ -5,7 +5,7 @@ import {
   type QueryResult,
   type Range,
   type ResultRow,
-} from '@analytics/shared';
+} from '@featherstat/shared';
 import {
   type Db,
   dataVersion,

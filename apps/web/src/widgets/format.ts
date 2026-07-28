@@ -1,4 +1,4 @@
-import { isQueryError, type Metric, type QueryResponse } from '@analytics/shared';
+import { isQueryError, type Metric, type QueryResponse } from '@featherstat/shared';
 import type { RangePreset } from '../lib/state.ts';
 import { addDaysIso } from './series.ts';
 import { localToday } from './site-stats.ts';

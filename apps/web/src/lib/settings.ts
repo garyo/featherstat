@@ -1,4 +1,4 @@
-import type { AdminBotDrops } from '@analytics/shared';
+import type { AdminBotDrops } from '@featherstat/shared';
 
 /** Pure helpers behind the settings view — kept out of the component for tests. */
 

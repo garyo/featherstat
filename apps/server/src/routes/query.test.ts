@@ -1,4 +1,4 @@
-import type { QueryResponse } from '@analytics/shared';
+import type { QueryResponse } from '@featherstat/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { event, openTestDb, session } from '../../test/rows.ts';
 import { type Db, insertEvents, upsertSessions, withWriteTransaction } from '../db/index.ts';

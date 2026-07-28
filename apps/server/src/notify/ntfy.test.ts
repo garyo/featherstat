@@ -1,4 +1,4 @@
-import type { Hit, HitContext, NtfyRule } from '@analytics/shared';
+import type { Hit, HitContext, NtfyRule } from '@featherstat/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DESKTOP_UA, event, openTestDb, T0 } from '../../test/rows.ts';
 import { createAuth } from '../auth/auth.ts';

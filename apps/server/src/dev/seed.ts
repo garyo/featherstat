@@ -1,6 +1,6 @@
 import { mkdirSync, rmSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { DAY_MS } from '@analytics/shared';
+import { DAY_MS } from '@featherstat/shared';
 import {
   generateCorpus,
   REPLAY_HITS_PER_FLUSH,

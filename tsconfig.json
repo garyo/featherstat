@@ -14,7 +14,7 @@
     "noEmit": true,
     "types": ["node"],
     "paths": {
-      "@analytics/shared": ["./packages/shared/src/index.ts"]
+      "@featherstat/shared": ["./packages/shared/src/index.ts"]
     }
   },
   "include": ["apps/*/src", "apps/*/test", "packages/*/src"],

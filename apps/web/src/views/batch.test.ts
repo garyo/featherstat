@@ -1,4 +1,4 @@
-import { type Filter, MAX_QUERIES_PER_BATCH, type QueryResponse } from '@analytics/shared';
+import { type Filter, MAX_QUERIES_PER_BATCH, type QueryResponse } from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
 import { allSites } from '../dashboards/all-sites.ts';
 import { siteOverview } from '../dashboards/site-overview.ts';

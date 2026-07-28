@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { Filter, QueryRequest } from '@analytics/shared';
+import type { Filter, QueryRequest } from '@featherstat/shared';
 import type { QueryClient } from '../lib/api.ts';
 import FilterRow from '../lib/components/FilterRow.svelte';
 import { createRevalidator, type LiveStream } from '../lib/live.ts';

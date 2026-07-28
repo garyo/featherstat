@@ -1,4 +1,4 @@
-import type { HitType } from '@analytics/shared';
+import type { HitType } from '@featherstat/shared';
 import { classifyLink } from '../links.ts';
 import { send } from '../send.ts';
 

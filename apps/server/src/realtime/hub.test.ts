@@ -1,4 +1,4 @@
-import { ACTIVE_WINDOW_MS, DAY_MS } from '@analytics/shared';
+import { ACTIVE_WINDOW_MS, DAY_MS } from '@featherstat/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { binId, event, openTestDb, session, T0, VISITOR } from '../../test/rows.ts';
 import { type Db, upsertSessions, withWriteTransaction } from '../db/index.ts';

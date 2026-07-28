@@ -4,7 +4,7 @@ import {
   PING_CLAMP_MS,
   type QueryRequest,
   SESSION_TIMEOUT_MS,
-} from '@analytics/shared';
+} from '@featherstat/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createSite, type Db, openDb, withWriteTransaction } from '../../src/db/index.ts';
 import { parseMatomoRequest } from '../../src/ingest/matomo.ts';

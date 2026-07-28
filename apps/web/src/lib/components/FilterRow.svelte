@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { Filter } from '@analytics/shared';
+import type { Filter } from '@featherstat/shared';
 import { chipLabel } from '../filters.ts';
 import { RANGE_LABELS, RANGE_PRESETS, type RangePreset } from '../state.ts';
 

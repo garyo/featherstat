@@ -1,4 +1,4 @@
-import type { HitContext } from '@analytics/shared';
+import type { HitContext } from '@featherstat/shared';
 import { getConnInfo } from '@hono/node-server/conninfo';
 import { type Context, Hono } from 'hono';
 import { parseMatomoRequest } from '../ingest/matomo.ts';

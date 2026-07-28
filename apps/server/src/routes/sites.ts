@@ -1,4 +1,4 @@
-import type { SiteInfo } from '@analytics/shared';
+import type { SiteInfo } from '@featherstat/shared';
 import { Hono } from 'hono';
 import { type Db, listSites } from '../db/index.ts';
 

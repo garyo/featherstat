@@ -1,4 +1,4 @@
-import { MAX_WIDGETS_PER_DASHBOARD } from '@analytics/shared';
+import { MAX_WIDGETS_PER_DASHBOARD } from '@featherstat/shared';
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openTestDb, T0 } from '../../test/rows.ts';

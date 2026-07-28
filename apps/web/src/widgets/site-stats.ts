@@ -1,4 +1,4 @@
-import type { ResultRow, SiteInfo } from '@analytics/shared';
+import type { ResultRow, SiteInfo } from '@featherstat/shared';
 import { addDaysIso, num } from './series.ts';
 
 /**

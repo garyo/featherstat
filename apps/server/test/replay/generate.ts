@@ -5,7 +5,7 @@ import {
   type HitType,
   PING_CLAMP_MS,
   SESSION_TIMEOUT_MS,
-} from '@analytics/shared';
+} from '@featherstat/shared';
 
 /**
  * Deterministic synthetic traffic for the replay harness (WP6, docs/08): 90 days

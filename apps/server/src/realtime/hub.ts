@@ -1,4 +1,4 @@
-import { ACTIVE_WINDOW_MS, type RealtimeHit, type VersionTick } from '@analytics/shared';
+import { ACTIVE_WINDOW_MS, type RealtimeHit, type VersionTick } from '@featherstat/shared';
 import { type Db, type EventRow, listSites, stmt } from '../db/index.ts';
 import type { FlushSummary } from '../pipeline/batcher.ts';
 import { VisitorAliaser } from './alias.ts';

@@ -1,4 +1,4 @@
-import type { Hit, HitContext } from '@analytics/shared';
+import type { Hit, HitContext } from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
 import { clientIp, createTrackRoutes, MAX_TRACK_BODY_BYTES, trustedProxyHops } from './track.ts';
 

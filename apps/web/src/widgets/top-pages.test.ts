@@ -1,4 +1,4 @@
-import type { ResultRow } from '@analytics/shared';
+import type { ResultRow } from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
 import { PAGE_TREND_DAYS, TOP_PAGES, topPages } from './top-pages.ts';
 

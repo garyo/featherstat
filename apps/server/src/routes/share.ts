@@ -8,7 +8,7 @@ import {
   type QueryRequest,
   type QueryResponse,
   RangeSchema,
-} from '@analytics/shared';
+} from '@featherstat/shared';
 import { type Context, Hono } from 'hono';
 import type { Auth, AuthEnv } from '../auth/auth.ts';
 import { RateLimiter } from '../auth/ratelimit.ts';

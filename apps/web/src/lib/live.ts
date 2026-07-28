@@ -3,7 +3,7 @@ import {
   type RealtimeHit,
   type RealtimeSnapshot,
   type VersionTick,
-} from '@analytics/shared';
+} from '@featherstat/shared';
 import type { SiteScope } from './state.ts';
 
 /**

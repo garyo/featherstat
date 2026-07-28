@@ -1,4 +1,4 @@
-import type { ResultRow } from '@analytics/shared';
+import type { ResultRow } from '@featherstat/shared';
 import { compactNumber, exactNumber, formatDuration } from './format.ts';
 import { num, type SeriesPoint, sliceRanges } from './series.ts';
 

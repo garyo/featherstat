@@ -1,4 +1,4 @@
-import type { NtfyRule, NtfySettingsInput, NtfySettingsView } from '@analytics/shared';
+import type { NtfyRule, NtfySettingsInput, NtfySettingsView } from '@featherstat/shared';
 import type { AdminIssue } from './admin.ts';
 
 /**

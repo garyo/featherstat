@@ -1,4 +1,4 @@
-import { NtfySettingsSchema, type NtfySettingsView } from '@analytics/shared';
+import { NtfySettingsSchema, type NtfySettingsView } from '@featherstat/shared';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { Auth, AuthEnv } from '../auth/auth.ts';

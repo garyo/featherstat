@@ -1,5 +1,5 @@
 <script lang="ts">
-import { MAX_NTFY_RULES, type SiteInfo } from '@analytics/shared';
+import { MAX_NTFY_RULES, type SiteInfo } from '@featherstat/shared';
 import { type AdminClient, AdminError } from '../lib/admin.ts';
 import {
   draftFrom,

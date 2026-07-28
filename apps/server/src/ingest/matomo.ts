@@ -1,4 +1,4 @@
-import { type EventPayload, EventPayloadSchema, type Hit, HitSchema } from '@analytics/shared';
+import { type EventPayload, EventPayloadSchema, type Hit, HitSchema } from '@featherstat/shared';
 
 /** One inbound tracking request: the query string plus, for POST, the raw body. */
 export interface MatomoRequest {

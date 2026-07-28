@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { SiteInfo } from '@analytics/shared';
+import type { SiteInfo } from '@featherstat/shared';
 import type { SiteScope, ViewName } from '../state.ts';
 
 interface Props {
@@ -48,7 +48,10 @@ function onchange(event: Event): void {
 </script>
 
 <header class="top">
-  <div class="wordmark">Analytics<span class="dot">.</span></div>
+  <div class="wordmark">
+    <span class="fs-mark" role="img" aria-label="featherstat mark"></span>
+    featherstat
+  </div>
   <!-- Plain navigation, not a tablist: these change the URL, and there is no
        tabpanel for aria-controls to name. -->
   <nav class="tabs" aria-label="Views">

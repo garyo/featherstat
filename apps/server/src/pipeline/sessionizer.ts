@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { type Hit, PING_CLAMP_MS, SESSION_TIMEOUT_MS } from '@analytics/shared';
+import { type Hit, PING_CLAMP_MS, SESSION_TIMEOUT_MS } from '@featherstat/shared';
 import {
   type Db,
   type EventRow,

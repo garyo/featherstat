@@ -5,7 +5,7 @@ import {
   type Filter,
   type Metric,
   type MetricQuery,
-} from '@analytics/shared';
+} from '@featherstat/shared';
 
 /**
  * MetricQuery → parameterized SQL (CLAUDE.md invariant 7). Every identifier comes

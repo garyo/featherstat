@@ -1,4 +1,4 @@
-import { BATCH_INTERVAL_MS, type Hit, type HitContext } from '@analytics/shared';
+import { BATCH_INTERVAL_MS, type Hit, type HitContext } from '@featherstat/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DESKTOP_UA, GOOGLEBOT_UA, T0 } from '../../test/rows.ts';
 import { createSite, type Db, getBotDrops, openDb, withWriteTransaction } from '../db/index.ts';
