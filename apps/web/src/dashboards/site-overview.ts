@@ -6,7 +6,7 @@ import { type Dashboard, DashboardSchema } from '@featherstat/shared';
  * can never drift from the schema user dashboards are validated against. The
  * `site` field is nominal here: views scope the batch from the URL. The grid
  * follows the mockup's arrangement: KPIs → main series → pages/referrers →
- * countries/devices/events → hours heatmap.
+ * countries/devices/events → outbound links/time on page → hours heatmap.
  */
 export const siteOverview: Dashboard = DashboardSchema.parse({
   name: 'Site overview',
@@ -78,6 +78,22 @@ export const siteOverview: Dashboard = DashboardSchema.parse({
         dim2: 'event_action',
         limit: 7,
       },
+    },
+    {
+      id: 'outlinks',
+      viz: 'bar-list',
+      title: 'Outbound links',
+      w: 6,
+      h: 2,
+      query: { id: 'outlinks', metrics: ['outlinks'], dim: 'target_url', limit: 10 },
+    },
+    {
+      id: 'dwell',
+      viz: 'dwell',
+      title: 'Time on page',
+      w: 6,
+      h: 2,
+      query: { id: 'dwell', kind: 'dwell', limit: 10 },
     },
     {
       id: 'heatmap',

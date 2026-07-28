@@ -12,7 +12,7 @@ is the visual reference for everything below (both views, light and dark).
 | View | Contents |
 | --- | --- |
 | **All sites** (home) | One card per site: name, active-now, today's visitors + delta ("today" = the SITE's local today, per its timezone), 14-day sparkline, the site's **top 3 pages with per-page trend** (micro-sparkline + delta vs previous period — how each blog article is doing, at a glance, R20), and goal/event pills (e.g. "3 signups today" — **M2**, alongside goals themselves). A site with no traffic yet gets a "waiting for the first hit" card, not a blank. Sorted by traffic. The whole view is one `/api/query` batch + the SSE stream. |
-| **Site** | The workhorse. Filter row (date presets, active dimension filters as removable chips; the compare mode is fixed to "previous period" until the compare toggle ships in **M2**) → KPI row → main time series → breakdown grid (pages, referrers, geo, devices, events, hours heatmap) → top journeys. Every breakdown row is click-to-filter; a filter on an event-level dimension renders the session-only KPI tiles (engagement, bounce) as "—" rather than erroring the row. |
+| **Site** | The workhorse. Filter row (date presets, active dimension filters as removable chips; the compare mode is fixed to "previous period" until the compare toggle ships in **M2**) → KPI row → main time series → breakdown grid (pages, referrers, geo, devices, events, outbound links, time on page, hours heatmap) → top journeys. Every breakdown row is click-to-filter; a filter on an event-level dimension renders the session-only KPI tiles (engagement, bounce) as "—" rather than erroring the row. |
 | **Journeys** (per site) | R21. A sankey of the first N steps from the entry page (pages and events as nodes, edge weight = sessions) over a top-journeys table: sequence · sessions · avg time · exit rate. Clicking a sankey edge filters the table; the view honors the global filter row, so "journeys of visitors from HN" is one click. |
 | **Realtime** | Active-now hero number, a per-visitor tally of the last 30 minutes (alias · hits · engaged time · place · site — the time is the server's, since only it sees the heartbeat pings), live feed, country tally of the same window. Pure SSE, no queries. The world map with fading dots (city centroids) moved to **M2**: it needs the map-outline data that arrives with the sankey work, so M1 ships hero + feed + country list and the map joins when that asset lands. |
 | **Settings** | Sites, tracking snippets, tokens, share links, retention, diagnostics (bot counts, ingest health). |
@@ -78,7 +78,11 @@ A dashboard is JSON: a grid of widget cards.
   editor; until then every chart carries its own accessibility fallback, see
   § Accessibility), `heatmap` (hour × weekday), `devices` (the
   mockup's stacked device bar + browsers list — one card, two breakdowns of
-  the same batch), `map` (world choropleth + city dots — **M2**, with the
+  the same batch), `dwell` ("Time on page": the `dwell` kind's pages ranked by
+  average measured dwell, each behind a wash bar, with the longest view and the
+  count of *measured* views alongside — the card states what its average rests
+  on, and says plainly when nothing could be timed),
+  `map` (world choropleth + city dots — **M2**, with the
   map-outline data that arrives alongside the sankey work), `feed` (realtime
   events). M2's journeys (sankey over transitions + top-journeys flows table)
   shipped as the dedicated per-site **Journeys view** (see the IA table above)

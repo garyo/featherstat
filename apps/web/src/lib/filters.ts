@@ -13,6 +13,7 @@ export const DIM_LABELS: Record<Dimension, string> = {
   path: 'Page',
   hostname: 'Hostname',
   title: 'Title',
+  target_url: 'Outbound link',
   ref_domain: 'Referrer',
   ref_type: 'Referrer type',
   utm_source: 'Source',

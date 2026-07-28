@@ -98,6 +98,34 @@ describe('barRows', () => {
     expect(rows.map((row) => row.name)).toEqual(['cta · click']);
   });
 
+  it('trims an outbound target for display but filters and tips on the raw URL', () => {
+    const rows = barRows(
+      [
+        { target_url: 'https://example.net/partner?ref=1', outlinks: 9 },
+        { target_url: 'http://plain.test/x', outlinks: 4 },
+        { target_url: null, outlinks: 2 },
+      ],
+      'outlinks',
+      'target_url',
+      '(none)',
+    );
+    expect(rows.map((row) => [row.name, row.filterValue, row.full])).toEqual([
+      [
+        'example.net/partner?ref=1',
+        'https://example.net/partner?ref=1',
+        'https://example.net/partner?ref=1',
+      ],
+      ['plain.test/x', 'http://plain.test/x', 'http://plain.test/x'],
+      ['(none)', null, undefined],
+    ]);
+  });
+
+  it('leaves untrimmed dimensions without a raw-value tooltip', () => {
+    const rows = barRows([{ path: '/a?utm=x', pageviews: 3 }], 'pageviews', 'path', '(none)');
+    // A path row MERGES variants, so no single raw value describes it.
+    expect(rows[0]?.full).toBeUndefined();
+  });
+
   it('handles empty input and non-numeric cells', () => {
     expect(barRows([], 'pageviews', 'path', '(none)')).toEqual([]);
     expect(barRows([{ path: '/a', pageviews: null }], 'pageviews', 'path', '(none)')).toEqual([]);

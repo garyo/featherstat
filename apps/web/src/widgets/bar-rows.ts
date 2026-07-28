@@ -15,6 +15,8 @@ export interface BarRow {
    * marks a row that cannot be filtered honestly (e.g. a folded "Other").
    */
   filterValue: string | null | undefined;
+  /** The untrimmed value when display shortened it (an outbound URL's protocol). */
+  full?: string;
 }
 
 export interface BarRowOptions {
@@ -46,14 +48,21 @@ export function barRows(
   nullLabel: string,
   options: BarRowOptions = {},
 ): BarRow[] {
-  const byName = new Map<string, { value: number; extra: number; filterValue: string | null }>();
+  const byName = new Map<
+    string,
+    { value: number; extra: number; filterValue: string | null; full: string | undefined }
+  >();
   for (const row of rows) {
     const raw = row[dim];
-    const isNull = raw === null || raw === undefined;
-    const primary = isNull ? nullLabel : displayName(String(raw), dim);
+    const stored = raw === null || raw === undefined ? undefined : String(raw);
+    const primary = stored === undefined ? nullLabel : displayName(stored, dim);
     const name = options.dim2 === undefined ? primary : composite(primary, row[options.dim2]);
-    const filterValue = isNull ? null : dim === 'path' ? primary : String(raw);
-    const entry = byName.get(name) ?? { value: 0, extra: 0, filterValue };
+    const filterValue = stored === undefined ? null : dim === 'path' ? primary : stored;
+    // Trimmed-for-display rows keep their stored value reachable in the tooltip.
+    // Paths are excluded on purpose: their display MERGES variants, so no single
+    // stored value describes the row (see the merge note above).
+    const full = stored !== undefined && stored !== primary && dim !== 'path' ? stored : undefined;
+    const entry = byName.get(name) ?? { value: 0, extra: 0, filterValue, full };
     entry.value += num(row[metric]);
     if (options.extraMetric !== undefined) entry.extra += num(row[options.extraMetric]);
     byName.set(name, entry);
@@ -76,6 +85,17 @@ export function displayPath(value: string): string {
   return cut === -1 ? value : cut === 0 ? '/' : value.slice(0, cut);
 }
 
+/**
+ * Outbound targets are full URLs and eat the row: the scheme carries no
+ * information a reader of a ranking wants, so it goes. Nothing else is dropped —
+ * the host, path and query are what tell two links apart — and the raw value
+ * still travels as the row's filter payload and tooltip.
+ */
+export function displayTarget(value: string): string {
+  return value.replace(/^https?:\/\//i, '');
+}
+
 function displayName(value: string, dim: string): string {
-  return dim === 'path' ? displayPath(value) : value;
+  if (dim === 'path') return displayPath(value);
+  return dim === 'target_url' ? displayTarget(value) : value;
 }

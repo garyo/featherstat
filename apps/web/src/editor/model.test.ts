@@ -136,6 +136,18 @@ describe('buildWidget', () => {
     expect(devices.query.dim).toBe('device_type');
   });
 
+  it('gives time on page its own query kind, with the schema default depth', () => {
+    const spec = buildWidget(
+      { viz: 'dwell', title: 'Time on page', metrics: ['pageviews'], dim: 'path', limit: 3 },
+      'w1',
+    );
+    expect(spec).toMatchObject({
+      viz: 'dwell',
+      w: 6,
+      query: { id: 'w1', kind: 'dwell', limit: 10 },
+    });
+  });
+
   it('caps timeseries at 4 series and falls back to visitors on an empty pick', () => {
     const series = buildWidget(
       {

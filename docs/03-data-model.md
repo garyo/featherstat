@@ -150,9 +150,16 @@ Restart recovery: on boot, sessions with `last_seen_at` within 30 min are
 loaded back into the map. Crash-loss window ≈ one batch interval.
 
 Derived metrics: `visits` = sessions; `visitors` = distinct `visitor_id`;
-`engagement time` = `engaged_ms`; time-on-page = gap to the next event/ping
-within the session (window function at query time — no row updates on the
-append-only events table).
+`engagement time` = `engaged_ms`; **time on page** = every event of the session
+— pings included — credits `min(gap to the next event, 20 s)` to the *current*
+page, i.e. the most recent pageview at or before it. That is the same clamped
+accrual `engaged_ms` uses, attributed per page instead of per session, and it is
+computed by window function at query time (no row updates on the append-only
+events table). The session's **last** event has no next event, so its gap is
+unmeasurable and counts for nothing: a page view that nothing followed is
+*excluded* from the average rather than recorded as a zero, and the `dwell`
+query reports `views_measured` so a reader knows what the number rests on
+(see [04](04-api.md) § 3).
 
 **Bounce is engagement-aware, by design.** A session is a bounce only if it
 showed *no* engagement: exactly one pageview, no events, **and**

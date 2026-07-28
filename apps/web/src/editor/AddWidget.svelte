@@ -41,7 +41,9 @@ let limit = $state(8);
 
 /** Free-form vizzes take the picked breakdown; the rest pin their own query shape. */
 const freeForm = $derived(viz === 'bar-list' || viz === 'table' || viz === 'map' || viz === 'feed');
-const pickMetrics = $derived(viz !== 'site-cards');
+/** Vizzes whose pinned query answers no metric pick — site cards, and dwell's own kind. */
+const METRICLESS = new Set<VizType>(['site-cards', 'dwell']);
+const pickMetrics = $derived(!METRICLESS.has(viz));
 
 function toggleMetric(metric: Metric): void {
   metrics = metrics.includes(metric) ? metrics.filter((m) => m !== metric) : [...metrics, metric];

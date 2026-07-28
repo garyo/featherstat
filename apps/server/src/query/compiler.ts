@@ -44,6 +44,7 @@ const DIMS: Record<Dimension, DimSpec> = {
   path: { events: 'e.path', sessions: null },
   hostname: { events: 'e.hostname', sessions: null },
   title: { events: 'e.title', sessions: null },
+  target_url: { events: 'e.target_url', sessions: null },
   ref_domain: { events: 'e.ref_domain', sessions: 's.ref_domain' },
   ref_type: { events: 'e.ref_type', sessions: 's.ref_type' },
   utm_source: { events: 'e.utm_source', sessions: 's.utm_source' },
@@ -109,6 +110,16 @@ const METRICS: Record<Metric, MetricSpec> = {
     empty: 0,
   },
   events: { preferred: 'events', events: { sql: "COALESCE(SUM(e.type = 'event'), 0)" }, empty: 0 },
+  outlinks: {
+    preferred: 'events',
+    events: { sql: "COALESCE(SUM(e.type = 'outlink'), 0)" },
+    empty: 0,
+  },
+  downloads: {
+    preferred: 'events',
+    events: { sql: "COALESCE(SUM(e.type = 'download'), 0)" },
+    empty: 0,
+  },
   engaged_ms: {
     preferred: 'sessions',
     sessions: { sql: 'COALESCE(SUM(s.engaged_ms), 0)' },

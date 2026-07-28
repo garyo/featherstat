@@ -130,8 +130,10 @@ a kind that ships in a later milestone yields a per-query `error` entry — the
 batch itself still succeeds, and never returns wrong numbers.
 
 - **Vocabulary, not SQL.** Metrics: `visitors`, `visits`, `pageviews`,
-  `events`, `engaged_ms`, `bounce_rate` (engagement-aware — see 03),
-  `views_per_visit`, `event_value_sum`. Dimensions: `path`, `hostname`, `title`, `ref_domain`,
+  `events`, `outlinks`, `downloads`, `engaged_ms`, `bounce_rate`
+  (engagement-aware — see 03),
+  `views_per_visit`, `event_value_sum`. Dimensions: `path`, `hostname`, `title`,
+  `target_url` (the outlink/download destination), `ref_domain`,
   `ref_type`, `utm_*`, `country`, `region`, `city`, `browser`, `os`,
   `device_type`, `screen`, `lang`, `event_category`, `event_action`,
   `event_name`, `local_hour`, `weekday`, plus `bucket`: `hour|day|week|month`.
@@ -146,7 +148,18 @@ batch itself still succeeds, and never returns wrong numbers.
   sankey; `{ "id": "journeys", "kind": "flows", "steps": 4, "limit": 20 }` —
   top session signatures with session count, avg engaged time, and exit
   rate. Both respect the surrounding site/range/filters (so "journeys of
-  visitors from HN" is just a filter).
+  visitors from HN" is just a filter). Because they scope *sessions*, a filter
+  only the events table can answer (`path`, `event_category`, …) cannot honestly
+  narrow them and yields the same per-query `unsupported`.
+- **Time on page** is its own kind for the same reason — it counts page legs,
+  not rows: `{ "id": "dwell", "kind": "dwell", "limit": 10 }` → rows of
+  `{ path, views_measured, avg_page_ms, max_page_ms }` ranked by average dwell,
+  over the same session-scoped envelope (and the same honest refusal of
+  event-level filters). Semantics live in 03: every event, **pings included**,
+  credits `min(gap to the next event, 20 s)` to the most recent pageview. Views
+  that nothing followed are **excluded, never zeroed** — `views_measured` is the
+  count the average rests on, so a card can say "37 measured" instead of
+  implying it timed every view.
 - **Click-to-filter falls out for free**: clicking a row in any breakdown adds
   a `filters` entry and re-issues the same batch.
 - **Caching**: response ETag = hash(max event rowid, schema version,

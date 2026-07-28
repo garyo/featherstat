@@ -121,6 +121,10 @@ const tipRow = $derived(tip === undefined ? undefined : rows[tip.index]);
           <span class="tip-name">{extraUnit}</span>
         </div>
       {/if}
+      <!-- A shortened label (an outbound URL's protocol) says its whole value here. -->
+      {#if tipRow.full !== undefined}
+        <div class="tip-full">{tipRow.full}</div>
+      {/if}
     </div>
   {/if}
 </div>

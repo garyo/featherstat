@@ -151,6 +151,20 @@
   cursor: pointer;
 }
 
+/* Time on page: the average leads, its honesty numbers follow, recessive. */
+.bar-row .dwell-sub {
+  color: var(--muted);
+  font-size: 12px;
+  min-width: 124px;
+  text-align: right;
+}
+
+@media (max-width: 599px) {
+  .bar-row .dwell-sub {
+    min-width: 0;
+  }
+}
+
 .flag {
   margin-right: 6px;
 }
@@ -478,6 +492,15 @@
 
 .chart-tip .tip-name {
   color: var(--ink-2);
+}
+
+/* A row whose label was shortened for display prints its whole value here. */
+.chart-tip .tip-full {
+  margin-top: 4px;
+  max-width: 320px;
+  color: var(--muted);
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 /* ---------- site cards ---------- */

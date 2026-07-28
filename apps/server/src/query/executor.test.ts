@@ -31,6 +31,8 @@ interface Visit {
   engaged: number;
   pages: Array<Partial<EventRow>>;
   events?: Array<Partial<EventRow>>;
+  /** Outlink / download rows: stored hits, but not the `events` the session counts. */
+  links?: Array<Partial<EventRow>>;
   session?: Partial<SessionRow>;
 }
 
@@ -48,6 +50,9 @@ function seedVisit(visit: Visit): void {
   }
   for (const extra of visit.events ?? []) {
     rows.push(event({ ...base, type: 'event', seq: rows.length + 1, ...extra }));
+  }
+  for (const link of visit.links ?? []) {
+    rows.push(event({ ...base, type: 'outlink', seq: rows.length + 1, ...link }));
   }
   insertEvents(db, rows);
   upsertSessions(db, [
@@ -115,8 +120,20 @@ beforeAll(() => {
     seedVisit({ visitor: 5, sess: 5, date: '2026-07-20', engaged: 0, pages: [{ path: '/' }] });
     // F: a year earlier, for compare 'year'.
     seedVisit({ visitor: 6, sess: 6, date: '2025-07-27', engaged: 0, pages: [{ path: '/' }] });
-    // Site 2: one visit on the shared day, one on the next UTC day.
-    seedVisit({ site: 2, visitor: 7, sess: 7, engaged: 0, pages: [{ path: '/x' }] });
+    // Site 2: one visit on the shared day, one on the next UTC day. The first
+    // leaves by two outbound clicks to one partner and takes a download.
+    seedVisit({
+      site: 2,
+      visitor: 7,
+      sess: 7,
+      engaged: 0,
+      pages: [{ path: '/x' }],
+      links: [
+        { path: '/x', target_url: 'https://example.net/partner' },
+        { path: '/x', target_url: 'https://example.net/partner' },
+        { type: 'download', path: '/x', target_url: 'https://two.test/files/report.pdf' },
+      ],
+    });
     seedVisit({
       site: 2,
       visitor: 8,
@@ -164,6 +181,39 @@ describe('metric semantics', () => {
       { path: '/blog', pageviews: 1, visitors: 1 },
       { path: '/pricing', pageviews: 1, visitors: 1 },
     ]);
+  });
+
+  it('counts outbound links and downloads, and breaks them down by target', () => {
+    const response = run({
+      site: 2,
+      queries: [
+        { id: 'totals', metrics: ['outlinks', 'downloads'] },
+        { id: 'targets', metrics: ['outlinks'], dim: 'target_url', limit: 10 },
+      ],
+    });
+    expect(resultOf(response, 'totals').rows).toEqual([{ outlinks: 2, downloads: 1 }]);
+    // The download's target is a target_url group too; it simply has no outlinks —
+    // an honest 0, the same shape every breakdown returns for a foreign hit type.
+    expect(resultOf(response, 'targets').rows).toEqual([
+      { target_url: 'https://example.net/partner', outlinks: 2 },
+      { target_url: null, outlinks: 0 },
+      { target_url: 'https://two.test/files/report.pdf', outlinks: 0 },
+    ]);
+  });
+
+  it('filters by target_url', () => {
+    const response = run({
+      site: 2,
+      queries: [
+        {
+          id: 'q',
+          metrics: ['outlinks', 'pageviews'],
+          filters: [{ dim: 'target_url', op: 'contains', value: 'example.net' }],
+        },
+      ],
+    });
+    // Only the two outbound rows match: the pageview they left from carries no target.
+    expect(resultOf(response, 'q').rows).toEqual([{ outlinks: 2, pageviews: 0 }]);
   });
 
   it('applies a bound limit', () => {

@@ -17,6 +17,8 @@ describe('collectBatch', () => {
       'devices',
       'devices~browsers',
       'events',
+      'outlinks',
+      'dwell',
       'heatmap',
     ]);
     expect(queries.length).toBeLessThanOrEqual(MAX_QUERIES_PER_BATCH);

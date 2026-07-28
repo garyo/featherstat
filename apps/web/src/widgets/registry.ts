@@ -2,6 +2,7 @@ import type { VizType } from '@featherstat/shared';
 import type { Component } from 'svelte';
 import BarList from './BarList.svelte';
 import Devices from './Devices.svelte';
+import Dwell from './Dwell.svelte';
 import Heatmap from './Heatmap.svelte';
 import KpiRow from './KpiRow.svelte';
 import SiteCards from './SiteCards.svelte';
@@ -32,6 +33,7 @@ export const REGISTRY: Partial<Record<VizType, RegistryEntry>> = {
   'bar-list': { component: BarList, frame: 'card' },
   heatmap: { component: Heatmap, frame: 'card' },
   devices: { component: Devices, frame: 'card' },
+  dwell: { component: Dwell, frame: 'card' },
   'site-cards': { component: SiteCards, frame: 'wide' },
 };
 

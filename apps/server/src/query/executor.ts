@@ -16,6 +16,7 @@ import {
   withReadSnapshot,
 } from '../db/index.ts';
 import { type CompiledQuery, compileMetricQuery, metricEmpty } from './compiler.ts';
+import { type CompiledDwell, compileDwellQuery } from './dwell.ts';
 import { compareWindow, type DateWindow, resolveWindow } from './ranges.ts';
 import { type CompiledSequence, compileSequenceQuery } from './sequences.ts';
 
@@ -71,14 +72,19 @@ export function executeQueryRequest(
     for (const query of request.queries) {
       const queryStarted = performance.now();
       if ('kind' in query) {
-        // Sequence kinds answer only the primary window: a journey comparison
-        // has no defined shape (docs/04), so `compare` is never fabricated.
-        const compiled = compileSequenceQuery(query, request.filters ?? [], windows.length);
+        // Session-scoped kinds answer only the primary window: a journey (or a
+        // per-page dwell) comparison has no defined shape (docs/04), so
+        // `compare` is never fabricated.
+        const filters = request.filters ?? [];
+        const compiled =
+          query.kind === 'dwell'
+            ? compileDwellQuery(query, filters, windows.length)
+            : compileSequenceQuery(query, filters, windows.length);
         if (isQueryError(compiled)) {
           results[query.id] = compiled;
           continue;
         }
-        const entry: QueryResult = { rows: runSequence(db, compiled, windows) };
+        const entry: QueryResult = { rows: runScoped(db, compiled, windows) };
         entry.ms = elapsed(queryStarted);
         results[query.id] = entry;
         continue;
@@ -104,9 +110,10 @@ function resolveSites(db: Db, scope: QueryRequest['site']): Site[] {
   return [site];
 }
 
-function runSequence(
+/** One session-scoped statement (journeys, dwell): one SQL text, one window scope. */
+function runScoped(
   db: Db,
-  compiled: CompiledSequence,
+  compiled: CompiledSequence | CompiledDwell,
   windows: readonly SiteWindow[],
 ): ResultRow[] {
   if (windows.length === 0) return [];

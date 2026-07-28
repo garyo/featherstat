@@ -1,20 +1,11 @@
 import type { Filter, SequenceQuery } from '@featherstat/shared';
-import {
-  boundsCte,
-  type CompileError,
-  eventOnlyDimension,
-  filterSql,
-  unsupported,
-} from './compiler.ts';
+import type { CompileError } from './compiler.ts';
+import { sessionScope } from './session-scope.ts';
 
 /**
  * SequenceQuery → parameterized SQL (docs/03 § Journeys, docs/04 § 3). Sequence
- * queries are session-scoped: the batch envelope picks sessions (site, the
- * session's `local_date` against the range, session-level filters), and every
- * non-ping event of a picked session participates — including rows stored past
- * midnight, so a journey is never truncated at a date boundary. A filter only
- * the events table can answer (path, event_category, …) cannot honestly scope
- * a whole session and compiles to an error entry, like the metric path.
+ * queries run over the session-scoped envelope (session-scope.ts), and every
+ * non-ping event of a picked session participates.
  *
  * A step's label is the page path for pageviews/outlinks/downloads and
  * `event: <category> · <action>` for events. Pings are session upkeep, not
@@ -39,27 +30,15 @@ export function compileSequenceQuery(
   filters: readonly Filter[],
   siteCount: number,
 ): CompiledSequence | CompileError {
-  for (const filter of filters) {
-    if (filter.op !== 'in' && Array.isArray(filter.value)) {
-      return unsupported(`filter op '${filter.op}' on '${filter.dim}' expects a single value`);
-    }
-    if (eventOnlyDimension(filter.dim)) {
-      return unsupported(
-        `sequence queries are session-scoped and cannot honestly apply the event-level filter '${filter.dim}'`,
-      );
-    }
-  }
+  const scope = sessionScope(
+    'sequence queries',
+    filters,
+    siteCount,
+    query.kind === 'flows' ? ['s.engaged_ms AS engaged_ms'] : [],
+  );
+  if ('error' in scope) return scope;
 
-  const params: (string | number)[] = [];
-  const where = filters.map((filter) => filterSql(filter, 'sessions', params));
-  const scoped = [
-    'scoped AS (',
-    `  SELECT s.id AS sid${query.kind === 'flows' ? ', s.engaged_ms AS engaged_ms' : ''}`,
-    '  FROM sessions s JOIN bounds ON s.site_id = bounds.site_id',
-    '    AND s.local_date BETWEEN bounds.from_date AND bounds.to_date',
-    ...(where.length > 0 ? [`  WHERE ${where.join(' AND ')}`] : []),
-    ')',
-  ].join('\n');
+  const { params } = scope;
   const labeled = [
     '(',
     `    SELECT e.session_id AS sid, e.seq AS seq, ${LABEL} AS label`,
@@ -73,8 +52,7 @@ export function compileSequenceQuery(
     // so a deep layer is never starved by a busy entry layer.
     params.push(query.steps, query.limit);
     const sql = [
-      `${boundsCte(siteCount)},`,
-      `${scoped},`,
+      `${scope.sql},`,
       'walked AS (',
       '  SELECT ROW_NUMBER() OVER w AS step, label, LEAD(label) OVER w AS next',
       `  FROM ${labeled}`,
@@ -97,8 +75,7 @@ export function compileSequenceQuery(
 
   params.push(query.steps, query.steps, query.limit);
   const sql = [
-    `${boundsCte(siteCount)},`,
-    `${scoped},`,
+    `${scope.sql},`,
     'positioned AS (',
     '  SELECT sid, label, ROW_NUMBER() OVER (PARTITION BY sid ORDER BY seq) AS pos',
     `  FROM ${labeled}`,

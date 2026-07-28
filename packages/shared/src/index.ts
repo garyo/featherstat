@@ -100,6 +100,8 @@ export const MetricSchema = z.enum([
   'visits',
   'pageviews',
   'events',
+  'outlinks',
+  'downloads',
   'engaged_ms',
   'bounce_rate',
   'views_per_visit',
@@ -111,6 +113,7 @@ export const DimensionSchema = z.enum([
   'path',
   'hostname',
   'title',
+  'target_url',
   'ref_domain',
   'ref_type',
   'utm_source',
@@ -146,6 +149,7 @@ export const EVENT_ONLY_DIMENSIONS = [
   'path',
   'hostname',
   'title',
+  'target_url',
   'screen',
   'lang',
   'event_category',
@@ -194,7 +198,20 @@ export const SequenceQuerySchema = z.object({
 });
 export type SequenceQuery = z.infer<typeof SequenceQuerySchema>;
 
-export const QuerySchema = z.union([SequenceQuerySchema, MetricQuerySchema]);
+/**
+ * Time on page (docs/03 § Sessionization, docs/04 § 3): per-page dwell over the
+ * session-scoped envelope. Every event — pings included — credits the gap to the
+ * next event, clamped at `PING_CLAMP_MS`, to the pageview it followed. Nothing to
+ * pick but the ranking depth: the shape is the answer.
+ */
+export const DwellQuerySchema = z.object({
+  id: z.string().min(1).max(64),
+  kind: z.literal('dwell'),
+  limit: z.number().int().min(1).max(200).default(10),
+});
+export type DwellQuery = z.infer<typeof DwellQuerySchema>;
+
+export const QuerySchema = z.union([SequenceQuerySchema, DwellQuerySchema, MetricQuerySchema]);
 export type Query = z.infer<typeof QuerySchema>;
 
 /** A real calendar date — the regex alone admits impossible months and days. */
@@ -440,6 +457,7 @@ export const VizTypeSchema = z.enum([
   'table',
   'heatmap',
   'devices',
+  'dwell',
   'map',
   'feed',
   'site-cards',
