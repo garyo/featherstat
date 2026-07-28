@@ -1,8 +1,8 @@
-import { type Filter, MAX_QUERIES_PER_BATCH } from '@analytics/shared';
+import { type Filter, MAX_QUERIES_PER_BATCH, type QueryResponse } from '@analytics/shared';
 import { describe, expect, it } from 'vitest';
 import { allSites } from '../dashboards/all-sites.ts';
 import { siteOverview } from '../dashboards/site-overview.ts';
-import { collectBatch, hourlyWhenToday, withoutBlockedMetrics } from './batch.ts';
+import { collectBatch, hourlyWhenToday, widgetData, withoutBlockedMetrics } from './batch.ts';
 
 describe('collectBatch', () => {
   it('collects every widget query of the default site dashboard into one batch', () => {
@@ -89,6 +89,48 @@ describe('collectBatch', () => {
       ),
     };
     expect(() => collectBatch(broken)).toThrow(/duplicate query id/);
+  });
+});
+
+describe('widgetData', () => {
+  const { slots } = collectBatch(siteOverview);
+  const kpis = siteOverview.grid[0];
+  if (kpis === undefined) throw new Error('kpi widget expected');
+
+  it('is loading before a response and error once a batch-level failure lands', () => {
+    expect(widgetData(kpis, slots, undefined, undefined)).toEqual({
+      phase: 'loading',
+      message: undefined,
+      results: {},
+    });
+    expect(widgetData(kpis, slots, undefined, 'boom')).toEqual({
+      phase: 'error',
+      message: 'boom',
+      results: {},
+    });
+  });
+
+  it('routes each declared slot to its own result by query id', () => {
+    const response: QueryResponse = {
+      results: {
+        kpis: { rows: [{ visitors: 5 }] },
+        'kpis~spark': { rows: [] },
+      },
+      meta: { generatedInMs: 1, dataVersion: 1 },
+    };
+    const data = widgetData(kpis, slots, response, undefined);
+    expect(data.phase).toBe('ready');
+    expect(data.results.main).toEqual({ rows: [{ visitors: 5 }] });
+    expect(data.results.spark).toEqual({ rows: [] });
+  });
+
+  it('yields empty results for a widget the batch never carried', () => {
+    const stranger = { ...kpis, id: 'not-there' };
+    const response: QueryResponse = { results: {}, meta: { generatedInMs: 1, dataVersion: 1 } };
+    expect(widgetData(stranger, slots, response, undefined)).toEqual({
+      phase: 'ready',
+      results: {},
+    });
   });
 });
 

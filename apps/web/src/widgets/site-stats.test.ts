@@ -1,7 +1,7 @@
 import type { ResultRow, SiteInfo } from '@analytics/shared';
 import { describe, expect, it } from 'vitest';
 import { addDaysIso } from './series.ts';
-import { localToday, SPARK_DAYS, siteStats } from './site-stats.ts';
+import { localToday, SPARK_DAYS, siteSortOf, siteStats } from './site-stats.ts';
 
 const TODAY = '2026-07-27';
 
@@ -90,6 +90,31 @@ describe('siteStats', () => {
     expect(fresh?.todayVisitors).toBe(0);
     expect(fresh?.spark).toEqual(Array(SPARK_DAYS).fill(0));
     expect(stats[0]?.silent).toBe(false);
+  });
+
+  it('sorts by site id when asked (docs/05: fixed by site id)', () => {
+    const rows = [...rowsFor(3, [90]), ...rowsFor(1, [10]), ...rowsFor(2, [50])];
+    expect(siteStats(rows, undefined, NOW, 'id').map((stat) => stat.site)).toEqual([1, 2, 3]);
+  });
+
+  it('sorts by name with a site-id tiebreak', () => {
+    const rows = [...rowsFor(1, [10]), ...rowsFor(2, [90]), ...rowsFor(3, [50])];
+    const directory: SiteInfo[] = [
+      { id: 1, name: 'zeta', domains: [], timezone: 'UTC' },
+      { id: 2, name: 'alpha', domains: [], timezone: 'UTC' },
+      { id: 3, name: 'alpha', domains: [], timezone: 'UTC' }, // duplicate name → id decides
+    ];
+    expect(siteStats(rows, directory, NOW, 'name').map((stat) => stat.site)).toEqual([2, 3, 1]);
+  });
+});
+
+describe('siteSortOf', () => {
+  it('accepts the vocabulary and falls back to traffic on junk', () => {
+    expect(siteSortOf('id')).toBe('id');
+    expect(siteSortOf('name')).toBe('name');
+    expect(siteSortOf('traffic')).toBe('traffic');
+    expect(siteSortOf('bogus')).toBe('traffic');
+    expect(siteSortOf(undefined)).toBe('traffic');
   });
 });
 

@@ -3,11 +3,15 @@ import type { AdminDiagnostics, SiteInfo } from '@analytics/shared';
 import type { AdminClient } from '../lib/admin.ts';
 import { botDropTotals, formatBytes, parseDomains, trackingSnippet } from '../lib/settings.ts';
 import { exactNumber } from '../widgets/format.ts';
+import NtfyPanel from './NtfyPanel.svelte';
 
 /**
  * The settings view (docs/04 § 5): sites CRUD, the tracking snippet, password
- * change, diagnostics. All strings shown here are admin- or visitor-authored —
- * text interpolation only (registry.ts boundary note).
+ * change, notifications, diagnostics. All strings shown here are admin- or
+ * visitor-authored — text interpolation only (registry.ts boundary note).
+ *
+ * Loaded as its own chunk (Shell.svelte): none of this belongs on the path to a
+ * dashboard, which is what every session opens on.
  */
 interface Props {
   admin: AdminClient;
@@ -149,7 +153,9 @@ const nameOf = (id: number): string => sites?.find((s) => s.id === id)?.name ?? 
 </script>
 
 <div class="filters">
-  <span class="compare-note">Settings — sites, tracking snippet, password, diagnostics</span>
+  <span class="compare-note">
+    Settings — sites, tracking snippet, password, notifications, diagnostics
+  </span>
 </div>
 
 <div class="grid">
@@ -281,6 +287,8 @@ const nameOf = (id: number): string => sites?.find((s) => s.id === id)?.name ?? 
       {/if}
     {/if}
   </div>
+
+  <NtfyPanel {admin} {sites} />
 </div>
 
 <style>

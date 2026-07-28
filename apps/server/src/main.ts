@@ -2,6 +2,7 @@ import { serve } from '@hono/node-server';
 import { createSecuredApp } from './auth/app.ts';
 import { openDb } from './db/index.ts';
 import { DEFAULT_MMDB_PATH, startJobs } from './jobs/index.ts';
+import { readNtfySettings } from './notify/index.ts';
 import { MmdbProvider } from './pipeline/geo.ts';
 import { createPipeline } from './pipeline/index.ts';
 import { teeSinkFromEnv } from './pipeline/tee.ts';
@@ -32,6 +33,14 @@ const port = Number(process.env.PORT ?? 8080);
 // every dashboard read, the admin API, /metrics and the SPA (docs/02 § Security
 // posture). src/auth/app.test.ts + main.test.ts hold this wiring in place.
 const { app } = createSecuredApp({ sink: tee?.sink ?? pipeline.sink, db, hub, pipeline });
+
+// ntfy delivery turns on from the settings rows (docs/01 R16), editable at
+// runtime — this line only reports what the DB already says at boot.
+const notifications = readNtfySettings(db);
+if (notifications.url !== undefined) {
+  console.log(`ntfy notifications configured: ${notifications.rules.length} rule(s)`);
+}
+
 const server = serve({ fetch: app.fetch, port });
 console.log(`analytics server listening on :${port}`);
 

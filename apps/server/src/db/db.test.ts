@@ -5,23 +5,32 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { event, SESSION, session, VISITOR } from '../../test/rows.ts';
 import {
   countEvents,
+  createDashboard,
   createSite,
   type Db,
   databaseSizeBytes,
+  deleteDashboard,
   deleteSetting,
   getBotDrops,
+  getDashboard,
   getSetting,
+  getShareToken,
   getSite,
   incrementBotDrops,
   insertEvents,
+  insertShareToken,
   listBotDrops,
+  listDashboards,
   listSites,
   migrate,
+  type NewDashboard,
   observeWriteTransactions,
   openDb,
+  revokeShareTokens,
   schemaVersion,
   setSetting,
   settingKeysWithPrefix,
+  updateDashboard,
   updateSite,
   upsertSessions,
   withWriteTransaction,
@@ -40,16 +49,19 @@ describe('migrate', () => {
     expect(tableNames(db)).toEqual([
       'admin_sessions',
       'bot_drops',
+      'dashboards',
       'events',
       'schema_migrations',
       'sessions',
       'settings',
+      'share_tokens',
       'sites',
     ]);
-    expect(schemaVersion(db)).toBe(2);
+    expect(schemaVersion(db)).toBe(3);
     expect(db.prepare('SELECT version, name FROM schema_migrations').all()).toEqual([
       { version: 1, name: 'init' },
       { version: 2, name: 'admin-sessions' },
+      { version: 3, name: 'dashboards' },
     ]);
     db.close();
   });
@@ -69,6 +81,7 @@ describe('migrate', () => {
       'ix_events_site_ts',
       'ix_sessions_open',
       'ix_sessions_site_date',
+      'ix_share_tokens_dashboard',
     ]);
     db.close();
   });
@@ -76,7 +89,7 @@ describe('migrate', () => {
   it('is a no-op when re-run on an already-migrated database', () => {
     const db = openDb(':memory:');
     const applied = db.prepare('SELECT applied_at FROM schema_migrations').pluck().all();
-    expect(migrate(db)).toBe(2);
+    expect(migrate(db)).toBe(3);
     expect(db.prepare('SELECT applied_at FROM schema_migrations').pluck().all()).toEqual(applied);
     db.close();
   });
@@ -104,12 +117,13 @@ describe('migrate', () => {
       migrate(db, [
         { version: 1, name: 'init', sql: 'SELECT 1' },
         { version: 2, name: 'admin-sessions', sql: 'SELECT 1' },
-        { version: 3, name: 'later', sql: 'CREATE TABLE later (a INTEGER)' },
+        { version: 3, name: 'dashboards', sql: 'SELECT 1' },
+        { version: 4, name: 'later', sql: 'CREATE TABLE later (a INTEGER)' },
       ]),
-    ).toBe(3);
+    ).toBe(4);
     expect(tableNames(db)).toContain('later');
     expect(db.prepare('SELECT name FROM schema_migrations ORDER BY version').pluck().all()).toEqual(
-      ['init', 'admin-sessions', 'later'],
+      ['init', 'admin-sessions', 'dashboards', 'later'],
     );
     db.close();
   });
@@ -120,11 +134,12 @@ describe('migrate', () => {
       migrate(db, [
         { version: 1, name: 'init', sql: 'SELECT 1' },
         { version: 2, name: 'admin-sessions', sql: 'SELECT 1' },
-        { version: 3, name: 'broken', sql: 'CREATE TABLE half (a INTEGER); NOT SQL;' },
+        { version: 3, name: 'dashboards', sql: 'SELECT 1' },
+        { version: 4, name: 'broken', sql: 'CREATE TABLE half (a INTEGER); NOT SQL;' },
       ]),
     ).toThrow();
     expect(tableNames(db)).not.toContain('half');
-    expect(schemaVersion(db)).toBe(2);
+    expect(schemaVersion(db)).toBe(3);
     db.close();
   });
 });
@@ -152,8 +167,8 @@ describe('openDb on a file', () => {
     first.close();
 
     const second = openDb(path);
-    expect(schemaVersion(second)).toBe(2);
-    expect(second.prepare('SELECT count(*) FROM schema_migrations').pluck().get()).toBe(2);
+    expect(schemaVersion(second)).toBe(3);
+    expect(second.prepare('SELECT count(*) FROM schema_migrations').pluck().get()).toBe(3);
     expect(getSite(second, site.id)).toEqual(site);
     second.close();
   });
@@ -391,6 +406,70 @@ describe('helpers', () => {
     });
   });
 
+  describe('dashboards', () => {
+    const layout = (name: string): NewDashboard => ({
+      name,
+      site_scope: '1',
+      layout: JSON.stringify({ name, site: 1, grid: [] }),
+      updated_at: 1_700_000_000_000,
+    });
+
+    it('creates, lists, gets, updates and deletes', () => {
+      const created = write(() => createDashboard(db, layout('Overview')));
+      expect(created.id).toBeGreaterThan(0);
+      expect(getDashboard(db, created.id)).toEqual(created);
+      expect(listDashboards(db)).toEqual([created]);
+
+      const updated = write(() =>
+        updateDashboard(db, created.id, { ...layout('Renamed'), updated_at: 2 }),
+      );
+      expect(updated).toEqual({ ...layout('Renamed'), id: created.id, updated_at: 2 });
+      expect(write(() => updateDashboard(db, 99, layout('Ghost')))).toBeUndefined();
+
+      expect(write(() => deleteDashboard(db, created.id))).toBe(true);
+      expect(getDashboard(db, created.id)).toBeUndefined();
+      expect(write(() => deleteDashboard(db, created.id))).toBe(false);
+    });
+
+    it('deleting a dashboard removes its share tokens', () => {
+      const created = write(() => createDashboard(db, layout('Shared')));
+      const hash = new Uint8Array(32).fill(7);
+      write(() =>
+        insertShareToken(db, { token_hash: hash, dashboard_id: created.id, created_at: 1 }),
+      );
+      expect(getShareToken(db, hash)).toBeDefined();
+      write(() => deleteDashboard(db, created.id));
+      expect(getShareToken(db, hash)).toBeUndefined();
+    });
+  });
+
+  describe('share tokens', () => {
+    const hash = (n: number): Uint8Array => new Uint8Array(32).fill(n);
+
+    it('round-trips and revokes per dashboard, only once', () => {
+      write(() => {
+        insertShareToken(db, { token_hash: hash(1), dashboard_id: 1, created_at: 10 });
+        insertShareToken(db, { token_hash: hash(2), dashboard_id: 1, created_at: 20 });
+        insertShareToken(db, { token_hash: hash(3), dashboard_id: 2, created_at: 30 });
+      });
+      expect(getShareToken(db, hash(1))).toEqual({
+        token_hash: Buffer.from(hash(1)),
+        dashboard_id: 1,
+        created_at: 10,
+        revoked_at: null,
+      });
+      expect(getShareToken(db, hash(9))).toBeUndefined();
+
+      expect(write(() => revokeShareTokens(db, 1, 99))).toBe(2);
+      expect(getShareToken(db, hash(1))?.revoked_at).toBe(99);
+      expect(getShareToken(db, hash(2))?.revoked_at).toBe(99);
+      expect(getShareToken(db, hash(3))?.revoked_at).toBeNull();
+      // Already-revoked tokens keep their original revocation time.
+      expect(write(() => revokeShareTokens(db, 1, 123))).toBe(0);
+      expect(getShareToken(db, hash(1))?.revoked_at).toBe(99);
+    });
+  });
+
   describe('diagnostics gauges', () => {
     it('counts event rows and reports a positive page-math size', () => {
       expect(countEvents(db)).toBe(0);
@@ -455,6 +534,13 @@ describe('helpers', () => {
       expect(() => createSite(db, { name: 'x', domains: [] })).toThrow(/withWriteTransaction/);
       expect(() => deleteSetting(db, 'loose')).toThrow(/withWriteTransaction/);
       expect(() => incrementBotDrops(db, 1, '2023-11-14')).toThrow(/withWriteTransaction/);
+      expect(() =>
+        createDashboard(db, { name: 'x', site_scope: 'all', layout: '{}', updated_at: 0 }),
+      ).toThrow(/withWriteTransaction/);
+      expect(() =>
+        insertShareToken(db, { token_hash: new Uint8Array(32), dashboard_id: 1, created_at: 0 }),
+      ).toThrow(/withWriteTransaction/);
+      expect(() => revokeShareTokens(db, 1, 0)).toThrow(/withWriteTransaction/);
     });
   });
 });

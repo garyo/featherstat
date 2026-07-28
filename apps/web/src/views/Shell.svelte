@@ -11,8 +11,8 @@ import { createViewState } from '../lib/state.svelte.ts';
 import type { RangePreset, SiteScope, ViewName } from '../lib/state.ts';
 import { toggleTheme } from '../lib/theme.ts';
 import AllSitesView from './AllSitesView.svelte';
+import JourneysView from './JourneysView.svelte';
 import RealtimeView from './RealtimeView.svelte';
-import SettingsView from './SettingsView.svelte';
 import SiteView from './SiteView.svelte';
 
 /**
@@ -79,6 +79,18 @@ live.on('status', (status) => {
 const site = $derived(view.current.site);
 const current = $derived(view.current.view);
 
+// Settings (sites CRUD, snippet, password, notifications, diagnostics) is a
+// code-split chunk: nobody reaches a dashboard through it, so it stays off the
+// path every session opens on.
+let SettingsPanel = $state<typeof import('./SettingsView.svelte').default | undefined>(undefined);
+$effect(() => {
+  if (current === 'settings' && SettingsPanel === undefined) {
+    void import('./SettingsView.svelte').then((chunk) => {
+      SettingsPanel = chunk.default;
+    });
+  }
+});
+
 // Which site the switcher points at: the one being viewed, or the last one
 // visited while the overview is up — including after a back/forward move.
 let siteTab = $state(typeof view.current.site === 'number' ? view.current.site : FIRST_SITE);
@@ -93,15 +105,22 @@ $effect(() => {
       ? 'Realtime'
       : current === 'settings'
         ? 'Settings'
-        : site === 'all'
-          ? 'All sites'
-          : directory.nameOf(site);
+        : current === 'journeys'
+          ? 'Journeys'
+          : site === 'all'
+            ? 'All sites'
+            : directory.nameOf(site);
   document.title = `${place} · Analytics`;
 });
 
 /** Opening a scope always lands on its dashboard — one history entry. */
 const selectSite = (next: SiteScope): void => view.update({ site: next, view: 'dash' });
-const selectView = (next: ViewName): void => view.update({ view: next });
+/** Journeys is per-site (docs/05): entered from the overview, it opens on the
+ * switcher's last-visited site so the URL stays honest. */
+const selectView = (next: ViewName): void =>
+  view.update(
+    next === 'journeys' && site === 'all' ? { view: next, site: siteTab } : { view: next },
+  );
 const selectRange = (range: RangePreset): void => view.update({ range });
 const setFilters = (filters: Filter[]): void => view.update({ filters });
 const logout = (): void => {
@@ -123,11 +142,31 @@ const logout = (): void => {
   />
 
   {#if current === 'settings'}
-    <SettingsView {admin} sites={directory.sites} onsiteschanged={() => void directory.reload()} />
+    {#if SettingsPanel !== undefined}
+      <SettingsPanel
+        {admin}
+        sites={directory.sites}
+        onsiteschanged={() => void directory.reload()}
+      />
+    {/if}
   {:else if current === 'realtime'}
     <RealtimeView {active} {recent} {site} />
+  {:else if current === 'journeys'}
+    <!-- A hand-edited ?view=journeys&site=all falls back to the switcher's site. -->
+    {@const journeysSite = typeof site === 'number' ? site : siteTab}
+    <JourneysView
+      {client}
+      {live}
+      site={journeysSite}
+      timezone={directory.byId.get(journeysSite)?.timezone}
+      range={view.current.range}
+      filters={view.current.filters}
+      onselectrange={selectRange}
+      onfilters={setFilters}
+    />
   {:else if site === 'all'}
     <AllSitesView
+      {admin}
       {client}
       {live}
       {active}
@@ -137,6 +176,7 @@ const logout = (): void => {
     />
   {:else}
     <SiteView
+      {admin}
       {client}
       {live}
       {site}

@@ -218,8 +218,9 @@ export const QueryRequestSchema = z.object({
 });
 export type QueryRequest = z.infer<typeof QueryRequestSchema>;
 
-/** One result row: dimension/bucket columns plus one column per requested metric. */
-export type ResultRow = Record<string, string | number | null>;
+/** One result row: dimension/bucket columns plus one column per requested metric.
+ * Flows rows (sequence queries) carry their step signature as a string array. */
+export type ResultRow = Record<string, string | number | null | string[]>;
 
 export interface QueryResult {
   rows: ResultRow[];
@@ -232,7 +233,7 @@ export interface QueryResult {
 /**
  * A per-query failure inside an otherwise-successful batch: `unsupported` for a
  * combination the vocabulary cannot answer honestly, `not_implemented` for a
- * kind scheduled for a later milestone (sequence queries, docs/08 M2).
+ * kind scheduled for a later milestone.
  */
 export interface QueryErrorResult {
   error: { code: 'unsupported' | 'not_implemented'; message: string };
@@ -335,6 +336,97 @@ export interface AdminDiagnostics {
 }
 
 // ---------------------------------------------------------------------------
+// ntfy notifications (docs/01 R16) — configured through the settings table
+// ---------------------------------------------------------------------------
+
+/** Loopback is exempt from the https floor: nothing there reaches a wire. */
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+
+/**
+ * Hosts the server must never POST a bearer token to: the link-local range is
+ * cloud metadata services (169.254.169.254 and friends), which no ntfy server
+ * legitimately lives on. Private RFC-1918 ranges stay ALLOWED — a self-hosted
+ * ntfy on the operator's LAN is a first-class deployment, and the URL is set
+ * only through the authenticated admin API (docs/02 § Security posture).
+ */
+const LINK_LOCAL_V4 = /^169\.254\./;
+const LINK_LOCAL_V6 = /^\[fe[89ab][0-9a-f]:/i;
+const METADATA_HOSTS = new Set(['metadata.google.internal', 'metadata.goog']);
+
+/** The notification endpoint may carry a bearer token: https, or http to loopback. */
+export function isSecureWebhookUrl(raw: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  const host = url.hostname.toLowerCase();
+  if (LINK_LOCAL_V4.test(host) || LINK_LOCAL_V6.test(host) || METADATA_HOSTS.has(host)) {
+    return false;
+  }
+  return url.protocol === 'https:' || (url.protocol === 'http:' && LOOPBACK_HOSTS.has(host));
+}
+
+export const NtfyUrlSchema = z
+  .string()
+  .min(1)
+  .max(2048)
+  .refine(isSecureWebhookUrl, 'must be an https URL (http only for loopback)')
+  // `<url>/<topic>` appends a path segment; a query or fragment would swallow it.
+  .refine((raw) => {
+    try {
+      const url = new URL(raw);
+      return url.search === '' && url.hash === '';
+    } catch {
+      return true; // unparseable already failed the refinement above
+    }
+  }, 'must not contain a query string or fragment');
+
+/** ntfy's own topic charset — also what keeps `<url>/<topic>` one path segment. */
+export const NtfyTopicSchema = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/, 'not an ntfy topic');
+
+export const MAX_NTFY_RULES = 50;
+
+/**
+ * One notification rule: a hit matching **every** field present here fires it.
+ * `label` is the event name (Matomo `e_n`). A rule that constrains nothing
+ * would fire on every hit of every site — that is a mistake, not a feature.
+ */
+export const NtfyRuleSchema = z
+  .object({
+    site: z.number().int().positive().optional(),
+    eventCategory: z.string().min(1).max(200).optional(),
+    eventAction: z.string().min(1).max(200).optional(),
+    label: z.string().min(1).max(500).optional(),
+  })
+  .refine((rule) => Object.values(rule).some((value) => value !== undefined), {
+    message: 'a rule must constrain something',
+  });
+export type NtfyRule = z.infer<typeof NtfyRuleSchema>;
+
+/** Shape of the `ntfy_rules` settings row. */
+export const NtfyRulesSchema = z.array(NtfyRuleSchema).max(MAX_NTFY_RULES);
+
+/** `PUT /api/admin/ntfy` — a full replacement, except the write-only token. */
+export const NtfySettingsSchema = z.object({
+  url: NtfyUrlSchema,
+  topic: NtfyTopicSchema,
+  /** Omitted keeps the stored token (the GET never echoes it); null or '' clears it. */
+  token: z.string().max(500).nullable().optional(),
+  rules: NtfyRulesSchema.default([]),
+});
+export type NtfySettingsInput = z.infer<typeof NtfySettingsSchema>;
+
+/** `GET /api/admin/ntfy` — a secret is never sent back, only its presence. */
+export interface NtfySettingsView {
+  url?: string;
+  topic?: string;
+  tokenSet: boolean;
+  rules: NtfyRule[];
+}
+
+// ---------------------------------------------------------------------------
 // Widgets & dashboards (docs/05)
 // ---------------------------------------------------------------------------
 
@@ -408,3 +500,5 @@ export interface VersionTick {
   siteId: number;
   version: number;
 }
+
+export * from './widgets.ts';

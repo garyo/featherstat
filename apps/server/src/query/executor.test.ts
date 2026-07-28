@@ -407,7 +407,7 @@ describe("site: 'all'", () => {
 });
 
 describe('error entries', () => {
-  it('returns not_implemented for sequence kinds while the batch still succeeds', () => {
+  it('answers sequence kinds alongside metric queries in one batch', () => {
     const response = run({
       queries: [
         { id: 'kpis', metrics: ['visitors'] },
@@ -415,9 +415,12 @@ describe('error entries', () => {
       ],
     });
     expect(resultOf(response, 'kpis').rows).toEqual([{ visitors: 4 }]);
-    expect(response.results.sankey).toEqual({
-      error: { code: 'not_implemented', message: expect.stringContaining('M2') },
-    });
+    // A's pages (/ → /docs → /docs) and D's event step (/ → cta · click).
+    expect(resultOf(response, 'sankey').rows).toEqual([
+      { step: 1, from: '/', to: '/docs', sessions: 1 },
+      { step: 1, from: '/', to: 'event: cta · click', sessions: 1 },
+      { step: 2, from: '/docs', to: '/docs', sessions: 1 },
+    ]);
   });
 
   it('returns unsupported for dishonest metric × dim combinations', () => {

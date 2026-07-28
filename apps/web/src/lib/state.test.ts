@@ -37,6 +37,7 @@ describe('view state parsing', () => {
       filters: [{ dim: 'country', op: 'eq', value: 'US' }],
     });
     expect(parseViewState('/?view=settings').view).toBe('settings');
+    expect(parseViewState('/?view=journeys').view).toBe('journeys');
   });
 
   it('falls back to the default rather than failing on a mangled link', () => {
@@ -53,7 +54,7 @@ describe('view state serialization', () => {
   it('round-trips every reachable state', () => {
     for (const site of SITES) {
       for (const range of RANGE_PRESETS) {
-        for (const view of ['dash', 'realtime', 'settings'] as const) {
+        for (const view of ['dash', 'journeys', 'realtime', 'settings'] as const) {
           const state: ViewState = { site, range, view, filters: [] };
           expect(parseViewState(applyViewState(state, '/'))).toEqual(state);
         }

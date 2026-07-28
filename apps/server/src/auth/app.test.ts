@@ -59,8 +59,11 @@ function cookiesOf(res: Response): string {
     .join('; ');
 }
 
-async function setup(): Promise<{ cookie: string; csrf: string }> {
-  const res = await secured.app.request('/api/admin/setup', {
+async function setup(app: SecuredApp['app'] = secured.app): Promise<{
+  cookie: string;
+  csrf: string;
+}> {
+  const res = await app.request('/api/admin/setup', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ password: PASSWORD, setupToken: SETUP_TOKEN }),
@@ -410,6 +413,136 @@ describe('metrics wiring', () => {
     // Unconfigured stays a hard 404 — the SPA fallback must not shadow it with HTML.
     const disabled = await secured.app.request('/metrics');
     expect(disabled.status).toBe(404);
+  });
+});
+
+describe('dashboards, share links and notifications are mounted', () => {
+  const LAYOUT = {
+    name: 'Overview',
+    site: 1,
+    grid: [
+      { id: 'kpis', viz: 'kpi-row', w: 12, h: 1, query: { id: 'kpis', metrics: ['pageviews'] } },
+    ],
+  };
+
+  const json = (extra: Record<string, string>): Record<string, string> => ({
+    'content-type': 'application/json',
+    ...extra,
+  });
+
+  async function createDashboard(cookie: string, csrf: string): Promise<number> {
+    const res = await secured.app.request('/api/admin/dashboards', {
+      method: 'POST',
+      headers: json({ cookie, 'x-csrf-token': csrf }),
+      body: JSON.stringify(LAYOUT),
+    });
+    expect(res.status).toBe(201);
+    return ((await res.json()) as { id: number }).id;
+  }
+
+  it('gates dashboard CRUD behind the session and the CSRF guard', async () => {
+    expect((await secured.app.request('/api/admin/dashboards')).status).toBe(401);
+    const { cookie, csrf } = await setup();
+
+    const noToken = await secured.app.request('/api/admin/dashboards', {
+      method: 'POST',
+      headers: json({ cookie }),
+      body: JSON.stringify(LAYOUT),
+    });
+    expect(noToken.status).toBe(403);
+
+    const id = await createDashboard(cookie, csrf);
+    const list = await secured.app.request('/api/admin/dashboards', { headers: { cookie } });
+    expect(list.status).toBe(200);
+    expect(await list.json()).toEqual([
+      { id, name: 'Overview', site: 1, updatedAt: expect.any(Number) },
+    ]);
+  });
+
+  it('mints a share link readable without a session, then revokes it', async () => {
+    const { cookie, csrf } = await setup();
+    const id = await createDashboard(cookie, csrf);
+
+    expect(
+      (await secured.app.request(`/api/admin/dashboards/${id}/share`, { method: 'POST' })).status,
+    ).toBe(401);
+
+    const minted = await secured.app.request(`/api/admin/dashboards/${id}/share`, {
+      method: 'POST',
+      headers: { cookie, 'x-csrf-token': csrf },
+    });
+    expect(minted.status).toBe(201);
+    const { token } = (await minted.json()) as { token: string };
+
+    // The public read: no cookie, and it answers the dashboard's own batch.
+    const shared = await secured.app.request(`/share/${token}`);
+    expect(shared.status).toBe(200);
+    const view = (await shared.json()) as {
+      dashboard: { name: string };
+      results: Record<string, unknown>;
+    };
+    expect(view.dashboard.name).toBe('Overview');
+    expect(view.results.kpis).toBeDefined();
+
+    const revoked = await secured.app.request(`/api/admin/dashboards/${id}/share`, {
+      method: 'DELETE',
+      headers: { cookie, 'x-csrf-token': csrf },
+    });
+    expect(await revoked.json()).toEqual({ revoked: 1 });
+    expect((await secured.app.request(`/share/${token}`)).status).toBe(404);
+    // An unknown token is a 404 too — never the SPA shell mounted behind it.
+    const unknown = await secured.app.request('/share/not-a-token');
+    expect(unknown.status).toBe(404);
+    expect(unknown.headers.get('content-type')).toContain('application/json');
+  });
+
+  it('serves the ntfy pane behind the gate and delivers matching hits from the pipeline', async () => {
+    const deliveries: Array<{ url: string; title: string; body: string }> = [];
+    const notified = createSecuredApp({
+      db,
+      sink: pipeline.sink,
+      pipeline,
+      assetsDir,
+      auth: { now: () => clock, env: {}, setupToken: SETUP_TOKEN },
+      ntfy: {
+        fetchFn: async (url, init) => {
+          deliveries.push({ url, title: init.headers.Title ?? '', body: init.body });
+          return { ok: true };
+        },
+      },
+    });
+    expect((await notified.app.request('/api/admin/ntfy')).status).toBe(401);
+
+    const { cookie, csrf } = await setup(notified.app);
+    const saved = await notified.app.request('/api/admin/ntfy', {
+      method: 'PUT',
+      headers: json({ cookie, 'x-csrf-token': csrf }),
+      body: JSON.stringify({
+        url: 'https://ntfy.example.test',
+        topic: 'alerts',
+        rules: [{ eventCategory: 'signup' }],
+      }),
+    });
+    expect(saved.status).toBe(200);
+    expect(await saved.json()).toEqual({
+      url: 'https://ntfy.example.test',
+      topic: 'alerts',
+      tokenSet: false,
+      rules: [{ eventCategory: 'signup' }],
+    });
+
+    const beacon = await notified.app.request(
+      '/matomo.php?idsite=1&rec=1&url=https://one.test/pricing&e_c=signup&e_a=account-created&send_image=0',
+      { headers: { 'user-agent': DESKTOP_UA, 'x-forwarded-for': '203.0.113.7' } },
+    );
+    expect(beacon.status).toBe(204);
+    await new Promise((resolve) => setTimeout(resolve, 0)); // delivery is deferred off the hot path
+
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0]?.url).toBe('https://ntfy.example.test/alerts');
+    expect(deliveries[0]?.title).toBe('one signup: account-created');
+    expect(deliveries[0]?.body).toContain('/pricing');
+    expect(notified.ntfy?.stats()).toMatchObject({ sent: 1, failed: 0, pending: 0 });
   });
 });
 

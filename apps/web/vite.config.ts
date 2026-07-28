@@ -15,6 +15,9 @@ export default defineConfig({
     proxy: {
       '/api': process.env.API_PROXY ?? 'http://localhost:8080',
       '/matomo.php': process.env.API_PROXY ?? 'http://localhost:8080',
+      // The share endpoint is JSON the share page fetches (src/lib/share.ts);
+      // unproxied, the dev server would answer it with index.html.
+      '/share': process.env.API_PROXY ?? 'http://localhost:8080',
     },
   },
 });

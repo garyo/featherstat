@@ -1,0 +1,327 @@
+import {
+  DAY_MS,
+  type Hit,
+  PING_CLAMP_MS,
+  type QueryRequest,
+  SESSION_TIMEOUT_MS,
+} from '@analytics/shared';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createSite, type Db, openDb, withWriteTransaction } from '../../src/db/index.ts';
+import { parseMatomoRequest } from '../../src/ingest/matomo.ts';
+import { createPipeline } from '../../src/pipeline/index.ts';
+import { executeQueryRequest } from '../../src/query/executor.ts';
+import { resultOf } from '../rows.ts';
+import {
+  BOT_AGENTS,
+  type Corpus,
+  generateCorpus,
+  localStamp,
+  REPLAY_HITS_PER_FLUSH,
+  toMatomoQuery,
+} from './generate.ts';
+
+/**
+ * Journeys acceptance (M2, docs/08): sequence queries over the 90-day replay
+ * corpus must agree with an oracle that never touches SQL — it re-sessionizes
+ * the generator's raw hit stream in plain JS (docs/03 rules: identity with the
+ * UTC-midnight rotation, 30-min idle timeout, clamped engagement) and derives
+ * transitions/flows by grouping each session's ordered non-ping steps.
+ */
+
+const corpus = generateCorpus();
+
+/** Wide enough to hold every local date the corpus can produce, in any site timezone. */
+const FULL_RANGE = { from: '2026-02-14', to: '2026-05-17' } as const;
+
+let db: Db;
+let oracle: OracleSession[];
+
+beforeAll(() => {
+  db = openDb(':memory:');
+  withWriteTransaction(db, () => {
+    for (const site of corpus.sites) createSite(db, site);
+  });
+  replay(db, corpus);
+  oracle = sessionize(corpus);
+}, 120_000);
+
+afterAll(() => {
+  db.close();
+});
+
+/** Bench-style replay: a huge batch interval and explicit flushes — no fake timers needed. */
+function replay(target: Db, source: Corpus): void {
+  const pipeline = createPipeline(target, { batchIntervalMs: 3_600_000 });
+  let queued = 0;
+  for (const entry of source.hits) {
+    const { hits } = parseMatomoRequest({ query: toMatomoQuery(entry) });
+    pipeline.sink(hits, entry.ctx);
+    queued += 1;
+    if (queued === REPLAY_HITS_PER_FLUSH) {
+      queued = 0;
+      pipeline.flush();
+    }
+  }
+  pipeline.shutdown();
+}
+
+// ---------------------------------------------------------------------------
+// The oracle
+// ---------------------------------------------------------------------------
+
+interface OracleSession {
+  siteId: number;
+  localDate: string;
+  lastSeen: number;
+  engagedMs: number;
+  /** Ordered non-ping step labels, exactly as the server would label them. */
+  steps: string[];
+}
+
+const BOT_AGENT_SET = new Set(BOT_AGENTS);
+
+function sessionize(source: Corpus): OracleSession[] {
+  const zones = new Map(source.sites.map((site) => [site.id, site.timezone]));
+  const open = new Map<string, OracleSession>();
+  const all: OracleSession[] = [];
+  for (const { hit, ctx } of source.hits) {
+    if (BOT_AGENT_SET.has(ctx.userAgent)) continue;
+    // Identity rotates at UTC midnight (docs/03), so the UTC day is part of the key.
+    const day = Math.floor(ctx.receivedAt / DAY_MS);
+    const identity = `${hit.siteId}|${day}|${hit.visitorId ?? `${ctx.ip}\n${ctx.userAgent}`}`;
+    let session = open.get(identity);
+    if (session === undefined || ctx.receivedAt - session.lastSeen > SESSION_TIMEOUT_MS) {
+      session = {
+        siteId: hit.siteId,
+        localDate: localStamp(zones.get(hit.siteId) ?? 'UTC', ctx.receivedAt).date,
+        lastSeen: ctx.receivedAt,
+        engagedMs: 0,
+        steps: [],
+      };
+      open.set(identity, session);
+      all.push(session);
+    } else {
+      const gap = ctx.receivedAt - session.lastSeen;
+      session.engagedMs += Math.min(Math.max(gap, 0), PING_CLAMP_MS);
+      session.lastSeen = ctx.receivedAt;
+    }
+    if (hit.type !== 'ping') session.steps.push(label(hit));
+  }
+  return all;
+}
+
+/** The server's labelling rule, restated: path for page-ish hits, category · action for events. */
+function label(hit: Hit): string {
+  if (hit.type === 'event') {
+    return hit.event === undefined ? '' : `event: ${hit.event.category} · ${hit.event.action}`;
+  }
+  if (hit.url === undefined) return '';
+  const url = new URL(hit.url);
+  return url.pathname + url.search;
+}
+
+interface Envelope {
+  site: number;
+  from: string;
+  to: string;
+  /** strftime('%w') numbering: 0 = Sunday … 6 = Saturday. */
+  weekday?: number;
+}
+
+function scopedSessions(envelope: Envelope): OracleSession[] {
+  return oracle.filter(
+    (session) =>
+      session.siteId === envelope.site &&
+      session.localDate >= envelope.from &&
+      session.localDate <= envelope.to &&
+      (envelope.weekday === undefined || weekdayOf(session.localDate) === envelope.weekday),
+  );
+}
+
+function weekdayOf(localDate: string): number {
+  return new Date(`${localDate}T00:00:00Z`).getUTCDay();
+}
+
+interface Edge {
+  step: number;
+  from: string;
+  to: string;
+  sessions: number;
+}
+
+function expectedTransitions(
+  scoped: readonly OracleSession[],
+  steps: number,
+  limit: number,
+): Edge[] {
+  const counts = new Map<string, Edge>();
+  for (const session of scoped) {
+    for (let k = 0; k + 1 < session.steps.length && k < steps; k += 1) {
+      const from = session.steps[k] ?? '';
+      const to = session.steps[k + 1] ?? '';
+      const key = `${k}\u0000${from}\u0000${to}`;
+      const edge = counts.get(key);
+      if (edge === undefined) counts.set(key, { step: k + 1, from, to, sessions: 1 });
+      else edge.sessions += 1;
+    }
+  }
+  const byStep = new Map<number, Edge[]>();
+  for (const edge of counts.values()) {
+    const layer = byStep.get(edge.step);
+    if (layer === undefined) byStep.set(edge.step, [edge]);
+    else layer.push(edge);
+  }
+  const rows: Edge[] = [];
+  for (const step of [...byStep.keys()].sort((a, b) => a - b)) {
+    const layer = (byStep.get(step) ?? [])
+      .sort((a, b) => b.sessions - a.sessions || cmp(a.from, b.from) || cmp(a.to, b.to))
+      .slice(0, limit);
+    rows.push(...layer);
+  }
+  return rows;
+}
+
+interface Flow {
+  steps: string[];
+  sessions: number;
+  avg_engaged_ms: number;
+  exit_rate: number;
+}
+
+function expectedFlows(scoped: readonly OracleSession[], steps: number, limit: number): Flow[] {
+  const groups = new Map<
+    string,
+    { sig: string[]; sessions: number; engaged: number; exits: number }
+  >();
+  for (const session of scoped) {
+    if (session.steps.length === 0) continue; // a session of only pings has no journey
+    const sig = session.steps.slice(0, steps);
+    const key = JSON.stringify(sig);
+    let group = groups.get(key);
+    if (group === undefined) {
+      group = { sig, sessions: 0, engaged: 0, exits: 0 };
+      groups.set(key, group);
+    }
+    group.sessions += 1;
+    group.engaged += session.engagedMs;
+    if (session.steps.length <= steps) group.exits += 1;
+  }
+  return [...groups.entries()]
+    .sort(([keyA, a], [keyB, b]) => b.sessions - a.sessions || cmp(keyA, keyB))
+    .slice(0, limit)
+    .map(([, group]) => ({
+      steps: group.sig,
+      sessions: group.sessions,
+      avg_engaged_ms: group.engaged / group.sessions,
+      exit_rate: group.exits / group.sessions,
+    }));
+}
+
+function cmp(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function sequenceBatch(
+  envelope: Envelope,
+  steps: number,
+  limit: number,
+  filters?: QueryRequest['filters'],
+): QueryRequest {
+  return {
+    site: envelope.site,
+    range: { from: envelope.from, to: envelope.to },
+    ...(filters === undefined ? {} : { filters }),
+    queries: [
+      { id: 'sankey', kind: 'transitions', steps, limit },
+      { id: 'journeys', kind: 'flows', steps, limit },
+    ],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe('sequence queries on the replay corpus', () => {
+  it('oracle sessionization agrees with the generator day totals', () => {
+    const bySiteDay = new Map<string, number>();
+    for (const session of oracle) {
+      const key = `${session.siteId}|${session.localDate}`;
+      bySiteDay.set(key, (bySiteDay.get(key) ?? 0) + 1);
+    }
+    for (const day of corpus.totals) {
+      expect(bySiteDay.get(`${day.siteId}|${day.localDate}`) ?? 0).toBe(day.sessions);
+    }
+  });
+
+  it('transitions match the oracle for every site over the full range', () => {
+    for (const site of corpus.sites) {
+      const envelope = { site: site.id, ...FULL_RANGE };
+      const response = executeQueryRequest(db, sequenceBatch(envelope, 4, 200));
+      const expected = expectedTransitions(scopedSessions(envelope), 4, 200);
+      expect(expected.length, site.name).toBeGreaterThan(0);
+      expect(resultOf(response, 'sankey').rows, site.name).toEqual(expected);
+    }
+  });
+
+  it('flows match the oracle for every site over the full range', () => {
+    for (const site of corpus.sites) {
+      const envelope = { site: site.id, ...FULL_RANGE };
+      const response = executeQueryRequest(db, sequenceBatch(envelope, 4, 200));
+      const expected = expectedFlows(scopedSessions(envelope), 4, 200);
+      expect(expected.length, site.name).toBeGreaterThan(0);
+      expect(resultOf(response, 'journeys').rows, site.name).toEqual(expected);
+    }
+  });
+
+  it('a tight limit keeps the deterministic top of both kinds', () => {
+    const envelope = { site: 2, ...FULL_RANGE };
+    const response = executeQueryRequest(db, sequenceBatch(envelope, 2, 10));
+    const scoped = scopedSessions(envelope);
+    expect(resultOf(response, 'sankey').rows).toEqual(expectedTransitions(scoped, 2, 10));
+    expect(resultOf(response, 'journeys').rows).toEqual(expectedFlows(scoped, 2, 10));
+  });
+
+  it('respects the filter envelope (Mondays only, session-scoped)', () => {
+    const envelope = { site: 2, from: '2026-03-01', to: '2026-04-15', weekday: 1 };
+    const response = executeQueryRequest(
+      db,
+      sequenceBatch(envelope, 3, 200, [{ dim: 'weekday', op: 'eq', value: '1' }]),
+    );
+    const scoped = scopedSessions(envelope);
+    expect(scoped.length).toBeGreaterThan(0);
+    expect(resultOf(response, 'sankey').rows).toEqual(expectedTransitions(scoped, 3, 200));
+    expect(resultOf(response, 'journeys').rows).toEqual(expectedFlows(scoped, 3, 200));
+  });
+
+  it('rejects an event-only filter honestly for both kinds', () => {
+    const response = executeQueryRequest(
+      db,
+      sequenceBatch({ site: 2, ...FULL_RANGE }, 4, 20, [
+        { dim: 'event_category', op: 'eq', value: 'cta' },
+      ]),
+    );
+    for (const id of ['sankey', 'journeys']) {
+      expect(response.results[id]).toHaveProperty(['error', 'code'], 'unsupported');
+    }
+  });
+
+  it('answers an empty range with empty rows', () => {
+    const response = executeQueryRequest(
+      db,
+      sequenceBatch({ site: 2, from: '2026-01-01', to: '2026-01-31' }, 4, 20),
+    );
+    expect(resultOf(response, 'sankey').rows).toEqual([]);
+    expect(resultOf(response, 'journeys').rows).toEqual([]);
+  });
+
+  it('answers steps=4 transitions + flows on the busiest site under 100 ms', () => {
+    const request = sequenceBatch({ site: 2, ...FULL_RANGE }, 4, 50);
+    executeQueryRequest(db, request); // warm statement cache
+    let best = Number.POSITIVE_INFINITY;
+    for (let run = 0; run < 3; run += 1) {
+      best = Math.min(best, executeQueryRequest(db, request).meta.generatedInMs);
+    }
+    expect(best).toBeLessThan(100);
+  });
+});

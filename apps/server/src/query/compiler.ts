@@ -139,6 +139,17 @@ export function metricEmpty(metric: Metric): 0 | null {
   return METRICS[metric].empty;
 }
 
+/** True when only the events table carries `dim` — sessions cannot be filtered by it. */
+export function eventOnlyDimension(dim: Dimension): boolean {
+  return DIMS[dim].sessions === null;
+}
+
+/** The per-site scope every statement joins through: `(site_id, from, to)` tuples bound at execution. */
+export function boundsCte(siteCount: number): string {
+  const tuples = Array.from({ length: siteCount }, () => '(?, ?, ?)').join(', ');
+  return `WITH bounds(site_id, from_date, to_date) AS (VALUES ${tuples})`;
+}
+
 export interface CompiledStatement {
   sql: string;
   /** Bound after the per-site bounds tuples, in textual order (SELECT, WHERE, LIMIT). */
@@ -233,7 +244,7 @@ export function compileMetricQuery(
   };
 }
 
-function unsupported(message: string): CompileError {
+export function unsupported(message: string): CompileError {
   return { error: { code: 'unsupported', message } };
 }
 
@@ -278,9 +289,8 @@ function buildStatement(
 
   const where = filters.map((filter) => filterSql(filter, table, params));
 
-  const tuples = Array.from({ length: siteCount }, () => '(?, ?, ?)').join(', ');
   const lines = [
-    `WITH bounds(site_id, from_date, to_date) AS (VALUES ${tuples})`,
+    boundsCte(siteCount),
     `SELECT ${select.join(', ')}`,
     `FROM ${table} ${alias} JOIN bounds ON ${alias}.site_id = bounds.site_id`,
     `  AND ${alias}.local_date BETWEEN bounds.from_date AND bounds.to_date`,
@@ -307,7 +317,7 @@ function orderClause(groups: readonly Group[], firstMetric: Metric | undefined):
   return `ORDER BY "${firstMetric}" DESC, 1`;
 }
 
-function filterSql(filter: Filter, table: Table, params: (string | number)[]): string {
+export function filterSql(filter: Filter, table: Table, params: (string | number)[]): string {
   const spec = DIMS[filter.dim];
   const column = table === 'events' ? spec.events : spec.sessions;
   if (column === null) throw new Error(`'${filter.dim}' filter reached a table without it`);

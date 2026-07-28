@@ -17,6 +17,7 @@ import {
 } from '../db/index.ts';
 import { type CompiledQuery, compileMetricQuery, metricEmpty } from './compiler.ts';
 import { compareWindow, type DateWindow, resolveWindow } from './ranges.ts';
+import { type CompiledSequence, compileSequenceQuery } from './sequences.ts';
 
 /**
  * Runs a whole QueryRequest — every widget of a dashboard view — inside one
@@ -70,12 +71,16 @@ export function executeQueryRequest(
     for (const query of request.queries) {
       const queryStarted = performance.now();
       if ('kind' in query) {
-        results[query.id] = {
-          error: {
-            code: 'not_implemented',
-            message: `'${query.kind}' queries ship with journeys (M2, docs/08)`,
-          },
-        };
+        // Sequence kinds answer only the primary window: a journey comparison
+        // has no defined shape (docs/04), so `compare` is never fabricated.
+        const compiled = compileSequenceQuery(query, request.filters ?? [], windows.length);
+        if (isQueryError(compiled)) {
+          results[query.id] = compiled;
+          continue;
+        }
+        const entry: QueryResult = { rows: runSequence(db, compiled, windows) };
+        entry.ms = elapsed(queryStarted);
+        results[query.id] = entry;
         continue;
       }
       const compiled = compileMetricQuery(query, request.filters ?? [], windows.length);
@@ -99,10 +104,32 @@ function resolveSites(db: Db, scope: QueryRequest['site']): Site[] {
   return [site];
 }
 
-function runCompiled(db: Db, compiled: CompiledQuery, windows: readonly SiteWindow[]): ResultRow[] {
+function runSequence(
+  db: Db,
+  compiled: CompiledSequence,
+  windows: readonly SiteWindow[],
+): ResultRow[] {
   if (windows.length === 0) return [];
+  const rows = stmt<ResultRow>(db, compiled.sql).all(
+    ...boundsParams(windows),
+    ...compiled.params,
+  ) as ResultRow[];
+  if (compiled.kind === 'flows') {
+    // The signature travels as JSON text in SQL; clients get the parsed array.
+    for (const row of rows) row.steps = JSON.parse(row.steps as string) as string[];
+  }
+  return rows;
+}
+
+function boundsParams(windows: readonly SiteWindow[]): (string | number)[] {
   const bounds: (string | number)[] = [];
   for (const window of windows) bounds.push(window.siteId, window.from, window.to);
+  return bounds;
+}
+
+function runCompiled(db: Db, compiled: CompiledQuery, windows: readonly SiteWindow[]): ResultRow[] {
+  if (windows.length === 0) return [];
+  const bounds = boundsParams(windows);
 
   const first = compiled.statements[0];
   if (compiled.ordered && first !== undefined) {

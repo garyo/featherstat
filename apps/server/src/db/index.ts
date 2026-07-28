@@ -453,6 +453,100 @@ export function databaseSizeBytes(db: Db): number {
 }
 
 // ---------------------------------------------------------------------------
+// Dashboards & share tokens (docs/04 § 5, docs/05 § Widgets)
+// ---------------------------------------------------------------------------
+
+export interface DashboardRow {
+  id: number;
+  /** Denormalized from the layout for listing without a JSON parse. */
+  name: string;
+  /** `'all'` or a site id in decimal — the layout's `site`, stringified. */
+  site_scope: string;
+  /** Dashboard JSON; the routes validate with `DashboardSchema` before every write. */
+  layout: string;
+  updated_at: number;
+}
+
+export type NewDashboard = Omit<DashboardRow, 'id'>;
+
+const DASHBOARD_COLUMNS = 'id, name, site_scope, layout, updated_at';
+const SQL_LIST_DASHBOARDS = `SELECT ${DASHBOARD_COLUMNS} FROM dashboards ORDER BY id`;
+const SQL_GET_DASHBOARD = `SELECT ${DASHBOARD_COLUMNS} FROM dashboards WHERE id = ?`;
+const SQL_CREATE_DASHBOARD =
+  'INSERT INTO dashboards (name, site_scope, layout, updated_at) VALUES (?, ?, ?, ?)';
+const SQL_UPDATE_DASHBOARD = `UPDATE dashboards SET name = ?, site_scope = ?, layout = ?, updated_at = ?
+WHERE id = ? RETURNING ${DASHBOARD_COLUMNS}`;
+const SQL_DELETE_DASHBOARD = 'DELETE FROM dashboards WHERE id = ?';
+const SQL_DELETE_DASHBOARD_TOKENS = 'DELETE FROM share_tokens WHERE dashboard_id = ?';
+
+export function listDashboards(db: Db): DashboardRow[] {
+  return stmt<DashboardRow>(db, SQL_LIST_DASHBOARDS).all() as DashboardRow[];
+}
+
+export function getDashboard(db: Db, id: number): DashboardRow | undefined {
+  return stmt<DashboardRow>(db, SQL_GET_DASHBOARD).get(id);
+}
+
+export function createDashboard(db: Db, row: NewDashboard): DashboardRow {
+  assertWritable(db);
+  const info = stmt(db, SQL_CREATE_DASHBOARD).run(
+    row.name,
+    row.site_scope,
+    row.layout,
+    row.updated_at,
+  );
+  return { id: Number(info.lastInsertRowid), ...row };
+}
+
+export function updateDashboard(db: Db, id: number, row: NewDashboard): DashboardRow | undefined {
+  assertWritable(db);
+  return stmt<DashboardRow>(db, SQL_UPDATE_DASHBOARD).get(
+    row.name,
+    row.site_scope,
+    row.layout,
+    row.updated_at,
+    id,
+  );
+}
+
+/** Removes the dashboard and every share token pointing at it; false if unknown. */
+export function deleteDashboard(db: Db, id: number): boolean {
+  assertWritable(db);
+  stmt(db, SQL_DELETE_DASHBOARD_TOKENS).run(id);
+  return stmt(db, SQL_DELETE_DASHBOARD).run(id).changes > 0;
+}
+
+export interface ShareTokenRow {
+  /** sha256 of the raw token — the raw value exists only in the mint response. */
+  token_hash: Uint8Array;
+  dashboard_id: number;
+  created_at: number;
+  revoked_at: number | null;
+}
+
+const SQL_INSERT_SHARE_TOKEN =
+  'INSERT INTO share_tokens (token_hash, dashboard_id, created_at) VALUES (?, ?, ?)';
+const SQL_GET_SHARE_TOKEN =
+  'SELECT token_hash, dashboard_id, created_at, revoked_at FROM share_tokens WHERE token_hash = ?';
+const SQL_REVOKE_SHARE_TOKENS =
+  'UPDATE share_tokens SET revoked_at = ? WHERE dashboard_id = ? AND revoked_at IS NULL';
+
+export function insertShareToken(db: Db, row: Omit<ShareTokenRow, 'revoked_at'>): void {
+  assertWritable(db);
+  stmt(db, SQL_INSERT_SHARE_TOKEN).run(row.token_hash, row.dashboard_id, row.created_at);
+}
+
+export function getShareToken(db: Db, tokenHash: Uint8Array): ShareTokenRow | undefined {
+  return stmt<ShareTokenRow>(db, SQL_GET_SHARE_TOKEN).get(tokenHash);
+}
+
+/** Revokes every live token of a dashboard; returns how many were revoked. */
+export function revokeShareTokens(db: Db, dashboardId: number, now: number): number {
+  assertWritable(db);
+  return stmt(db, SQL_REVOKE_SHARE_TOKENS).run(now, dashboardId).changes;
+}
+
+// ---------------------------------------------------------------------------
 // Admin sessions (docs/02 § Security posture)
 // ---------------------------------------------------------------------------
 

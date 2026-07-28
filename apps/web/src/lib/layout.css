@@ -50,9 +50,11 @@ header.top {
   background: color-mix(in srgb, var(--ink) 6%, transparent);
 }
 
+/* Clearly past the 6% hover wash — hovering a neighbor must not read as active. */
 .tab[aria-current="page"] {
-  background: color-mix(in srgb, var(--ink) 8%, transparent);
+  background: color-mix(in srgb, var(--ink) 13%, transparent);
   color: var(--ink);
+  font-weight: 600;
 }
 
 /* The site switcher: a native <select> wearing the tab's clothes. */

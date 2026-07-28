@@ -1,9 +1,16 @@
 import { Hono, type MiddlewareHandler } from 'hono';
 import { observeWriteTransactions } from '../db/index.ts';
 import { type AppOptions, createApp } from '../index.ts';
+import {
+  createNtfyIntegration,
+  type NtfyNotifier,
+  type NtfyNotifierOptions,
+} from '../notify/index.ts';
 import type { Pipeline } from '../pipeline/index.ts';
 import { createAdminRoutes } from '../routes/admin.ts';
+import { createDashboardRoutes } from '../routes/dashboards.ts';
 import { createMetricsRoutes, Metrics } from '../routes/metrics.ts';
+import { createShareRoutes } from '../routes/share.ts';
 import { createSpaRoutes } from '../routes/spa.ts';
 import { type Auth, type AuthEnv, type AuthOptions, createAuth } from './auth.ts';
 
@@ -50,6 +57,8 @@ export interface SecuredAppOptions extends AppOptions {
   metricsToken?: string;
   /** Built SPA directory; defaults to env WEB_DIR; absent, no SPA is served. */
   webDir?: string;
+  /** Notifier knobs (clock, fetch, cooldown); the feature itself is turned on by its settings rows. */
+  ntfy?: NtfyNotifierOptions;
 }
 
 export interface SecuredApp {
@@ -57,6 +66,8 @@ export interface SecuredApp {
   /** Undefined on a tracking-only server (no db — nothing gated is mounted). */
   auth: Auth | undefined;
   metrics: Metrics;
+  /** Undefined on a tracking-only server; idle until `/api/admin/ntfy` is configured. */
+  ntfy: NtfyNotifier | undefined;
 }
 
 export function createSecuredApp(options: SecuredAppOptions = {}): SecuredApp {
@@ -65,6 +76,7 @@ export function createSecuredApp(options: SecuredAppOptions = {}): SecuredApp {
     pipeline,
     metricsToken = process.env.METRICS_TOKEN,
     webDir = process.env.WEB_DIR,
+    ntfy: ntfyOptions,
     ...appOptions
   } = options;
   // The bundled server (Docker) points these at its own directories via env.
@@ -85,6 +97,7 @@ export function createSecuredApp(options: SecuredAppOptions = {}): SecuredApp {
     for (const [name, value] of Object.entries(SECURITY_HEADERS)) c.res.headers.set(name, value);
   });
   let auth: Auth | undefined;
+  let ntfy: NtfyNotifier | undefined;
 
   if (appOptions.db !== undefined) {
     const db = appOptions.db;
@@ -96,14 +109,24 @@ export function createSecuredApp(options: SecuredAppOptions = {}): SecuredApp {
     );
     app.use('/api/query', timed(metrics));
     app.use('/api/realtime', sseGauge(metrics));
+    // Order matters: these routers gate `/api/admin/*` wholesale, so they mount
+    // AFTER the admin router — its public lifecycle handlers (`me`, `setup`,
+    // `login`) are then reached first and end the chain before those gates run.
     app.route('/', createAdminRoutes(db, createdAuth));
+    app.route('/', createDashboardRoutes(db, createdAuth));
+    // Minting/revoking are admin surfaces; `GET /share/:token` rides in the same
+    // router and stays public — it is not under `/api/`, so the prefix gate skips it.
+    app.route('/', createShareRoutes(db, createdAuth));
+    const notifications = createNtfyIntegration(db, pipeline, createdAuth, ntfyOptions);
+    ntfy = notifications.notifier;
+    app.route('/', notifications.routes);
   }
 
   app.route('/', createMetricsRoutes({ metrics, db: appOptions.db, token: metricsToken }));
   app.route('/', createApp(appOptions));
   if (webDir !== undefined) app.route('/', createSpaRoutes({ dir: webDir }));
 
-  return { app, auth, metrics };
+  return { app, auth, metrics, ntfy };
 }
 
 /** Registered after the gate, so unauthorized rejections never skew the summary. */

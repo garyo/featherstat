@@ -95,6 +95,15 @@ describe('the built entrypoint serves the SECURED app', () => {
     expect(setup.status).toBe(403); // the real token only exists in the server log
   });
 
+  it('mounts dashboards and notifications gated, share links public but unguessable', async () => {
+    expect((await fetch(`${BASE}/api/admin/dashboards`)).status).toBe(401);
+    expect((await fetch(`${BASE}/api/admin/ntfy`)).status).toBe(401);
+    // Public prefix, but a token nobody minted resolves to nothing.
+    const share = await fetch(`${BASE}/share/${'a'.repeat(43)}`);
+    expect(share.status).toBe(404);
+    expect(share.headers.get('content-type')).toContain('application/json');
+  });
+
   it('keeps tracking public and 404s unconfigured /metrics', async () => {
     const beacon = await fetch(`${BASE}/matomo.php?idsite=1&rec=1&send_image=0`);
     expect(beacon.status).toBe(204);

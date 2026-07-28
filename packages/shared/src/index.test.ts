@@ -4,6 +4,7 @@ import {
   DashboardSchema,
   HitSchema,
   MAX_QUERIES_PER_BATCH,
+  NtfyUrlSchema,
   QueryRequestSchema,
 } from './index.ts';
 
@@ -100,5 +101,36 @@ describe('AdminSiteCreateSchema domains', () => {
     expect(parse('https://example.com')).toBe(false);
     expect(parse('two words')).toBe(false);
     expect(parse('-leading.example')).toBe(false);
+  });
+});
+
+describe('NtfyUrlSchema', () => {
+  const parse = (url: string) => NtfyUrlSchema.safeParse(url).success;
+
+  it('accepts https anywhere and http only to loopback', () => {
+    expect(parse('https://ntfy.example.com')).toBe(true);
+    expect(parse('https://ntfy.example.com/base')).toBe(true);
+    // Self-hosted ntfy on the operator's LAN is a first-class deployment.
+    expect(parse('https://192.168.0.10')).toBe(true);
+    expect(parse('https://10.0.0.5:9000')).toBe(true);
+    expect(parse('http://localhost:8080')).toBe(true);
+    expect(parse('http://127.0.0.1')).toBe(true);
+    expect(parse('http://ntfy.example.com')).toBe(false);
+    expect(parse('ftp://ntfy.example.com')).toBe(false);
+    expect(parse('not a url')).toBe(false);
+  });
+
+  it('rejects cloud-metadata and link-local hosts (SSRF: no ntfy lives there)', () => {
+    expect(parse('https://169.254.169.254/latest/meta-data/')).toBe(false);
+    expect(parse('http://169.254.169.254')).toBe(false);
+    expect(parse('https://metadata.google.internal/computeMetadata/v1/')).toBe(false);
+    expect(parse('https://Metadata.Google.Internal')).toBe(false);
+    expect(parse('https://[fe80::1]')).toBe(false);
+  });
+
+  it('rejects query strings and fragments — the topic joins as a path segment', () => {
+    expect(parse('https://ntfy.example.com?x=1')).toBe(false);
+    expect(parse('https://ntfy.example.com/#frag')).toBe(false);
+    expect(parse('https://ntfy.example.com/base/')).toBe(true);
   });
 });

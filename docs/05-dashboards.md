@@ -71,9 +71,14 @@ A dashboard is JSON: a grid of widget cards.
   mockup's stacked device bar + browsers list — one card, two breakdowns of
   the same batch), `map` (world choropleth + city dots — **M2**, with the
   map-outline data that arrives alongside the sankey work), `feed` (realtime
-  events). M2 adds the Journeys pair: `sankey` (transitions) + `flows`
-  (top-journeys table). Later: `globe` — reusing globe-viz's hand-built
-  three.js globe, not echarts-gl.
+  events). M2's journeys (sankey over transitions + top-journeys flows table)
+  shipped as the dedicated per-site **Journeys view** (see the IA table above)
+  rather than as `sankey`/`flows` viz types: the pair is one coupled
+  interaction (a clicked edge filters the table from the same batch) with its
+  own depth control, which a free grid placement would break apart. Widget-ized
+  journeys can join the vocabulary later if a standalone card earns its keep.
+  Later: `globe` — reusing globe-viz's hand-built three.js globe, not
+  echarts-gl.
 - **The built-in dashboards are just shipped JSON files** — the default
   site-overview is the same document a user's customized dashboard is. Edit
   mode: add/remove/resize/reorder cards, pick query + viz from the same

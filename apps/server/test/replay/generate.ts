@@ -701,7 +701,7 @@ const STAMP_BUCKET_MS = 900_000;
 const stampCache = new Map<string, LocalStamp>();
 const offsetFormatters = new Map<string, Intl.DateTimeFormat>();
 
-function localStamp(timezone: string, ts: number): LocalStamp {
+export function localStamp(timezone: string, ts: number): LocalStamp {
   const key = `${timezone}|${Math.floor(ts / STAMP_BUCKET_MS)}`;
   let stamp = stampCache.get(key);
   if (stamp === undefined) {

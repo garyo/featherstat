@@ -1,61 +1,40 @@
 import {
-  type Dashboard,
   EVENT_ONLY_DIMENSIONS,
   type Filter,
   type Query,
+  type QueryResponse,
   SESSION_ONLY_METRICS,
+  type WidgetSpec,
 } from '@analytics/shared';
-import type { RangePreset } from '../lib/state.ts';
-import { isSparkCompanion, widgetQueries } from '../widgets/queries.ts';
+import type { WidgetData } from '../widgets/types.ts';
 
 /**
- * The collection half of the one-fetch rule (CLAUDE.md invariant 1): widgets
- * declare queries, the view gathers them here into the body of its single
- * `/api/query` request and routes each answer back by widget id + slot.
+ * The view half of the one-fetch rule (CLAUDE.md invariant 1). Collection
+ * (`collectBatch`, `widgetQueries`, `hourlyWhenToday`) lives in
+ * `packages/shared` — the share route assembles the same batch server-side —
+ * so this module keeps only what needs the view: routing answers back to
+ * widgets, and trimming metrics the active filters make unanswerable.
  */
-export interface CollectedBatch {
-  /** Every widget's queries in grid order — the whole batch. */
-  queries: Query[];
-  /** widget id → result slot → query id within the batch. */
-  slots: Map<string, Record<string, string>>;
-}
+export { collectBatch, hourlyWhenToday } from '@analytics/shared';
 
-export function collectBatch(dashboard: Dashboard): CollectedBatch {
-  const queries: Query[] = [];
-  const slots = new Map<string, Record<string, string>>();
-  const seen = new Set<string>();
-  for (const spec of dashboard.grid) {
-    const ids: Record<string, string> = {};
-    for (const [slot, query] of Object.entries(widgetQueries(spec))) {
-      if (seen.has(query.id)) {
-        throw new Error(`dashboard '${dashboard.name}': duplicate query id '${query.id}'`);
-      }
-      seen.add(query.id);
-      queries.push(query);
-      ids[slot] = query.id;
-    }
-    slots.set(spec.id, ids);
+/**
+ * The routing half of `collectBatch`: one widget's slice of the batch response,
+ * folded to the phases a renderer needs. Shared by the view grid and the editor
+ * grid, which answer from the same one response.
+ */
+export function widgetData(
+  spec: WidgetSpec,
+  slots: ReadonlyMap<string, Record<string, string>>,
+  response: QueryResponse | undefined,
+  error: string | undefined,
+): WidgetData {
+  if (response === undefined) {
+    return { phase: error === undefined ? 'loading' : 'error', message: error, results: {} };
   }
-  return { queries, slots };
-}
-
-/**
- * `today` resolves to a single local day, where day buckets collapse to one
- * point — serve hours instead. Bucketing stays a widget concern for every
- * other preset.
- *
- * KPI spark companions are exempt: they mix session-level metrics (engaged_ms,
- * bounce_rate) that the vocabulary cannot bucket by hour, so rewriting them
- * turns the whole companion into a compile error. They keep day buckets and
- * collapse to a single point, which KpiRow renders sparkless.
- */
-export function hourlyWhenToday(queries: readonly Query[], range: RangePreset): Query[] {
-  if (range !== 'today') return [...queries];
-  return queries.map((query) =>
-    'kind' in query || query.bucket !== 'day' || isSparkCompanion(query.id)
-      ? query
-      : { ...query, bucket: 'hour' },
-  );
+  const ids = slots.get(spec.id) ?? {};
+  const results: WidgetData['results'] = {};
+  for (const [slot, id] of Object.entries(ids)) results[slot] = response.results[id];
+  return { phase: 'ready', results };
 }
 
 const EVENT_ONLY = new Set<string>(EVENT_ONLY_DIMENSIONS);

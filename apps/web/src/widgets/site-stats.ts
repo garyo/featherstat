@@ -12,6 +12,14 @@ import { addDaysIso, num } from './series.ts';
 
 export const SPARK_DAYS = 14;
 
+/** Card order (docs/05): traffic (default, site-id tiebreak), fixed by id, or name. */
+export type SiteSort = 'traffic' | 'id' | 'name';
+
+/** Widget-options value → sort, anything unrecognized falling back to traffic. */
+export function siteSortOf(raw: unknown): SiteSort {
+  return raw === 'id' || raw === 'name' ? raw : 'traffic';
+}
+
 export interface SiteStat {
   site: number;
   /** This site's local today — also the clock its page trends end on. */
@@ -61,6 +69,7 @@ export function siteStats(
   rows: readonly ResultRow[],
   sites?: readonly SiteInfo[],
   now: Date = new Date(),
+  sort: SiteSort = 'traffic',
 ): SiteStat[] {
   const bySite = new Map<number, Map<string, number>>();
   for (const row of rows) {
@@ -107,6 +116,14 @@ export function siteStats(
       silent: dates === undefined || dates.size === 0,
     });
   }
-  stats.sort((a, b) => b.todayVisitors - a.todayVisitors || b.total - a.total || a.site - b.site);
+  if (sort === 'id') {
+    stats.sort((a, b) => a.site - b.site);
+  } else if (sort === 'name') {
+    const names = new Map(sites?.map((site) => [site.id, site.name]) ?? []);
+    const nameOf = (id: number): string => names.get(id) ?? `Site ${id}`;
+    stats.sort((a, b) => nameOf(a.site).localeCompare(nameOf(b.site)) || a.site - b.site);
+  } else {
+    stats.sort((a, b) => b.todayVisitors - a.todayVisitors || b.total - a.total || a.site - b.site);
+  }
   return stats;
 }

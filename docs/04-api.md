@@ -141,7 +141,7 @@ batch itself still succeeds, and never returns wrong numbers.
   anything outside it is a 400.
 - **Sequence queries** don't fit metric × dimension, so they are their own
   kinds, still inside the same batch envelope:
-  `{ "id": "sankey", "kind": "transitions", "depth": 3 }` — weighted
+  `{ "id": "sankey", "kind": "transitions", "steps": 3 }` — weighted
   step→step edges from the entry page (pages and events), for the journey
   sankey; `{ "id": "journeys", "kind": "flows", "steps": 4, "limit": 20 }` —
   top session signatures with session count, avg engaged time, and exit
@@ -187,9 +187,20 @@ single stream.
 ## 5. Admin & operations
 
 Conventional REST under `/api/admin` (session auth + CSRF): sites CRUD,
-dashboards CRUD (layout JSON), share/API tokens, auth (`login`, `logout`,
-first-run setup). Read-only dashboard access via
-`GET /share/:token`. Operations: `/healthz` (liveness + last-flush age) and
+dashboards CRUD (layout JSON — writes validate the schema AND the batch
+invariants: unique query ids, derived-query count within the batch cap),
+share/API tokens, ntfy notification settings (`GET`/`PUT`/`DELETE
+/api/admin/ntfy`, R16 — `DELETE` is the off switch; the endpoint URL must be
+https or loopback-http, carry no query/fragment, and never point at link-local
+or cloud-metadata hosts), auth (`login`, `logout`, first-run setup). Read-only
+dashboard access via `GET /share/:token`: the server re-validates the stored
+layout and assembles the SAME batch the in-app view would run (widget queries
+plus derived companions, previous-period compare), so the link cannot be
+turned into the query API — the one client knob is `?range=<preset>`. Because
+this is the one unauthenticated route that executes queries on the
+synchronous SQLite path, executed batches are rate-limited (per-IP plus a
+global budget; 304 revalidations are free) and every `/share` response
+carries `X-Robots-Tag: noindex`. Operations: `/healthz` (liveness + last-flush age) and
 Prometheus `/metrics` (ingest rate, batch flush time, query p95, SSE clients,
 bot drops, DB size) for the existing Grafana stack (R15).
 

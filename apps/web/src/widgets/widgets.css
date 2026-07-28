@@ -227,7 +227,11 @@
   min-width: 560px;
 }
 
-/* Screen-reader-only: the table fallback for chart values (docs/05 a11y). */
+/* Screen-reader-only: the wrapper DIV around a chart's table fallback
+ * (docs/05 a11y). A div, not the table itself: `height: 1px; overflow: hidden`
+ * does not constrain a `display: table` box, which would otherwise stretch the
+ * page by its full laid-out size — while a wrapper clips it and leaves the
+ * table's own semantics intact for screen readers. */
 .sr-only {
   position: absolute;
   width: 1px;

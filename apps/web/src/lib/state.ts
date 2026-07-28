@@ -14,8 +14,9 @@ import { parseFilters, sameFilters, serializeFilter } from './filters.ts';
 /** `all` is the overview; a number is one site — the same scope the query API takes. */
 export type SiteScope = QueryRequest['site'];
 export type RangePreset = Extract<Range, { preset: string }>['preset'];
-/** `dash` is the all-sites/site pair; `realtime` the SSE tab; `settings` the admin view (WP13). */
-export type ViewName = 'dash' | 'realtime' | 'settings';
+/** `dash` is the all-sites/site pair; `journeys` the per-site sankey view (M2);
+ * `realtime` the SSE tab; `settings` the admin view (WP13). */
+export type ViewName = 'dash' | 'journeys' | 'realtime' | 'settings';
 
 export interface ViewState {
   site: SiteScope;
@@ -101,5 +102,7 @@ function parseRange(raw: string | null): RangePreset {
 }
 
 function parseView(raw: string | null): ViewName {
-  return raw === 'realtime' || raw === 'settings' ? raw : DEFAULT_VIEW_STATE.view;
+  return raw === 'journeys' || raw === 'realtime' || raw === 'settings'
+    ? raw
+    : DEFAULT_VIEW_STATE.view;
 }

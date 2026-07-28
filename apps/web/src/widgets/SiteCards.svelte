@@ -1,16 +1,21 @@
 <script lang="ts">
 import { exactNumber } from './format.ts';
 import Sparkline from './Sparkline.svelte';
-import { siteStats } from './site-stats.ts';
+import { siteSortOf, siteStats } from './site-stats.ts';
 import { topPages } from './top-pages.ts';
 import { sliceOf, type WidgetProps } from './types.ts';
 
-let { data, active, sites, onselectsite }: WidgetProps = $props();
+let { spec, data, active, sites, onselectsite }: WidgetProps = $props();
 
 const slice = $derived(sliceOf(data, 'main'));
 const stats = $derived(
   slice.kind === 'ready'
-    ? siteStats(slice.result.rows, sites === undefined ? undefined : [...sites.values()])
+    ? siteStats(
+        slice.result.rows,
+        sites === undefined ? undefined : [...sites.values()],
+        new Date(),
+        siteSortOf(spec.options.sort),
+      )
     : [],
 );
 

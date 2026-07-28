@@ -80,6 +80,12 @@ function onchange(event: Event): void {
     <button
       class="tab"
       type="button"
+      aria-current={view === 'journeys' ? 'page' : undefined}
+      onclick={() => onselectview('journeys')}>Journeys</button
+    >
+    <button
+      class="tab"
+      type="button"
       aria-current={view === 'realtime' ? 'page' : undefined}
       onclick={() => onselectview('realtime')}>Realtime</button
     >

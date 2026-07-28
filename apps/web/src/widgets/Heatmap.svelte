@@ -83,17 +83,19 @@ function showTip(cell: HeatmapCell, event: PointerEvent): void {
     </div>
   </div>
   <!-- The accessibility fallback (docs/05): every value reachable without a pointer. -->
-  <table class="sr-only">
-    <caption>{spec.title ?? 'Traffic by hour'} — exact {unit} per hour and weekday</caption>
-    <tbody>
-      {#each HEATMAP_DAYS as day, dayIndex (day)}
-        <tr>
-          <th scope="row">{day}</th>
-          {#each cells.filter((cell) => cell.day === dayIndex) as cell (cell.hour)}
-            <td>{cell.hour}:00 — {exactNumber(cell.value)}</td>
-          {/each}
-        </tr>
-      {/each}
-    </tbody>
-  </table>
+  <div class="sr-only">
+    <table>
+      <caption>{spec.title ?? 'Traffic by hour'} — exact {unit} per hour and weekday</caption>
+      <tbody>
+        {#each HEATMAP_DAYS as day, dayIndex (day)}
+          <tr>
+            <th scope="row">{day}</th>
+            {#each cells.filter((cell) => cell.day === dayIndex) as cell (cell.hour)}
+              <td>{cell.hour}:00 — {exactNumber(cell.value)}</td>
+            {/each}
+          </tr>
+        {/each}
+      </tbody>
+    </table>
+  </div>
 {/if}
