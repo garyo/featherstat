@@ -91,12 +91,21 @@ LIMIT ?`;
 
 const SQL_SITE_URLS = 'SELECT idsite, url FROM matomo_site_url WHERE idsite IN (?)';
 
-function visitsSql(since: boolean, until: boolean): string {
+/** Core Matomo has no campaign_* columns — the MarketingCampaignsReporting
+ * plugin adds them. Without them the mapper already falls back to
+ * referer_type=6 + referer_name, so absent columns select as NULLs. */
+function campaignColumns(has: boolean): string {
+  return has
+    ? 'v.campaign_name, v.campaign_source, v.campaign_medium,'
+    : 'NULL AS campaign_name, NULL AS campaign_source, NULL AS campaign_medium,';
+}
+
+function visitsSql(since: boolean, until: boolean, hasCampaign: boolean): string {
   return `SELECT v.idvisit, v.idsite, v.idvisitor,
   v.visit_first_action_time, v.visit_last_action_time,
   v.visit_total_time, v.visit_total_actions, v.visit_total_events,
   v.referer_type, v.referer_name, v.referer_url,
-  v.campaign_name, v.campaign_source, v.campaign_medium,
+  ${campaignColumns(hasCampaign)}
   v.config_browser_name, v.config_browser_version, v.config_os,
   v.config_device_type, v.config_resolution,
   v.location_browser_lang, v.location_country, v.location_region, v.location_city,
@@ -111,14 +120,14 @@ ORDER BY v.idvisit
 LIMIT ?`;
 }
 
-function actionsSql(since: boolean, until: boolean): string {
+function actionsSql(since: boolean, until: boolean, hasCampaign: boolean): string {
   return `SELECT lva.idlink_va, lva.idvisit, lva.idsite, lva.idvisitor, lva.server_time,
   lva.custom_float,
   url_action.type AS url_type, url_action.name AS url_name, url_action.url_prefix AS url_prefix,
   name_action.type AS name_type, name_action.name AS name_name,
   category_action.name AS event_category, action_action.name AS event_action,
   v.referer_type, v.referer_name, v.referer_url,
-  v.campaign_name, v.campaign_source, v.campaign_medium,
+  ${campaignColumns(hasCampaign)}
   v.config_browser_name, v.config_browser_version, v.config_os,
   v.config_device_type, v.config_resolution,
   v.location_browser_lang, v.location_country, v.location_region, v.location_city,
@@ -194,12 +203,17 @@ export async function importMatomo(
   // -- visits → sessions ------------------------------------------------------
   const hasSince = sinceParams.length > 0;
   const hasUntil = untilParams.length > 0;
+  const campaignProbe = await source("SHOW COLUMNS FROM matomo_log_visit LIKE 'campaign_name'", []);
+  const hasCampaign = campaignProbe.length > 0;
+  if (!hasCampaign) {
+    options.log?.('campaign_* columns absent (core schema) — using referer_name fallback');
+  }
   // With --since the date bounds the scan instead of the watermark: sessions
   // upsert by deterministic id, so re-reading repairs visits Matomo mutated
   // in place after the previous run saw them.
   for await (const batch of batches(
     source,
-    visitsSql(hasSince, hasUntil),
+    visitsSql(hasSince, hasUntil, hasCampaign),
     'idvisit',
     hasSince ? 0 : watermark(db, 'log_visit'),
     rangeParams,
@@ -230,7 +244,7 @@ export async function importMatomo(
   const seqByVisit = new Map<number, number>();
   for await (const batch of batches(
     source,
-    actionsSql(hasSince, hasUntil),
+    actionsSql(hasSince, hasUntil, hasCampaign),
     'idlink_va',
     watermark(db, 'log_link_visit_action'),
     rangeParams,
