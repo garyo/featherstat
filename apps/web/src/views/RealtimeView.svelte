@@ -70,6 +70,8 @@ function dotColor(color: number): string {
 }
 
 function placeOf(row: VisitorCount): string | undefined {
+  // Same shape the feed rows use, so one visitor never reads two ways.
+  if (row.city !== undefined && row.country !== undefined) return `${row.city}, ${row.country}`;
   if (row.city !== undefined) return row.city;
   return row.country !== undefined ? countryName(row.country) : undefined;
 }
@@ -103,6 +105,9 @@ function whatOf(hit: RealtimeHit): string {
       <span class="active-label">active now</span>
     </div>
     {#if visitors.length > 0}
+      <!-- Wider window than the hero on purpose: "who was here lately", not "who is
+           here this instant" — and labeled so the two never read as one number. -->
+      <p class="tally-label">Visitors · last 30 min</p>
       <div class="visitor-tally" role="list">
         {#each visitors as row (row.name)}
           {@const place = placeOf(row)}
@@ -186,5 +191,10 @@ function whatOf(hit: RealtimeHit): string {
     color: var(--muted);
     font-size: 12px;
     white-space: nowrap;
+  }
+  .tally-label {
+    margin: 0 0 4px;
+    color: var(--muted);
+    font-size: 12px;
   }
 </style>
