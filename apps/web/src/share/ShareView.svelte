@@ -55,7 +55,7 @@ const window = $derived(bucketedWindow(response));
 
 <main class="shell">
   <header class="top">
-    <div class="wordmark">Analytics<span class="dot">.</span></div>
+    <div class="wordmark">featherstat<span class="dot">.</span></div>
     <div class="spacer"></div>
     <span class="compare-note">Shared dashboard · read-only</span>
     <button

@@ -27,7 +27,7 @@ function submit(event: SubmitEvent): void {
 
 <div class="auth-wrap">
   <form class="card auth-card" onsubmit={submit}>
-    <div class="wordmark">Analytics<span class="dot">.</span></div>
+    <div class="wordmark">featherstat<span class="dot">.</span></div>
     <h1>Welcome — set the admin password</h1>
     <p class="hint">
       One admin account guards the dashboards. Tracking endpoints stay public either way.

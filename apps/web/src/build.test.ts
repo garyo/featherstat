@@ -19,7 +19,10 @@ import { beforeAll, describe, expect, it } from 'vitest';
  * - The editor budget is unchanged: its chunk shrank only because `Modal.svelte`
  *   became a shared chunk when the share dialog started using it too.
  */
-const ENTRY_MAX_GZIP = 64_512;
+// Raised 63->64 KiB on 2026-07-28 for the realtime scope selector + site
+// badges — deliberate entry-path feature code, not leakage. Editor code must
+// still land in its dynamic chunk (asserted below); tighten if it shrinks.
+const ENTRY_MAX_GZIP = 65_536;
 const EDITOR_MAX_GZIP = 6_656;
 const SETTINGS_MAX_GZIP = 6_656;
 /** The share page and the dialog that mints links for it — small by construction. */

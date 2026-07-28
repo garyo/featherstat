@@ -43,12 +43,13 @@ describe('visitorTally', () => {
       hit({ ts: now - 1_000, visitor: visitor('Bashful Badger', 1) }), // newest: no geo yet
       hit({ ts: now - 2_000, visitor: visitor('Bashful Badger', 1), city: 'Hanoi', country: 'VN' }),
       hit({ ts: now - 3_000, visitor: visitor('Bashful Badger', 1), city: 'Hue', country: 'VN' }),
-      hit({ ts: now - 4_000, visitor: visitor('Zesty Zebra', 2), country: 'DE' }),
+      hit({ ts: now - 4_000, visitor: visitor('Zesty Zebra', 2), country: 'DE', siteId: 3 }),
       hit({ ts: now - 31 * 60_000, visitor: visitor('Zesty Zebra', 2) }), // outside the window
     ];
     expect(visitorTally(hits, now)).toEqual([
-      { name: 'Bashful Badger', color: 1, count: 3, city: 'Hanoi', country: 'VN' },
-      { name: 'Zesty Zebra', color: 2, count: 1, city: undefined, country: 'DE' },
+      { name: 'Bashful Badger', color: 1, count: 3, siteId: 1, city: 'Hanoi', country: 'VN' },
+      // siteId follows the newest hit, like the place fields
+      { name: 'Zesty Zebra', color: 2, count: 1, siteId: 3, city: undefined, country: 'DE' },
     ]);
   });
 

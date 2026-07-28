@@ -34,11 +34,11 @@ let {
 const siteActive = $derived(view === 'dash' && site !== 'all');
 const nameOf = (id: number): string => sites?.find((s) => s.id === id)?.name ?? `Site ${id}`;
 /**
- * While no site view is up the switcher sits on a placeholder that wears the
- * last-visited site's name — so choosing ANY site (that one included) is a
- * value change and fires. On a site view it sits on the real id.
+ * The switcher wears the ACTUAL scope (any view) — never a site it isn't
+ * scoped to. Unscoped, it sits on a neutral placeholder so choosing any site
+ * (last-visited included) is a value change and fires.
  */
-const selected = $derived(siteActive ? String(site) : '');
+const selected = $derived(site !== 'all' ? String(site) : '');
 
 function onchange(event: Event): void {
   const raw = (event.currentTarget as HTMLSelectElement).value;
@@ -71,8 +71,8 @@ function onchange(event: Event): void {
     >
       <!-- disabled + aria-hidden: assistive tech must not list the placeholder
            as a duplicate of the site it wears the name of. -->
-      {#if !siteActive}
-        <option value="" hidden disabled aria-hidden="true">{nameOf(siteTab)}</option>
+      {#if site === 'all'}
+        <option value="" hidden disabled aria-hidden="true">Site…</option>
       {/if}
       {#each sites ?? [] as entry (entry.id)}
         <option value={String(entry.id)}>{entry.name}</option>

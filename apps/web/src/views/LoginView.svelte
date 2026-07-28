@@ -22,7 +22,7 @@ function submit(event: SubmitEvent): void {
 
 <div class="auth-wrap">
   <form class="card auth-card" onsubmit={submit}>
-    <div class="wordmark">Analytics<span class="dot">.</span></div>
+    <div class="wordmark">featherstat<span class="dot">.</span></div>
     <h1>Log in</h1>
     <label class="field">
       Password

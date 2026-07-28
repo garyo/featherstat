@@ -52,6 +52,8 @@ export interface VisitorCount {
   /** Categorical palette index from the alias; cycling tokens is fine — see shared/alias. */
   color: number;
   count: number;
+  /** Newest hit's site — the badge when the realtime scope is 'all'. */
+  siteId: number;
   /** Newest located hit's city, else its country code; undefined when never located. */
   city?: string;
   country?: string;
@@ -72,7 +74,7 @@ export function visitorTally(
     if (now - hit.ts > windowMs) continue;
     let row = byName.get(hit.visitor.name);
     if (row === undefined) {
-      row = { name: hit.visitor.name, color: hit.visitor.color, count: 0 };
+      row = { name: hit.visitor.name, color: hit.visitor.color, siteId: hit.siteId, count: 0 };
       byName.set(row.name, row);
     }
     row.count += 1;

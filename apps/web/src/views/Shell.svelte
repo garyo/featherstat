@@ -110,11 +110,17 @@ $effect(() => {
           : site === 'all'
             ? 'All sites'
             : directory.nameOf(site);
-  document.title = `${place} · Analytics`;
+  document.title = `${place} · featherstat`;
 });
 
 /** Opening a scope always lands on its dashboard — one history entry. */
-const selectSite = (next: SiteScope): void => view.update({ site: next, view: 'dash' });
+const selectSite = (next: SiteScope): void => {
+  // Realtime and Journeys are site-scoped views: picking a site re-scopes them
+  // in place; 'all' (and any other view) lands on the dashboard as before.
+  const current = view.current.view;
+  const stays = typeof next === 'number' && (current === 'realtime' || current === 'journeys');
+  view.update({ site: next, view: stays ? current : 'dash' });
+};
 /** Journeys is per-site (docs/05): entered from the overview, it opens on the
  * switcher's last-visited site so the URL stays honest. */
 const selectView = (next: ViewName): void =>
@@ -150,7 +156,13 @@ const logout = (): void => {
       />
     {/if}
   {:else if current === 'realtime'}
-    <RealtimeView {active} {recent} {site} />
+    <RealtimeView
+      {active}
+      {recent}
+      {site}
+      sites={directory.sites}
+      onscopechange={(next) => view.update({ site: next })}
+    />
   {:else if current === 'journeys'}
     <!-- A hand-edited ?view=journeys&site=all falls back to the switcher's site. -->
     {@const journeysSite = typeof site === 'number' ? site : siteTab}
