@@ -3,12 +3,14 @@ import type { Query, QueryRequest, SiteInfo } from '@featherstat/shared';
 import { allSites } from '../dashboards/all-sites.ts';
 import type { AdminClient } from '../lib/admin.ts';
 import type { QueryClient } from '../lib/api.ts';
+import FilterRow from '../lib/components/FilterRow.svelte';
 import { createDashboardStore } from '../lib/dashboards.svelte.ts';
 import { withLiveSiteIds } from '../lib/dashboards.ts';
 import { createEditorMode } from '../lib/editor-mode.svelte.ts';
 import { createRevalidator, type LiveStream } from '../lib/live.ts';
+import { RANGE_QUALIFIER, type RangePreset } from '../lib/state.ts';
 import { createBatchRunner } from './batch.svelte.ts';
-import { collectBatch } from './batch.ts';
+import { collectBatch, hourlyWhenToday } from './batch.ts';
 import DashboardGrid from './DashboardGrid.svelte';
 
 interface Props {
@@ -22,9 +24,12 @@ interface Props {
   sites: SiteInfo[] | undefined;
   byId: ReadonlyMap<number, SiteInfo>;
   onselectsite: (site: number) => void;
+  range: RangePreset;
+  onselectrange: (range: RangePreset) => void;
 }
 
-let { admin, client, live, active, sites, byId, onselectsite }: Props = $props();
+let { admin, client, live, active, sites, byId, onselectsite, range, onselectrange }: Props =
+  $props();
 
 // The clients are app-lifetime singletons; capturing their initial values is the point.
 // svelte-ignore state_referenced_locally
@@ -48,8 +53,9 @@ const dashboard = $derived(withLiveSiteIds(store.stored ?? allSites(siteIds), si
 /** This view's request shape — also the editor's preview context. */
 const requestFor = (queries: readonly Query[]): QueryRequest => ({
   site: 'all',
-  range: { preset: '30d' },
-  queries: [...queries],
+  range: { preset: range },
+  compare: 'previous',
+  queries: hourlyWhenToday([...queries], range),
 });
 
 const request = $derived.by<QueryRequest>(() => requestFor(collectBatch(dashboard).queries));
@@ -81,7 +87,7 @@ async function openShare(): Promise<void> {
 const note = $derived(
   runner.error !== undefined && runner.response !== undefined
     ? 'Live update failed — showing the last good result'
-    : 'Today so far · deltas vs the same day last week · sparklines: 14 days',
+    : 'compared with the previous period · active-now is live',
 );
 </script>
 
@@ -101,17 +107,24 @@ const note = $derived(
     oncancel={() => mode.close()}
   />
 {:else}
-  <div class="filters">
-    <span class="compare-note">{note}</span>
-    {#if runner.error !== undefined}
-      <button class="retry" type="button" onclick={() => runner.retry()}>Retry</button>
-    {/if}
-    <span class="spacer"></span>
-    <button class="btn slim" type="button" title="Share dashboard" onclick={() => void openShare()}
-      >Share</button
+  <div class="toolbar">
+    <FilterRow
+      {range}
+      {note}
+      onselect={onselectrange}
+      onretry={runner.error === undefined ? undefined : () => runner.retry()}
+    />
+    <button
+      class="btn slim tool-btn"
+      type="button"
+      title="Share dashboard"
+      onclick={() => void openShare()}>Share</button
     >
-    <button class="btn slim" type="button" title="Edit dashboard" onclick={() => void mode.open()}
-      >Edit</button
+    <button
+      class="btn slim tool-btn"
+      type="button"
+      title="Edit dashboard"
+      onclick={() => void mode.open()}>Edit</button
     >
   </div>
   <DashboardGrid
@@ -121,6 +134,8 @@ const note = $derived(
     refetching={runner.refetching}
     {active}
     sites={byId}
+    {range}
+    rangeLabel={RANGE_QUALIFIER[range]}
     {onselectsite}
   />
 {/if}

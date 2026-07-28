@@ -8,7 +8,7 @@ import { createDashboardStore } from '../lib/dashboards.svelte.ts';
 import { createEditorMode } from '../lib/editor-mode.svelte.ts';
 import { sameFilter } from '../lib/filters.ts';
 import { createRevalidator, type LiveStream } from '../lib/live.ts';
-import { RANGE_LABELS, type RangePreset } from '../lib/state.ts';
+import { RANGE_LABELS, RANGE_QUALIFIER, type RangePreset } from '../lib/state.ts';
 import { bucketedWindow, bucketLabel, presetWindow } from '../widgets/format.ts';
 import { createBatchRunner } from './batch.svelte.ts';
 import { collectBatch, hourlyWhenToday, withoutBlockedMetrics } from './batch.ts';
@@ -102,15 +102,6 @@ const COMPARE_NOTE: Record<RangePreset, string> = {
   '30d': 'compared with the previous 30 days',
   '90d': 'compared with the previous 90 days',
   mtd: 'compared with the previous period',
-};
-
-/** Widget-title qualifier (mockup: "Traffic by hour · last 30 days"). */
-const RANGE_QUALIFIER: Record<RangePreset, string> = {
-  today: 'today',
-  '7d': 'last 7 days',
-  '30d': 'last 30 days',
-  '90d': 'last 90 days',
-  mtd: 'month to date',
 };
 
 const failed = $derived(runner.error !== undefined && runner.response !== undefined);

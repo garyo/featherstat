@@ -59,6 +59,15 @@ export const RANGE_LABELS: Record<RangePreset, string> = {
   mtd: 'Month to date',
 };
 
+/** Widget-title qualifier (mockup: "Traffic by hour · last 30 days"). */
+export const RANGE_QUALIFIER: Record<RangePreset, string> = {
+  today: 'today',
+  '7d': 'last 7 days',
+  '30d': 'last 30 days',
+  '90d': 'last 90 days',
+  mtd: 'month to date',
+};
+
 /** Display order of the filter row, taken from the labels so the two cannot drift. */
 export const RANGE_PRESETS = Object.keys(RANGE_LABELS) as readonly RangePreset[];
 

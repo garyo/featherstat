@@ -5,24 +5,27 @@ import { siteSortOf, siteStats } from './site-stats.ts';
 import { topPages } from './top-pages.ts';
 import { sliceOf, type WidgetProps } from './types.ts';
 
-let { spec, data, active, sites, onselectsite }: WidgetProps = $props();
+let { spec, data, active, sites, onselectsite, range = '30d', rangeLabel }: WidgetProps = $props();
 
 const slice = $derived(sliceOf(data, 'main'));
 const stats = $derived(
   slice.kind === 'ready'
     ? siteStats(
+        range,
         slice.result.rows,
+        slice.result.compare,
         sites === undefined ? undefined : [...sites.values()],
         new Date(),
         siteSortOf(spec.options.sort),
       )
     : [],
 );
+const periodLabel = $derived((rangeLabel ?? range).toLowerCase());
 
-/** R20: this site's top pages, ending on ITS local today (per-site clock). */
-function pagesFor(site: number, today: string): ReturnType<typeof topPages> {
+/** R20: this site's top pages over the card's own window (per-site clock). */
+function pagesFor(site: number, buckets: readonly string[]): ReturnType<typeof topPages> {
   const pages = sliceOf(data, `pages~${site}`);
-  return pages.kind === 'ready' ? topPages(pages.result.rows, today) : [];
+  return pages.kind === 'ready' ? topPages(pages.result.rows, buckets) : [];
 }
 
 function select(site: number): void {
@@ -43,11 +46,11 @@ function onKeydown(event: KeyboardEvent, site: number): void {
   {:else if slice.kind === 'error'}
     <p class="widget-note">{slice.message}</p>
   {:else if stats.length === 0}
-    <p class="widget-note">No traffic in the last 30 days.</p>
+    <p class="widget-note">No traffic in this period.</p>
   {:else}
     {#each stats as stat (stat.site)}
       {@const now = active?.[stat.site] ?? 0}
-      {@const pages = pagesFor(stat.site, stat.today)}
+      {@const pages = pagesFor(stat.site, stat.buckets)}
       <div
         class="site-card"
         role="button"
@@ -63,7 +66,7 @@ function onKeydown(event: KeyboardEvent, site: number): void {
           </span>
         </div>
         <div class="nums">
-          <span class="today">{exactNumber(stat.todayVisitors)}</span>
+          <span class="today">{exactNumber(stat.total)}</span>
           {#if stat.deltaPct === undefined}
             <span class="delta muted">—</span>
           {:else}
@@ -71,7 +74,7 @@ function onKeydown(event: KeyboardEvent, site: number): void {
               {stat.deltaPct >= 0 ? '▴ +' : '▾ −'}{Math.abs(stat.deltaPct)}%
             </span>
           {/if}
-          <span class="sub">visitors today</span>
+          <span class="sub">visitors · {periodLabel}</span>
         </div>
         {#if stat.silent}
           <!-- A site with zero rows is exactly the one to surface: a fresh site

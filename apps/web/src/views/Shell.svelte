@@ -177,6 +177,8 @@ const logout = (): void => {
       {active}
       sites={directory.sites}
       byId={directory.byId}
+      range={view.current.range}
+      onselectrange={selectRange}
       onselectsite={selectSite}
     />
   {:else}

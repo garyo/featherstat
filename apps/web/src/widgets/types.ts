@@ -6,6 +6,7 @@ import {
   type SiteInfo,
   type WidgetSpec,
 } from '@featherstat/shared';
+import type { RangePreset } from '../lib/state.ts';
 
 /** A widget's share of the view batch, keyed by the slots `widgetQueries` declared. */
 export interface WidgetData {
@@ -23,6 +24,8 @@ export interface WidgetProps {
   window?: { from: string; to: string };
   /** Range qualifier for titles (mockup: "Traffic by hour · last 30 days"). */
   rangeLabel?: string;
+  /** The active preset — bucket clock for range-driven widgets (site cards). */
+  range?: RangePreset;
   /** Live active-visitor counts by site id (SSE `snapshot`/`active`); site-cards reads it. */
   active?: Record<number, number>;
   /** The site directory (`/api/sites`); site-cards names its cards from it. */

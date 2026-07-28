@@ -1,4 +1,6 @@
 import type { ResultRow, SiteInfo } from '@featherstat/shared';
+import type { RangePreset } from '../lib/state.ts';
+import { presetWindow } from './format.ts';
 import { addDaysIso, num } from './series.ts';
 
 /**
@@ -20,53 +22,48 @@ export function siteSortOf(raw: unknown): SiteSort {
   return raw === 'id' || raw === 'name' ? raw : 'traffic';
 }
 
+/**
+ * A site's own current date, from its IANA timezone — en-CA formats as
+ * YYYY-MM-DD. Cached per zone: Intl.DateTimeFormat construction is expensive.
+ */
+const dateFormats = new Map<string, Intl.DateTimeFormat>();
+export function localToday(timezone: string, now: Date = new Date()): string {
+  let format = dateFormats.get(timezone);
+  if (format === undefined) {
+    format = new Intl.DateTimeFormat('en-CA', { timeZone: timezone });
+    dateFormats.set(timezone, format);
+  }
+  return format.format(now);
+}
+
 export interface SiteStat {
   site: number;
-  /** This site's local today — also the clock its page trends end on. */
-  today: string;
-  todayVisitors: number;
-  /** Integer percent vs the same weekday last week; undefined without a baseline. */
-  deltaPct: number | undefined;
-  /** Daily visitors for the last `SPARK_DAYS` days, ending today, zero-filled. */
-  spark: number[];
-  /** Window total — the docs/05 sort key ("sorted by traffic") behind equal todays. */
+  /** Enumerated bucket keys of this site's requested window (dates; hours under `today`). */
+  buckets: string[];
+  /** Visitors over the selected range. */
   total: number;
-  /** True when the window returned no rows at all — "waiting for the first hit". */
+  /** vs the previous period (server compare); needs both sides to be signal. */
+  deltaPct: number | undefined;
+  /** Visitors per bucket over the range, zero-filled, oldest first. */
+  spark: number[];
   silent: boolean;
 }
 
-/** The newest bucket any row reported — the fallback clock when the directory is absent. */
-export function newestBucket(rows: readonly ResultRow[]): string | undefined {
-  let newest: string | undefined;
-  for (const row of rows) {
-    const bucket = row.bucket;
-    if (typeof bucket !== 'string') continue;
-    if (newest === undefined || bucket > newest) newest = bucket;
+/** The card grid's bucket clock: one key per bucket of the site's own window. */
+export function windowBuckets(preset: RangePreset, timezone: string, now: Date): string[] {
+  const { from, to } = presetWindow(preset, timezone, now);
+  if (preset === 'today') {
+    return Array.from({ length: 24 }, (_, hour) => `${to} ${String(hour).padStart(2, '0')}:00`);
   }
-  return newest;
+  const buckets: string[] = [];
+  for (let day = from; day <= to; day = addDaysIso(day, 1)) buckets.push(day);
+  return buckets;
 }
 
-/** `YYYY-MM-DD` of "now" in an IANA timezone; UTC if the runtime rejects it. */
-export function localToday(timezone: string, now: Date = new Date()): string {
-  try {
-    return new Intl.DateTimeFormat('en-CA', {
-      timeZone: timezone,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).format(now);
-  } catch {
-    return now.toISOString().slice(0, 10);
-  }
-}
-
-/**
- * One stat per site. With the directory present, every site gets a card — a
- * freshly added site shows as silent instead of invisible, which is exactly
- * when a mis-installed snippet needs spotting.
- */
 export function siteStats(
+  preset: RangePreset,
   rows: readonly ResultRow[],
+  compareRows: readonly ResultRow[] | undefined,
   sites?: readonly SiteInfo[],
   now: Date = new Date(),
   sort: SiteSort = 'traffic',
@@ -76,44 +73,37 @@ export function siteStats(
     const site = row.site;
     const bucket = row.bucket;
     if (typeof site !== 'number' || typeof bucket !== 'string') continue;
-    let dates = bySite.get(site);
-    if (dates === undefined) {
-      dates = new Map();
-      bySite.set(site, dates);
+    let buckets = bySite.get(site);
+    if (buckets === undefined) {
+      buckets = new Map();
+      bySite.set(site, buckets);
     }
-    dates.set(bucket, num(row.visitors));
+    buckets.set(bucket, num(row.visitors));
+  }
+  const prevTotals = new Map<number, number>();
+  for (const row of compareRows ?? []) {
+    if (typeof row.site !== 'number') continue;
+    prevTotals.set(row.site, (prevTotals.get(row.site) ?? 0) + num(row.visitors));
   }
 
-  const fallbackToday = newestBucket(rows);
-  const todayOf = new Map<number, string>();
-  if (sites !== undefined) {
-    for (const site of sites) todayOf.set(site.id, localToday(site.timezone, now));
-  }
   const ids = sites?.map((site) => site.id) ?? [...bySite.keys()];
-
+  const tzOf = new Map(sites?.map((site) => [site.id, site.timezone]) ?? []);
   const stats: SiteStat[] = [];
   for (const site of ids) {
-    const dates = bySite.get(site);
-    const today = todayOf.get(site) ?? fallbackToday;
-    if (today === undefined) continue; // no directory and no rows: nothing to anchor on
-    const spark: number[] = [];
-    for (let back = SPARK_DAYS - 1; back >= 0; back--) {
-      spark.push(dates?.get(addDaysIso(today, -back)) ?? 0);
-    }
-    const current = spark[spark.length - 1] ?? 0;
-    const prev = dates?.get(addDaysIso(today, -7)) ?? 0;
-    let total = 0;
-    for (const value of dates?.values() ?? []) total += value;
+    const values = bySite.get(site);
+    const buckets = windowBuckets(preset, tzOf.get(site) ?? 'UTC', now);
+    const spark = buckets.map((bucket) => values?.get(bucket) ?? 0);
+    const total = spark.reduce((sum, value) => sum + value, 0);
+    const prev = prevTotals.get(site) ?? 0;
     stats.push({
       site,
-      today,
-      todayVisitors: current,
-      // No traffic YET is the normal state just after site-local midnight —
-      // a red "−100%" there is noise, not signal. Delta needs both sides.
-      deltaPct: current > 0 && prev > 0 ? Math.round(((current - prev) / prev) * 100) : undefined,
-      spark,
+      buckets,
       total,
-      silent: dates === undefined || dates.size === 0,
+      spark,
+      // Both sides required: a brand-new (or just-quiet) period reads as "—",
+      // not a red −100% — same reasoning the old same-weekday delta used.
+      deltaPct: total > 0 && prev > 0 ? Math.round(((total - prev) / prev) * 100) : undefined,
+      silent: values === undefined || values.size === 0,
     });
   }
   if (sort === 'id') {
@@ -123,7 +113,7 @@ export function siteStats(
     const nameOf = (id: number): string => names.get(id) ?? `Site ${id}`;
     stats.sort((a, b) => nameOf(a.site).localeCompare(nameOf(b.site)) || a.site - b.site);
   } else {
-    stats.sort((a, b) => b.todayVisitors - a.todayVisitors || b.total - a.total || a.site - b.site);
+    stats.sort((a, b) => b.total - a.total || a.site - b.site);
   }
   return stats;
 }
