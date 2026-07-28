@@ -13,8 +13,8 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api': 'http://localhost:8080',
-      '/matomo.php': 'http://localhost:8080',
+      '/api': process.env.API_PROXY ?? 'http://localhost:8080',
+      '/matomo.php': process.env.API_PROXY ?? 'http://localhost:8080',
     },
   },
 });

@@ -64,6 +64,7 @@ dashboards — with none of the weight.
 | [06-migration.md](docs/06-migration.md) | Importing Matomo history; cutover plan |
 | [07-roadmap.md](docs/07-roadmap.md) | Milestones M0–M3 with acceptance criteria |
 | [08-implementation-plan.md](docs/08-implementation-plan.md) | Build order: work packages WP0–WP14, working agreement, pre-start decisions |
+| [09-cutover-runbook.md](docs/09-cutover-runbook.md) | Host-specific deploy, import, tee-bake, and cutover steps |
 | [mockups/dashboard.html](mockups/dashboard.html) | Self-contained rendered mockup of the dashboard UI |
 
 ## Name
