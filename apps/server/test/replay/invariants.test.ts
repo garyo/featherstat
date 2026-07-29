@@ -1,8 +1,16 @@
-import type { Filter, Metric, QueryRequest, ResultRow } from '@featherstat/shared';
+import {
+  type Aggregate,
+  type Filter,
+  type Metric,
+  MetricSchema,
+  type QueryRequest,
+  type ResultRow,
+} from '@featherstat/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createSite, type Db, openDb, withWriteTransaction } from '../../src/db/index.ts';
 import { parseMatomoRequest } from '../../src/ingest/matomo.ts';
 import { createPipeline } from '../../src/pipeline/index.ts';
+import { measureOf, preferredTable } from '../../src/query/compiler.ts';
 import { executeQueryRequest } from '../../src/query/executor.ts';
 import { resultOf } from '../rows.ts';
 import { type Corpus, generateCorpus, REPLAY_HITS_PER_FLUSH, toMatomoQuery } from './generate.ts';
@@ -120,42 +128,37 @@ const ACTIONS = [
 ] as const satisfies readonly Metric[];
 
 /**
- * How each metric composes across buckets — the knowledge invariant 5 needs and
- * the compiler does not yet carry. A later phase moves this into the metric
- * definitions themselves; this table, asserted against the real engine over the
- * whole sweep, is what will prove that move correct.
+ * How each metric composes across buckets. This used to be a hand-written table
+ * beside a note that a later phase would move it into the metric definitions and
+ * that this suite would prove the move correct. That phase landed (P2): the
+ * knowledge now lives in the compiler's own declarations and rides the wire as
+ * each result's `measures` header, and what remains here is the proof — the
+ * declared aggregate, asserted against the real engine over the whole sweep.
  *
- * - `additive`: the ungrouped total is exactly the sum over `bucket: 'day'` rows.
+ * The names moved with it (`additive` → `sum`, the vocabulary the header speaks):
+ *
+ * - `sum`: the ungrouped total is exactly the sum over `bucket: 'day'` rows.
  * - `distinct`: a distinct count. The total is at most the bucket sum (one person
  *   active on two days is one visitor overall but two across buckets) and at
  *   least any single bucket.
  * - `ratio`: a quotient. It neither sums nor bounds a bucket — averaging averages
  *   is a lie — so additivity says nothing about it and invariant 6 owns its range.
+ *
+ * `visits` is the entry worth reading twice. It is declared `sum` over
+ * `sessions`, where a visit belongs to exactly one local date, and `distinct`
+ * over `events`, where a visit crossing local midnight lands in two buckets. The
+ * additivity queries below carry no event-level dimension, so `preferredTable`
+ * is the routing they actually get — and the header would have said so either
+ * way.
  */
-const METRIC_KIND: Record<Metric, 'additive' | 'distinct' | 'ratio'> = {
-  pageviews: 'additive',
-  events: 'additive',
-  outlinks: 'additive',
-  downloads: 'additive',
-  engaged_ms: 'additive',
-  engaged_sessions: 'additive',
-  event_value_sum: 'additive',
-  /**
-   * Additive only while it is answered from `sessions`, where a session belongs
-   * to exactly one local date. Under an event-level dimension it is answered from
-   * `events` and becomes a distinct count — a session that crosses local midnight
-   * then lands in two buckets. The additivity queries below carry no event-level
-   * dimension, so this entry describes the routing they actually get.
-   */
-  visits: 'additive',
-  visitors: 'distinct',
-  bounce_rate: 'ratio',
-  views_per_visit: 'ratio',
-};
+const AGGREGATE = Object.fromEntries(
+  MetricSchema.options.map((metric) => [
+    metric,
+    measureOf(metric, preferredTable(metric)).aggregate,
+  ]),
+) as Record<Metric, Aggregate>;
 
-const ADDITIVE = (Object.keys(METRIC_KIND) as Metric[]).filter(
-  (metric) => METRIC_KIND[metric] === 'additive',
-);
+const ADDITIVE = MetricSchema.options.filter((metric) => AGGREGATE[metric] === 'sum');
 
 /** Additive metrics the events table answers — the breakdown side of invariant 8. */
 const EVENT_ADDITIVE = [
@@ -409,7 +412,13 @@ describe('replay corpus invariants', () => {
   });
 
   it('6. ratios stay in range, and are null — never 0 — on an empty denominator', () => {
-    const RATIOS = ['visits', 'bounce_rate', 'views_per_visit'] as const;
+    const RATIOS = [
+      'visits',
+      'bounce_rate',
+      'views_per_visit',
+      'engaged_sessions',
+      'avg_engagement',
+    ] as const;
     for (const scope of SCOPES) {
       const response = ask(scope, [
         { id: 'total', metrics: [...RATIOS] },
@@ -422,6 +431,15 @@ describe('replay corpus invariants', () => {
           const visits = num(row, 'visits', label);
           const bounce = ratio(row, 'bounce_rate', label);
           const perVisit = ratio(row, 'views_per_visit', label);
+          // Each ratio is null exactly when ITS OWN denominator is empty — the
+          // declared `of.denominator`, not just "no traffic": avg_engagement is
+          // per MEASURED visit, so a group of unmeasurable visits has none.
+          const engagement = ratio(row, 'avg_engagement', label);
+          if (num(row, 'engaged_sessions', label) === 0) {
+            expect(engagement, `${label} avg_engagement with no measured visit`).toBeNull();
+          } else {
+            expect(engagement, `${label} avg_engagement > 0`).toBeGreaterThan(0);
+          }
           if (visits === 0) {
             expect(bounce, `${label} bounce_rate on no visits`).toBeNull();
             expect(perVisit, `${label} views_per_visit on no visits`).toBeNull();
@@ -450,7 +468,50 @@ describe('replay corpus invariants', () => {
       expect(num(row, 'visits', empty.label)).toBe(0);
       expect(row?.bounce_rate, `${empty.label} bounce_rate`).toBeNull();
       expect(row?.views_per_visit, `${empty.label} views_per_visit`).toBeNull();
+      expect(row?.avg_engagement, `${empty.label} avg_engagement`).toBeNull();
     }
+  });
+
+  it('9. every result declares its measures, and a ratio really is its components', () => {
+    // The measures header is the contract the client re-aggregates against
+    // (docs/04 § 3), so two things have to hold of every answer: it declares one
+    // measure per metric it returned, and where that measure claims components,
+    // the components multiply back to the value. A ratio whose declared
+    // numerator/denominator do NOT reproduce it would send every sparkline in
+    // the app off on its own arithmetic again.
+    let sawEngagement = false;
+    for (const scope of SCOPES) {
+      const metrics: Metric[] = ['visits', 'engaged_ms', 'engaged_sessions', 'avg_engagement'];
+      const response = ask(scope, [
+        { id: 'total', metrics },
+        { id: 'days', metrics, bucket: 'day' },
+        { id: 'refs', metrics, dim: 'ref_type' },
+      ]);
+      for (const id of ['total', 'days', 'refs']) {
+        const result = resultOf(response, id);
+        const measures = result.measures ?? {};
+        expect(Object.keys(measures).sort(), `${scope.label} ${id} measures`).toEqual(
+          [...metrics].sort(),
+        );
+        const of = measures.avg_engagement?.of;
+        expect(of, `${scope.label} ${id} avg_engagement components`).toEqual({
+          numerator: 'engaged_ms',
+          denominator: 'engaged_sessions',
+        });
+        if (of === undefined) continue;
+        for (const row of result.rows) {
+          const label = `${scope.label} ${id}`;
+          const value = ratio(row, 'avg_engagement', label);
+          if (value === null) continue;
+          sawEngagement = true;
+          expect(
+            value * num(row, of.denominator, label),
+            `${label} avg_engagement × ${of.denominator} = ${of.numerator}`,
+          ).toBeCloseTo(num(row, of.numerator ?? '', label), 3);
+        }
+      }
+    }
+    expect(sawEngagement, 'no group had measurable engagement — the check is vacuous').toBe(true);
   });
 
   it('7. a filter can only remove — it never adds', () => {

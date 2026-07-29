@@ -125,7 +125,7 @@ transaction.
 ```
 
 Response:
-`{ results: { [id]: { rows, compare?, bucket?, axis? } | { error } }, meta: { generatedInMs, dataVersion, windows } }`.
+`{ results: { [id]: { rows, compare?, bucket?, axis?, measures? } | { error } }, meta: { generatedInMs, dataVersion, windows } }`.
 A query the vocabulary cannot answer honestly (e.g. `bounce_rate` × `title`) or
 a kind that ships in a later milestone yields a per-query `error` entry — the
 batch itself still succeeds, and never returns wrong numbers.
@@ -183,9 +183,56 @@ batch itself still succeeds, and never returns wrong numbers.
   23 hour keys and no `02:00` (an hour that never happened, so SQL can never
   return a row for it); a fall-back day has 24, with the doubled local hour
   sharing one key because both passes carry the same `local_hour`.
+- **Every result declares its measures.** A number alone does not say what it
+  counts or how two of them combine, and a client that guesses gets it wrong in
+  a different way on every screen. So each result carries a `measures` header —
+  **once per result, never per value**, because a 1000-row breakdown must not
+  ship 1000 copies of its own schema:
+
+  ```jsonc
+  "kpis": {
+    "rows": [ { "visitors": 41, "engaged_ms": 900000, "engaged_sessions": 9, "avg_engagement": 100000, "bounce_rate": 0.31 } ],
+    "measures": {
+      "visitors":         { "unit": "count", "population": "actions",           "aggregate": "distinct" },
+      "engaged_ms":       { "unit": "ms",    "population": "sessions",          "aggregate": "sum" },
+      "engaged_sessions": { "unit": "count", "population": "measured_sessions", "aggregate": "sum" },
+      "avg_engagement":   { "unit": "ms",    "population": "measured_sessions", "aggregate": "ratio",
+                            "of": { "numerator": "engaged_ms", "denominator": "engaged_sessions" } },
+      "bounce_rate":      { "unit": "rate",  "population": "sessions",          "aggregate": "ratio",
+                            "of": { "denominator": "visits" } }
+    }
+  }
+  ```
+
+  - **`population`** is the named row set the figure is drawn from (03 §
+    Populations). It is stated per result because it can depend on routing:
+    `visits` is a count of `sessions` rows normally and a distinct count over
+    `actions` under an event-level dimension.
+  - **`unit`** decides how the number is written and how a delta reads: `count`,
+    `ms`, `value`, and `rate` — which is **always a fraction in 0–1**. The
+    server never pre-scales a percentage, so a tile and its own sparkline cannot
+    end up on different scales, which they once did (one on 0–1, one on 0–100).
+  - **`aggregate` is the load-bearing field**, because a chart re-aggregates
+    whatever it is sent: a 90-day series reduced to 12 sparkline slices has to
+    combine buckets, and you cannot average an average. `sum` adds. `ratio`
+    re-weights on its declared `of.denominator` — `Σ(vᵢ·dᵢ)/Σdᵢ`, which
+    reconstructs the true numerator — or divides `of.numerator` by it directly
+    when the result carries both. `max` takes the extremum. **`distinct` has no
+    total across buckets at all** and refuses to produce one: a visitor active
+    on two days is one visitor and two visitor-days, and the id salt rotates at
+    00:00 UTC besides (03 § Visitor identity). `measureTotal` in
+    `packages/shared` returns `undefined` for it, so under TS strict a caller
+    must say what it does instead of quietly shipping a number that contradicts
+    the same label one screen over.
+  - Sequence results (`transitions`, `flows`) carry no header: their columns are
+    a step signature and the sessions that walked it, not measures. `dwell` does
+    — and its `measured_pageviews` population is why "time on page 31 s" and
+    "avg engagement 2 s" are both true of the same traffic: per timed page leg
+    versus per measured visit.
 
 - **Vocabulary, not SQL.** Metrics: `visitors`, `visits`, `pageviews`,
-  `events`, `outlinks`, `downloads`, `engaged_ms`, `bounce_rate`
+  `events`, `outlinks`, `downloads`, `engaged_ms`, `engaged_sessions`,
+  `avg_engagement` (engaged time per MEASURED visit — see 03), `bounce_rate`
   (engagement-aware — see 03),
   `views_per_visit`, `event_value_sum`. Dimensions: `path`, `hostname`, `title`,
   `target_url` (the outlink/download destination), `ref_domain`,

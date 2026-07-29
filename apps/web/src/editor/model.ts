@@ -8,7 +8,7 @@ import {
   upgradeDashboard,
   type VizType,
   type WidgetSpec,
-  withEngagedSessions,
+  withKpiCompanions,
 } from '@featherstat/shared';
 
 /**
@@ -90,6 +90,7 @@ const METRIC_TILES: Partial<Record<Metric, string>> = {
   visits: 'visits',
   events: 'events',
   engaged_ms: 'avg_engagement',
+  avg_engagement: 'avg_engagement',
   bounce_rate: 'bounce_rate',
 };
 
@@ -110,9 +111,10 @@ export function buildWidget(draft: WidgetDraft, id: string): WidgetSpec {
   };
   switch (draft.viz) {
     case 'kpi-row': {
-      // Engagement tiles divide by their own denominators, so the query must
-      // carry them: bounce by visits here, avg engagement by the MEASURED visits
-      // in the shared rule the v1 → v2 layout upgrade also applies.
+      // Engagement tiles need companions the picker does not offer: bounce's
+      // `visits` denominator here, and the engagement pair the shared layout
+      // steps apply — so a new widget is born at the current vocabulary rather
+      // than being upgraded into it on its first read.
       const all = [...metrics];
       if (metrics.includes('engaged_ms') || metrics.includes('bounce_rate')) {
         if (!all.includes('visits')) all.push('visits');
@@ -120,7 +122,7 @@ export function buildWidget(draft: WidgetDraft, id: string): WidgetSpec {
       const tiles = metrics
         .map((metric) => METRIC_TILES[metric])
         .filter((tile): tile is string => tile !== undefined);
-      return withEngagedSessions(
+      return withKpiCompanions(
         parseSpec({
           ...base,
           viz: draft.viz,

@@ -44,6 +44,9 @@ describe('collectBatch', () => {
     const { queries, slots } = collectBatch(allSites(siteIds));
     expect(queries.map((query) => query.id)).toEqual([
       'sites',
+      // The cards' headline number: `visitors` is a distinct count, so the
+      // bucketed result beside it cannot be summed into one (defect 13).
+      'sites~totals',
       'sites~pages~1',
       'sites~pages~2',
       'sites~pages~3',
@@ -54,6 +57,7 @@ describe('collectBatch', () => {
     expect(queries.length).toBeLessThanOrEqual(MAX_QUERIES_PER_BATCH);
     expect(slots.get('sites')).toEqual({
       main: 'sites',
+      totals: 'sites~totals',
       'pages~1': 'sites~pages~1',
       'pages~2': 'sites~pages~2',
       'pages~3': 'sites~pages~3',
@@ -80,7 +84,7 @@ describe('collectBatch', () => {
     if (spec === undefined) throw new Error('site-cards widget expected');
     const junk = { ...spec, options: { siteIds: [2, 0, -1, 1.5, 'x', null] } };
     const { queries } = collectBatch({ ...dashboard, grid: [junk] });
-    expect(queries.map((query) => query.id)).toEqual(['sites', 'sites~pages~2']);
+    expect(queries.map((query) => query.id)).toEqual(['sites', 'sites~totals', 'sites~pages~2']);
   });
 
   it('rejects a dashboard whose widgets collide on query ids', () => {

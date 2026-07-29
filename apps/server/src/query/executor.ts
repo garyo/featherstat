@@ -17,8 +17,8 @@ import {
   stmt,
   withReadSnapshot,
 } from '../db/index.ts';
-import { type CompiledQuery, compileMetricQuery, metricEmpty } from './compiler.ts';
-import { type CompiledDwell, compileDwellQuery } from './dwell.ts';
+import { type CompiledQuery, compileMetricQuery, metricEmpty, queryMeasures } from './compiler.ts';
+import { type CompiledDwell, compileDwellQuery, DWELL_MEASURES } from './dwell.ts';
 import { bucketAxis, compareWindow, resolveWindow } from './ranges.ts';
 import { type CompiledSequence, compileSequenceQuery } from './sequences.ts';
 
@@ -85,6 +85,7 @@ export function executeQueryRequest(
           continue;
         }
         const entry: QueryResult = { rows: runScoped(db, compiled, windows) };
+        if (compiled.kind === 'dwell') entry.measures = DWELL_MEASURES;
         entry.ms = elapsed(queryStarted);
         results[query.id] = entry;
         continue;
@@ -96,6 +97,7 @@ export function executeQueryRequest(
       }
       const entry: QueryResult = { rows: runCompiled(db, compiled, windows) };
       if (compareWindows !== undefined) entry.compare = runCompiled(db, compiled, compareWindows);
+      entry.measures = queryMeasures(compiled);
       describeAxis(entry, query, windows, now);
       entry.ms = elapsed(queryStarted);
       results[query.id] = entry;

@@ -3,14 +3,28 @@ import {
   type Dimension,
   ENGAGEMENT_THRESHOLD_MS,
   type Filter,
+  type Measure,
+  type MeasureComponents,
+  type Measures,
   type Metric,
   type MetricQuery,
+  type Population,
+  type Unit,
 } from '@featherstat/shared';
+import { populationSql } from './population.ts';
 
 /**
- * MetricQuery → parameterized SQL (CLAUDE.md invariant 7). Every identifier comes
+ * MetricQuery → parameterized SQL (CLAUDE.md invariant 9). Every identifier comes
  * from the vocabulary tables below and every client value is a bound parameter —
  * the request can never smuggle SQL.
+ *
+ * A metric declares three things and writes no SQL of its own: the **population**
+ * whose rows it draws from (docs/03 § Populations, named in `packages/shared`),
+ * what it does with them, and its **unit**. The two compose into an expression
+ * below, and travel back to the client as the result's `measures` header
+ * (docs/04 § 3) so nothing downstream has to guess how two numbers combine.
+ * Before that, the predicate was whatever each metric's author typed, and
+ * `visitors` and `visits` silently disagreed about heartbeats.
  *
  * Table routing (docs/04 § 3): session-shaped metrics (visits, engaged_ms,
  * bounce_rate, views_per_visit) aggregate over `sessions`; event-shaped metrics
@@ -26,7 +40,7 @@ import {
  * (see ranges.ts) and `site: "all"` needs one window per site.
  */
 
-type Table = 'events' | 'sessions';
+export type Table = 'events' | 'sessions';
 
 interface DimSpec {
   events: string;
@@ -79,16 +93,35 @@ const BUCKETS: Record<Bucket, { events: string; sessions: string | null }> = {
   month: { events: "strftime('%Y-%m', e.local_date)", sessions: "strftime('%Y-%m', s.local_date)" },
 };
 
-interface MetricExpr {
-  sql: string;
-  /** Bound in SELECT-list order, ahead of any WHERE params. */
-  params?: readonly number[];
+/**
+ * What a metric does with its population's rows. The population says WHICH rows;
+ * this says what to do with them, and the two compose into SQL below — no metric
+ * writes a row predicate of its own, which is how `visitors` and `visits` came
+ * to disagree about heartbeats.
+ */
+type Aggregation =
+  | { kind: 'rows' }
+  | { kind: 'distinct'; column: string }
+  | { kind: 'sum'; value: string }
+  | {
+      kind: 'ratio';
+      /** Summed over the population; the denominator is always its row count. */
+      numerator: string;
+      params?: readonly number[];
+      of: MeasureComponents;
+    };
+
+/** How one table answers one metric. */
+interface TableSpec {
+  population: Population;
+  aggregation: Aggregation;
 }
 
 interface MetricSpec {
   preferred: Table;
-  events?: MetricExpr;
-  sessions?: MetricExpr;
+  unit: Unit;
+  events?: TableSpec;
+  sessions?: TableSpec;
   /** This metric's value for a group one side of a merged query returned no row for. */
   empty: 0 | null;
 }
@@ -96,14 +129,17 @@ interface MetricSpec {
 const METRICS: Record<Metric, MetricSpec> = {
   /**
    * docs/03: distinct visitor ids over the window's stored hits — always
-   * events, never session starts. Heartbeats are excluded: a ping is a
-   * continuation signal, not a visit, and a session that beats past local
-   * midnight would otherwise book a visitor into a day they never acted in.
-   * That produced the impossible reading `pageviews < visitors`.
+   * events, never session starts. The `actions` population excludes heartbeats:
+   * a ping is a continuation signal, not a visit, and a session that beats past
+   * local midnight would otherwise book a visitor into a day they never acted
+   * in. That produced the impossible reading `pageviews < visitors`. Realtime's
+   * "active now" deliberately counts `presence` instead (realtime/hub.ts): a
+   * reader holding a tab open IS here, they just have not done anything.
    */
   visitors: {
     preferred: 'events',
-    events: { sql: "COUNT(DISTINCT CASE WHEN e.type != 'ping' THEN e.visitor_id END)" },
+    unit: 'count',
+    events: { population: 'actions', aggregation: { kind: 'distinct', column: 'e.visitor_id' } },
     empty: 0,
   },
   /**
@@ -114,68 +150,200 @@ const METRICS: Record<Metric, MetricSpec> = {
    */
   engaged_sessions: {
     preferred: 'sessions',
-    // A count of a subset is 0 when the subset is empty, never unknown — a bare
-    // SUM over no rows is NULL, which would contradict this metric's own `empty`.
-    sessions: { sql: 'COALESCE(SUM(CASE WHEN s.engaged_ms > 0 THEN 1 ELSE 0 END), 0)' },
+    unit: 'count',
+    sessions: { population: 'measured_sessions', aggregation: { kind: 'rows' } },
     empty: 0,
   },
   visits: {
     preferred: 'sessions',
-    sessions: { sql: 'COUNT(*)' },
+    unit: 'count',
+    sessions: { population: 'sessions', aggregation: { kind: 'rows' } },
     /**
      * With an event-level dimension in play this is the count of sessions in the
-     * group — over the same non-ping population `visitors` uses. Counting
+     * group — over the same `actions` population `visitors` uses. Counting
      * heartbeats here instead would let a group report visits whose visitors were
      * never counted and whose rows record no action at all: a visit that did
-     * nothing, in a group it only beat in.
+     * nothing, in a group it only beat in. Note the aggregate differs with the
+     * table, and the result's `measures` header says which one answered.
      */
-    events: { sql: "COUNT(DISTINCT CASE WHEN e.type != 'ping' THEN e.session_id END)" },
+    events: { population: 'actions', aggregation: { kind: 'distinct', column: 'e.session_id' } },
     empty: 0,
   },
   pageviews: {
     preferred: 'events',
-    events: { sql: "COALESCE(SUM(e.type = 'pageview'), 0)" },
+    unit: 'count',
+    events: { population: 'pageviews', aggregation: { kind: 'rows' } },
     empty: 0,
   },
-  events: { preferred: 'events', events: { sql: "COALESCE(SUM(e.type = 'event'), 0)" }, empty: 0 },
+  events: {
+    preferred: 'events',
+    unit: 'count',
+    events: { population: 'events', aggregation: { kind: 'rows' } },
+    empty: 0,
+  },
   outlinks: {
     preferred: 'events',
-    events: { sql: "COALESCE(SUM(e.type = 'outlink'), 0)" },
+    unit: 'count',
+    events: { population: 'outlinks', aggregation: { kind: 'rows' } },
     empty: 0,
   },
   downloads: {
     preferred: 'events',
-    events: { sql: "COALESCE(SUM(e.type = 'download'), 0)" },
+    unit: 'count',
+    events: { population: 'downloads', aggregation: { kind: 'rows' } },
     empty: 0,
   },
   engaged_ms: {
     preferred: 'sessions',
-    sessions: { sql: 'COALESCE(SUM(s.engaged_ms), 0)' },
+    unit: 'ms',
+    sessions: { population: 'sessions', aggregation: { kind: 'sum', value: 's.engaged_ms' } },
     empty: 0,
+  },
+  /**
+   * Engaged time per MEASURED visit — the tile's number, computed where the
+   * population is known. The client used to divide `engaged_ms` by
+   * `engaged_sessions` itself, in two places with different null semantics; the
+   * `of` components are what let a sparkline re-derive it over a slice without
+   * averaging an average.
+   */
+  avg_engagement: {
+    preferred: 'sessions',
+    unit: 'ms',
+    sessions: {
+      population: 'measured_sessions',
+      aggregation: {
+        kind: 'ratio',
+        numerator: 's.engaged_ms',
+        of: { numerator: 'engaged_ms', denominator: 'engaged_sessions' },
+      },
+    },
+    // No measured visit is "unknown", never 0 s — the measurement gap again.
+    empty: null,
   },
   bounce_rate: {
     preferred: 'sessions',
-    // Engagement-aware (docs/03, CLAUDE.md invariant 5); the threshold is bound, never inlined.
+    unit: 'rate',
     sessions: {
-      sql: 'AVG(s.pageviews = 1 AND s.events = 0 AND s.engaged_ms < ?)',
-      params: [ENGAGEMENT_THRESHOLD_MS],
+      population: 'sessions',
+      aggregation: {
+        // Engagement-aware (docs/03, CLAUDE.md invariant 5); the threshold is
+        // bound, never inlined — it is configurable, unlike a hit type.
+        kind: 'ratio',
+        numerator: '(s.pageviews = 1 AND s.events = 0 AND s.engaged_ms < ?)',
+        params: [ENGAGEMENT_THRESHOLD_MS],
+        // A rate in 0–1, and no metric names the bounced visits it counts, so
+        // the reduction re-weights on the denominator instead.
+        of: { denominator: 'visits' },
+      },
     },
     empty: null,
   },
   views_per_visit: {
     preferred: 'sessions',
-    sessions: { sql: 'CAST(SUM(s.pageviews) AS REAL) / COUNT(*)' },
+    unit: 'value',
+    sessions: {
+      population: 'sessions',
+      // The numerator is the visit's own pageview counter, which is dated by
+      // where the visit STARTED — not the `pageviews` metric, dated by when each
+      // row happened. They differ across a local midnight, so no numerator is
+      // named and the reduction re-weights on visits.
+      aggregation: { kind: 'ratio', numerator: 's.pageviews', of: { denominator: 'visits' } },
+    },
     empty: null,
   },
   event_value_sum: {
     preferred: 'events',
-    events: { sql: "COALESCE(SUM(CASE WHEN e.type = 'event' THEN e.event_value END), 0)" },
+    unit: 'value',
+    events: { population: 'events', aggregation: { kind: 'sum', value: 'e.event_value' } },
     empty: 0,
   },
 };
 
 export function metricEmpty(metric: Metric): 0 | null {
   return METRICS[metric].empty;
+}
+
+/**
+ * What a metric means once the router has picked a table — the wire's `measures`
+ * entry (docs/04 § 3). Table-dependent on purpose: `visits` is an additive count
+ * of session rows, and a distinct count of session ids once an event-level
+ * dimension forces it onto the events table. A client that re-aggregates has to
+ * be told which it got.
+ */
+export function measureOf(metric: Metric, table: Table): Measure {
+  const spec = METRICS[metric];
+  const tableSpec = spec[table];
+  if (tableSpec === undefined) {
+    throw new Error(`'${metric}' has no definition over '${table}'`);
+  }
+  const aggregation = tableSpec.aggregation;
+  return {
+    unit: spec.unit,
+    population: tableSpec.population,
+    aggregate: aggregation.kind === 'rows' ? 'sum' : aggregation.kind,
+    ...(aggregation.kind === 'ratio' ? { of: aggregation.of } : {}),
+  };
+}
+
+/** The tables a metric can be answered from, its preference first. */
+export function metricTables(metric: Metric): readonly Table[] {
+  const spec = METRICS[metric];
+  return tableOrder(spec).filter((table) => spec[table] !== undefined);
+}
+
+/** The table a metric is answered from when nothing blocks its preference. */
+export function preferredTable(metric: Metric): Table {
+  const table = metricTables(metric)[0];
+  if (table === undefined) throw new Error(`'${metric}' has no table at all`);
+  return table;
+}
+
+function tableOrder(spec: MetricSpec): readonly Table[] {
+  return spec.preferred === 'events' ? ['events', 'sessions'] : ['sessions', 'events'];
+}
+
+/** The measures header for a compiled query: one entry per metric, as routed. */
+export function queryMeasures(compiled: CompiledQuery): Measures {
+  const measures: Measures = {};
+  for (const statement of compiled.statements) {
+    for (const metric of statement.metrics) measures[metric] = measureOf(metric, statement.table);
+  }
+  return measures;
+}
+
+/**
+ * A metric's SELECT expression: its aggregation composed over its population's
+ * rows, as a `CASE WHEN`.
+ *
+ * A CASE and not a WHERE, because one statement answers metrics of MIXED
+ * population — `visitors` over `actions` beside `pageviews` over its own — and a
+ * filtered row set could only serve one of them.
+ */
+function metricSql(spec: TableSpec, alias: string): { sql: string; params: readonly number[] } {
+  const predicate = populationSql(spec.population, alias);
+  const only = (value: string): string =>
+    predicate === null ? value : `CASE WHEN ${predicate} THEN ${value} END`;
+  // A count of a subset is 0 when the subset is empty, never unknown — a bare
+  // SUM over no rows is NULL, which would contradict a count metric's `empty`.
+  const rows =
+    predicate === null ? 'COUNT(*)' : `COALESCE(SUM(CASE WHEN ${predicate} THEN 1 ELSE 0 END), 0)`;
+
+  const aggregation = spec.aggregation;
+  switch (aggregation.kind) {
+    case 'rows':
+      return { sql: rows, params: [] };
+    case 'distinct':
+      return { sql: `COUNT(DISTINCT ${only(aggregation.column)})`, params: [] };
+    case 'sum':
+      return { sql: `COALESCE(SUM(${only(aggregation.value)}), 0)`, params: [] };
+    case 'ratio':
+      // NULL over an empty population — a rate with no denominator is unknown,
+      // and 0 would be a fabricated answer.
+      return {
+        sql: `CAST(SUM(${only(aggregation.numerator)}) AS REAL) / ${rows}`,
+        params: aggregation.params ?? [],
+      };
+  }
 }
 
 /** True when only the events table carries `dim` — sessions cannot be filtered by it. */
@@ -288,9 +456,7 @@ export function unsupported(message: string): CompileError {
 }
 
 function pickTable(spec: MetricSpec, sessionsUsable: boolean): Table | null {
-  const order: readonly Table[] =
-    spec.preferred === 'events' ? ['events', 'sessions'] : ['sessions', 'events'];
-  for (const table of order) {
+  for (const table of tableOrder(spec)) {
     if (spec[table] === undefined) continue;
     if (table === 'sessions' && !sessionsUsable) continue;
     return table;
@@ -320,10 +486,11 @@ function buildStatement(
     select.push(`${table === 'events' ? group.events : group.sessions} AS "${group.key}"`);
   }
   for (const metric of metrics) {
-    const expr = METRICS[metric][table];
-    if (expr === undefined) throw new Error(`'${metric}' was routed to a table it cannot answer`);
+    const spec = METRICS[metric][table];
+    if (spec === undefined) throw new Error(`'${metric}' was routed to a table it cannot answer`);
+    const expr = metricSql(spec, alias);
     select.push(`${expr.sql} AS "${metric}"`);
-    if (expr.params !== undefined) params.push(...expr.params);
+    params.push(...expr.params);
   }
 
   const where = filters.map((filter) => filterSql(filter, table, params));

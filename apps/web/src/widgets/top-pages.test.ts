@@ -1,6 +1,11 @@
-import type { ResultRow } from '@featherstat/shared';
+import type { Measures, ResultRow } from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
 import { TOP_PAGES, topPages } from './top-pages.ts';
+
+/** What the server declares for the per-site `pageviews × path × day` companion. */
+const ADDITIVE: Measures = {
+  pageviews: { unit: 'count', population: 'pageviews', aggregate: 'sum' },
+};
 
 const WINDOW_DAYS = 14;
 
@@ -26,13 +31,13 @@ describe('topPages', () => {
       row('/c', 2, 20),
       row('/d', 3, 5),
     ];
-    const pages = topPages(rows, BUCKETS);
+    const pages = topPages(rows, BUCKETS, ADDITIVE);
     expect(pages).toHaveLength(TOP_PAGES);
     expect(pages.map((page) => page.path)).toEqual(['/b', '/c', '/a']);
   });
 
   it('zero-fills the spark across the window, oldest first', () => {
-    const pages = topPages([row('/a', 0, 7), row('/a', 13, 3)], BUCKETS);
+    const pages = topPages([row('/a', 0, 7), row('/a', 13, 3)], BUCKETS, ADDITIVE);
     const spark = pages[0]?.spark;
     expect(spark).toHaveLength(WINDOW_DAYS);
     expect(spark?.[0]).toBe(3);
@@ -45,7 +50,7 @@ describe('topPages', () => {
       ...Array.from({ length: 7 }, (_, i) => row('/a', i, 20)), // recent 7 days: 140
       ...Array.from({ length: 7 }, (_, i) => row('/a', i + 7, 10)), // previous 7: 70
     ];
-    expect(topPages(rows, BUCKETS)[0]?.deltaPct).toBe(100);
+    expect(topPages(rows, BUCKETS, ADDITIVE)[0]?.deltaPct).toBe(100);
   });
 
   it('reports no delta without a baseline, and merges campaign variants of a page', () => {
@@ -53,7 +58,7 @@ describe('topPages', () => {
       row('/launch', 0, 8),
       { ...row('/launch', 0, 4), path: '/launch?utm_source=hn' },
     ];
-    const pages = topPages(rows, BUCKETS);
+    const pages = topPages(rows, BUCKETS, ADDITIVE);
     expect(pages).toEqual([
       {
         path: '/launch',
@@ -71,6 +76,19 @@ describe('topPages', () => {
       { path: '/ok', bucket: null, pageviews: 9 },
       row('/live', 1, 2),
     ];
-    expect(topPages(rows, BUCKETS).map((page) => page.path)).toEqual(['/live']);
+    expect(topPages(rows, BUCKETS, ADDITIVE).map((page) => page.path)).toEqual(['/live']);
+  });
+
+  it('refuses to rank a measure with no total across buckets', () => {
+    // Summing a distinct count over days counts a returning reader once per day.
+    // The header says the metric is not additive, so the card renders no page
+    // list at all rather than a ranking nothing supports (defect 13).
+    const distinct: Measures = {
+      pageviews: { unit: 'count', population: 'actions', aggregate: 'distinct' },
+    };
+    const rows = [row('/a', 0, 10), row('/a', 1, 10), row('/b', 0, 5)];
+    expect(topPages(rows, BUCKETS, distinct)).toEqual([]);
+    // And with no header at all there is nothing to read the column by.
+    expect(topPages(rows, BUCKETS, undefined)).toEqual([]);
   });
 });

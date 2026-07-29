@@ -1,4 +1,5 @@
 <script lang="ts">
+import ApproxMark from './ApproxMark.svelte';
 import { resultAxes, sharedKeys } from './axis.ts';
 import { tileLabel, tileModels, tileNames } from './kpi.ts';
 import Sparkline from './Sparkline.svelte';
@@ -25,7 +26,14 @@ const tiles = $derived.by(() => {
           sharedKeys(resultAxes(spark.result, windows ?? [], now ?? Date.now())),
         )
       : [];
-  return tileModels(names, main.result.rows[0], main.result.compare?.[0], series);
+  return tileModels(names, {
+    totals: main.result.rows[0],
+    compare: main.result.compare?.[0],
+    series,
+    // The tile reads its unit and its aggregate off the answer it was handed,
+    // so the number and its sparkline cannot end up on different scales.
+    measures: main.result.measures,
+  });
 });
 </script>
 
@@ -45,7 +53,9 @@ const tiles = $derived.by(() => {
   <div class="kpis">
     {#each tiles as tile (tile.name)}
       <div class="tile">
-        <div class="label">{tile.label}</div>
+        <div class="label">
+          {tile.label}{#if tile.approximate}<ApproxMark />{/if}
+        </div>
         <div class="row">
           <div class="value" class:na={tile.value === '—'} title={tile.exact}>{tile.value}</div>
           <div class="delta {tile.delta.tone}">{tile.delta.text}</div>

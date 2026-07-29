@@ -1,5 +1,6 @@
 import type { Filter, SequenceQuery } from '@featherstat/shared';
 import type { CompileError } from './compiler.ts';
+import { populationWhere } from './population.ts';
 import { sessionScope } from './session-scope.ts';
 
 /**
@@ -43,7 +44,9 @@ export function compileSequenceQuery(
     '(',
     `    SELECT e.session_id AS sid, e.seq AS seq, ${LABEL} AS label`,
     '    FROM events e JOIN scoped ON e.session_id = scoped.sid',
-    "    WHERE e.type <> 'ping'",
+    // A journey is what the visitor DID: the `actions` population, so a
+    // heartbeat never becomes a step.
+    `    WHERE ${populationWhere('actions', 'e')}`,
     '  )',
   ].join('\n');
 

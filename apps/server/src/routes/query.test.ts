@@ -42,6 +42,12 @@ describe('POST /api/query', () => {
     const body = (await res.json()) as QueryResponse;
     expect(body.results.kpis).toEqual({
       rows: [{ visitors: 1, pageviews: 1 }],
+      // Every metric result states what its columns count and how they compose
+      // (docs/04 § 3) — once per result, never per row.
+      measures: {
+        visitors: { unit: 'count', population: 'actions', aggregate: 'distinct' },
+        pageviews: { unit: 'count', population: 'pageviews', aggregate: 'sum' },
+      },
       ms: expect.any(Number),
     });
     expect(body.meta.dataVersion).toBe(1);

@@ -123,7 +123,10 @@ forward on read:
   landed one, because rows written against that step still exist. The first step
   (v1 → v2) gives a KPI query naming `engaged_ms` the `engaged_sessions` its
   avg-engagement tile divides by — the metric added in f47d1e5, without which
-  the tile reads `—` forever.
+  the tile reads `—` forever. The second (v2 → v3) adds `avg_engagement`, once
+  the tile stopped dividing and started reading the metric; the same rule, one
+  vocabulary change later. The editor's add-widget factory builds through both,
+  so a new widget is born current instead of being upgraded on its first read.
 - **Reads never write.** `readStoredDashboard` is the one path from the
   `dashboards.layout` column to a `Dashboard`, and it upgrades in memory only.
   Share links are read-only and public: rewriting a row from a GET there would
@@ -205,8 +208,31 @@ every chart inherits them. The mockup instantiates all of this.
 Compact display (`12.9K`, `4.2M`) with exact values in tooltips and tables;
 `tabular-nums` only in table columns and axis ticks; deltas signed with
 direction-×-goodness color (bounce-rate down = green) plus an arrow glyph, so
-color never carries the sign alone. "Unique visitors" is labeled as exact
-per-day, approximate across ranges (see 03 — identity).
+color never carries the sign alone.
+
+**A widget does no metric arithmetic.** It reads the result's `measures` header
+(04 § 3) and lets the declaration decide:
+
+- **How the number is written** comes from `unit`. A `rate` arrives as 0–1 and
+  is multiplied by 100 in exactly one function, so a tile and its own sparkline
+  cannot disagree about the scale — the bounce tile wrote `31%` while its
+  sparkline computed `31` and would have written `3100%`.
+- **How buckets combine** comes from `aggregate`. A sparkline slice is the
+  measure's value for ONE bucket of that slice, never the slice's total: sums
+  and distinct counts reduce to their per-bucket mean, ratios re-divide their
+  declared components, and a slice that cannot be reduced drops the whole line
+  rather than drawing a fabricated point.
+- **What has no total at all** is `distinct`. The all-sites cards used to sum
+  per-day visitor counts into a headline while the same site's KPI tile counted
+  the range once — two screens, two numbers, one label. The cards now read a
+  per-site range total from the batch; the day buckets are the sparkline's shape
+  and nothing else. Anything else asking for a total of a distinct measure gets
+  `undefined` and has to say so.
+
+"Unique visitors" is labeled as exact per-day, approximate across ranges (see 03
+— identity): every figure drawn from a `distinct` measure wears the `~` mark and
+its explanation, on the KPI tile's label and the site card's caption alike, from
+the aggregate rather than from the metric's name.
 
 ## Responsive & performance
 

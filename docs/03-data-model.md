@@ -92,8 +92,12 @@ visitor_id = first 8 bytes of SHA-256(day_salt ∥ site_id ∥ ip ∥ user_agent
 - `day_salt` is random, held in the `settings` table, rotated at 00:00 UTC;
   the previous day's salt is deleted. After rotation, yesterday's hashes are
   unlinkable to today's — this is the Plausible model, and it is why "unique
-  visitors" is exact within a day and approximate across ranges (documented in
-  the UI as such).
+  visitors" is exact within a day and approximate across ranges. Two things
+  carry that consequence rather than leaving it to be remembered: the metric
+  declares `aggregate: 'distinct'`, so nothing may add its buckets into a range
+  total (see § Derived metrics below), and every figure drawn from a distinct
+  measure wears the approximation mark — KPI tile and site card alike, from the
+  declaration and not from the metric's name (`widgets/ApproxMark.svelte`).
 - The IP is consumed by the hash and the GeoIP lookup, then discarded. No
   masked-IP column, no debug switch that quietly stores it.
 - Matomo's `_id` parameter (16-hex visitor id), when present, replaces the
@@ -203,6 +207,46 @@ the eviction sweep leaves an entry alone until its rows are committed; retention
 is unchanged (a committed entry still goes at the idle window), it just cannot be
 dropped while the store would then be the only, and stale, account of a visit.
 
+### Populations: which rows a metric counts
+
+A metric's hardest question is not its formula but its **population** — the set
+of stored rows it is drawn from. That used to be prose inside a SQL string, and
+two metrics quietly disagreed about it: `visitors` excluded heartbeats and
+`visits` did not, so under any event-level dimension a group could report a
+visit whose visitor it had never counted.
+
+The populations are named once, in `packages/shared` (`measures.ts`), and every
+metric declares one instead of writing a row predicate:
+
+| Population | Rows | Read as |
+| --- | --- | --- |
+| `presence` | every stored hit, heartbeats included | the visitor was here |
+| `actions` | every hit that is not a heartbeat | the visitor did something |
+| `pageviews` / `events` / `outlinks` / `downloads` | one hit type each | that kind of action |
+| `sessions` | every stored visit | a visit |
+| `measured_sessions` | visits with `engaged_ms > 0` | a visit the clock could time |
+| `measured_pageviews` | page views something followed | a page leg the clock could time |
+
+Naming them does something a shared constant would not: it turns an accidental
+difference into a deliberate one. Realtime's "active now" counts **`presence`** —
+a reader holding a tab open is here — while the `visitors` KPI counts
+**`actions`**, because that reader has not done anything today. Both are right,
+they answer different questions, and stated this way a reviewer can check that
+the difference was meant. (`isHeartbeat` in `packages/shared` is the single
+definition; the compiler, the sequence and dwell kinds, the realtime hub, the
+sessionizer and the ntfy notifier all import it rather than spelling `'ping'`.)
+
+Two consequences worth stating:
+
+- **A population compiles to a `CASE`, never a `WHERE`.** One SELECT answers
+  metrics of mixed population — `visitors` over `actions` beside `pageviews`
+  over its own — so a population that filtered rows would either be wrong or
+  force one query per population and a merge in JS.
+- **A population can differ by table.** `visits` is a plain count of `sessions`
+  rows, and a distinct count over `actions` once an event-level dimension forces
+  it onto the events table. The result says which it was (see
+  [04](04-api.md) § 3, `measures`).
+
 ### Derived metrics
 
 `visits` = sessions — and under an event-level dimension,
@@ -213,10 +257,14 @@ a visit whose visitor it did not count; `visitors` = distinct `visitor_id`
 session beating past local midnight must not book its visitor into a day it
 never acted in — that reads as `pageviews < visitors`, which is impossible; the
 same reasoning is why a ping cannot open a session at all, above);
-`engagement time` = `engaged_ms`, averaged over `engaged_sessions` (visits with
-time on the clock) rather than all visits — a single-hit visit is unmeasurable,
-not zero-length, and dividing by it reports the measurement gap as brevity, the
-same dishonesty the time-on-page card refuses; **time on page** = every event of the session
+`engagement time` = `avg_engagement`, which is `engaged_ms` over the
+**`measured_sessions`** population (visits with time on the clock) rather than
+over all visits — a single-hit visit is unmeasurable, not zero-length, and
+dividing by it reports the measurement gap as brevity, the same dishonesty the
+time-on-page card refuses. It is a server metric, declaring
+`of: {numerator: 'engaged_ms', denominator: 'engaged_sessions'}` so a chart can
+re-derive it over a slice instead of averaging averages; the client used to
+divide, in two places, with different null semantics. **Time on page** = every event of the session
 — pings included — credits `min(gap to the next event, 20 s)` to the *current*
 page, i.e. the most recent pageview at or before it. That is the same clamped
 accrual `engaged_ms` uses, attributed per page instead of per session, and it is

@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import {
   type Hit,
+  isHeartbeat,
   localClock,
   PING_CLAMP_MS,
   SESSION_REVIVAL_MS,
@@ -103,14 +104,14 @@ export class Sessionizer {
     const local = localClock(site.timezone, now);
 
     const carried =
-      this.liveSession(key, now) ?? (hit.type === 'ping' ? this.revive(input, key) : undefined);
+      this.liveSession(key, now) ?? (isHeartbeat(hit.type) ? this.revive(input, key) : undefined);
     if (carried !== undefined) {
       // Clamped per gap, so reviving after half an hour of silence credits one
       // heartbeat's worth of attention, never the silence.
       const gap = now - carried.row.last_seen_at;
       carried.row.engaged_ms += Math.min(Math.max(gap, 0), PING_CLAMP_MS);
       carried.row.last_seen_at = now;
-    } else if (hit.type === 'ping') {
+    } else if (isHeartbeat(hit.type)) {
       this.dropped += 1;
       return undefined;
     }

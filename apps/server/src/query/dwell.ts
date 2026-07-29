@@ -1,5 +1,6 @@
-import { type DwellQuery, type Filter, PING_CLAMP_MS } from '@featherstat/shared';
+import { type DwellQuery, type Filter, type Measures, PING_CLAMP_MS } from '@featherstat/shared';
 import type { CompileError } from './compiler.ts';
+import { populationWhere } from './population.ts';
 import { sessionScope } from './session-scope.ts';
 
 /**
@@ -33,6 +34,27 @@ export interface CompiledDwell {
   params: readonly (string | number)[];
 }
 
+/**
+ * What the dwell card's columns count (docs/04 § 3). Fixed — the shape is the
+ * answer, so there is nothing to route.
+ *
+ * The population is the whole point of stating them: `measured_pageviews` is
+ * page views something followed, which is why "time on page 31 s" and
+ * "avg engagement 2 s" can both be true of the same traffic. One is per page
+ * leg the clock could reach, the other per MEASURED VISIT — different
+ * populations, not a contradiction.
+ */
+export const DWELL_MEASURES: Measures = {
+  views_measured: { unit: 'count', population: 'measured_pageviews', aggregate: 'sum' },
+  avg_page_ms: {
+    unit: 'ms',
+    population: 'measured_pageviews',
+    aggregate: 'ratio',
+    of: { denominator: 'views_measured' },
+  },
+  max_page_ms: { unit: 'ms', population: 'measured_pageviews', aggregate: 'max' },
+};
+
 export function compileDwellQuery(
   query: DwellQuery,
   filters: readonly Filter[],
@@ -47,7 +69,7 @@ export function compileDwellQuery(
     `${scope.sql},`,
     'ordered AS (',
     '  SELECT e.session_id AS sid, e.ts AS ts, e.type AS type, e.path AS path,',
-    "    SUM(CASE WHEN e.type = 'pageview' THEN 1 ELSE 0 END) OVER w AS page_idx,",
+    `    SUM(CASE WHEN ${populationWhere('pageviews', 'e')} THEN 1 ELSE 0 END) OVER w AS page_idx,`,
     '    LEAD(e.ts) OVER w AS next_ts',
     '  FROM events e JOIN scoped ON e.session_id = scoped.sid',
     '  WINDOW w AS (PARTITION BY e.session_id ORDER BY e.seq)',
@@ -64,7 +86,7 @@ export function compileDwellQuery(
     '  AVG(dwell.ms) AS avg_page_ms,',
     '  MAX(dwell.ms) AS max_page_ms',
     'FROM dwell JOIN ordered page',
-    "  ON page.sid = dwell.sid AND page.page_idx = dwell.page_idx AND page.type = 'pageview'",
+    `  ON page.sid = dwell.sid AND page.page_idx = dwell.page_idx AND ${populationWhere('pageviews', 'page')}`,
     'GROUP BY 1',
     // Path breaks ties so a limited ranking is deterministic, like every other kind.
     'ORDER BY avg_page_ms DESC, path',

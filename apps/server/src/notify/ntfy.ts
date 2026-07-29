@@ -1,4 +1,4 @@
-import type { NtfyRule } from '@featherstat/shared';
+import { isHeartbeat, type NtfyRule } from '@featherstat/shared';
 import { type Db, type EventRow, getSite } from '../db/index.ts';
 import { type NtfySettings, readNtfySettings } from './settings.ts';
 
@@ -128,8 +128,9 @@ export function createNtfyNotifier(db: Db, options: NtfyNotifierOptions = {}): N
     // Unconfigured is the common case: one array read, then out.
     if (settings.rules.length === 0) return;
     if (settings.url === undefined || settings.topic === undefined) return;
-    // Pings are keep-alives, not things that happened (docs/04 § 4).
-    if (event.type === 'ping') return;
+    // A notification announces something that happened, so the `actions`
+    // population and nothing else: a heartbeat is a keep-alive (docs/04 § 4).
+    if (isHeartbeat(event.type)) return;
     // One notification per hit: the first rule that matches owns it, including
     // its cooldown — overlapping rules must not multiply the traffic.
     const rule = settings.rules.find((candidate) => matches(candidate, event));

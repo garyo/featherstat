@@ -14,6 +14,7 @@ import { MAX_QUERIES_PER_BATCH } from './index.ts';
 
 const SPARK_SUFFIX = '~spark';
 const BROWSERS_SUFFIX = '~browsers';
+const TOTALS_SUFFIX = '~totals';
 const PAGES_INFIX = '~pages~';
 
 /** Browser rows shown under the device bar's divider (mockup). */
@@ -54,8 +55,20 @@ export function widgetQueries(spec: WidgetSpec): Record<string, Query> {
       limit: BROWSERS_LIMIT,
     };
   }
-  // R20: one top-pages trend query per site rides the SAME all-sites batch.
   if (spec.viz === 'site-cards') {
+    // A card's headline figure is its site's total over the WHOLE range, which
+    // the bucketed query cannot supply: `visitors` is a distinct count
+    // (`aggregate: 'distinct'`), so summing its day buckets counts a returning
+    // reader once per day and disagrees with the KPI tile's number under the
+    // same label. The bucketed result draws the sparkline; this one is the
+    // number, counted once by the server over the range.
+    queries.totals = {
+      id: `${spec.query.id}${TOTALS_SUFFIX}`,
+      metrics: spec.query.metrics,
+      dim: 'site',
+      filters: spec.query.filters,
+    };
+    // R20: one top-pages trend query per site rides the SAME all-sites batch.
     for (const [slot, query] of Object.entries(sitePagesQueries(spec.query, spec.options))) {
       queries[slot] = query;
     }

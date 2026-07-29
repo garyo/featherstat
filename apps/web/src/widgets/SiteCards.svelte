@@ -1,4 +1,5 @@
 <script lang="ts">
+import ApproxMark from './ApproxMark.svelte';
 import { resultAxes } from './axis.ts';
 import { exactNumber } from './format.ts';
 import Sparkline from './Sparkline.svelte';
@@ -19,20 +20,27 @@ let {
 }: WidgetProps = $props();
 
 const slice = $derived(sliceOf(data, 'main'));
+// The headline number is the server's range count, not a sum of the buckets
+// below it: `visitors` is a distinct count, so the two are different numbers.
+const totals = $derived(sliceOf(data, 'totals'));
 // Each card rides its OWN site's axis: the batch spans timezones, and one shared
 // clock zeroes whole cards for the hours around a midnight.
 const axes = $derived(
   slice.kind === 'ready' ? resultAxes(slice.result, windows ?? [], now ?? Date.now()) : [],
 );
+// Both results are the card grid: either one still loading or failing is the
+// widget's state, not a grid of half-answers.
+const state = $derived(slice.kind === 'ready' ? totals : slice);
 const stats = $derived(
-  slice.kind === 'ready'
-    ? siteStats(
+  slice.kind === 'ready' && totals.kind === 'ready'
+    ? siteStats({
         axes,
-        slice.result.rows,
-        slice.result.compare,
-        sites === undefined ? undefined : [...sites.values()],
-        siteSortOf(spec.options.sort),
-      )
+        totals: totals.result.rows,
+        compare: totals.result.compare,
+        buckets: slice.result.rows,
+        sites: sites === undefined ? undefined : [...sites.values()],
+        sort: siteSortOf(spec.options.sort),
+      })
     : [],
 );
 const periodLabel = $derived((rangeLabel ?? range).toLowerCase());
@@ -40,7 +48,7 @@ const periodLabel = $derived((rangeLabel ?? range).toLowerCase());
 /** R20: this site's top pages over the card's own window (per-site clock). */
 function pagesFor(site: number, buckets: readonly string[]): ReturnType<typeof topPages> {
   const pages = sliceOf(data, `pages~${site}`);
-  return pages.kind === 'ready' ? topPages(pages.result.rows, buckets) : [];
+  return pages.kind === 'ready' ? topPages(pages.result.rows, buckets, pages.result.measures) : [];
 }
 
 function select(site: number): void {
@@ -56,10 +64,10 @@ function onKeydown(event: KeyboardEvent, site: number): void {
 </script>
 
 <div class="sites">
-  {#if slice.kind === 'loading'}
+  {#if state.kind === 'loading'}
     <p class="widget-note">Loading…</p>
-  {:else if slice.kind === 'error'}
-    <p class="widget-note">{slice.message}</p>
+  {:else if state.kind === 'error'}
+    <p class="widget-note">{state.message}</p>
   {:else if stats.length === 0}
     <p class="widget-note">No traffic in this period.</p>
   {:else}
@@ -89,7 +97,7 @@ function onKeydown(event: KeyboardEvent, site: number): void {
               {stat.deltaPct >= 0 ? '▴ +' : '▾ −'}{Math.abs(stat.deltaPct)}%
             </span>
           {/if}
-          <span class="sub">visitors · {periodLabel}</span>
+          <span class="sub">visitors<ApproxMark /> · {periodLabel}</span>
         </div>
         {#if stat.silent}
           <!-- A site with zero rows is exactly the one to surface: a fresh site

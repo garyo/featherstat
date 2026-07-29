@@ -28,6 +28,7 @@ export const siteOverview: Dashboard = upgradeDashboard(
             'visits',
             'engaged_ms',
             'engaged_sessions',
+            'avg_engagement',
             'bounce_rate',
           ],
         },

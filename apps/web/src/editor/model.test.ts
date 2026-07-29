@@ -127,9 +127,15 @@ describe('buildWidget', () => {
       'w1',
     );
     if (spec.query === undefined || 'kind' in spec.query) throw new Error('metric query expected');
-    // `visits` for the bounce denominator, `engaged_sessions` from the v1 → v2
-    // layout rule — one statement of it, applied here and on every read.
-    expect(spec.query.metrics).toEqual(['engaged_ms', 'visits', 'engaged_sessions']);
+    // `visits` for the bounce denominator, then the engagement companions the
+    // shared layout steps add — one statement of the rule, applied here and on
+    // every read, so a new widget is never a layout that needs upgrading.
+    expect(spec.query.metrics).toEqual([
+      'engaged_ms',
+      'visits',
+      'engaged_sessions',
+      'avg_engagement',
+    ]);
   });
 
   it('pins the fixed-shape vizzes regardless of the picks', () => {
@@ -216,7 +222,7 @@ describe('export / import round trip', () => {
     expect(parsed.dashboard.version).toBe(DASHBOARD_LAYOUT_VERSION);
     const query = parsed.dashboard.grid[0]?.query;
     if (query === undefined || 'kind' in query) throw new Error('metric query expected');
-    expect(query.metrics).toEqual(['visits', 'engaged_ms', 'engaged_sessions']);
+    expect(query.metrics).toEqual(['visits', 'engaged_ms', 'engaged_sessions', 'avg_engagement']);
   });
 
   it('reports non-JSON readably', () => {

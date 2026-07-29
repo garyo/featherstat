@@ -1,4 +1,4 @@
-import type { Metric, SiteWindow } from '@featherstat/shared';
+import type { Metric, SiteWindow, Unit } from '@featherstat/shared';
 import { windowSpan } from './axis.ts';
 
 /** Display names for the metric vocabulary — exhaustive, so a new metric cannot ship unlabeled. */
@@ -11,10 +11,22 @@ export const METRIC_LABELS: Record<Metric, string> = {
   downloads: 'Downloads',
   engaged_sessions: 'measured visits',
   engaged_ms: 'Engaged time',
+  avg_engagement: 'Avg engagement',
   bounce_rate: 'Bounce rate',
   views_per_visit: 'Views / visit',
   event_value_sum: 'Event value',
 };
+
+/**
+ * What a `distinct` measure is worth saying out loud (docs/03 § Visitor
+ * identity, docs/05 § Numbers). The visitor hash is salted with a salt that
+ * rotates at 00:00 UTC, so a count is exact within a day and an approximation
+ * over anything longer — and there is no total across buckets at all, which is
+ * why `measureTotal` refuses one. Every distinct-count figure wears this,
+ * derived from the measure rather than pinned to `visitors` by name.
+ */
+export const DISTINCT_NOTE =
+  'Exact within a day, approximate over a longer range: visitor ids rotate at 00:00 UTC.';
 
 export function exactNumber(n: number): string {
   return n.toLocaleString('en-US');
@@ -30,6 +42,30 @@ export function compactNumber(n: number): string {
 
 function trimZero(fixed: string): string {
   return fixed.replace(/\.0$/, '');
+}
+
+/**
+ * A value written as its measure's unit says (docs/04 § 3).
+ *
+ * The unit is the server's, so a figure and every reduction of it — a tile and
+ * its own sparkline — are written by the same rule. A `rate` is always a
+ * fraction in 0–1 and is multiplied by 100 exactly HERE and nowhere else; the
+ * bounce tile and its spark once disagreed about that, one on 0–1 and the other
+ * on 0–100, because each did its own scaling.
+ */
+export function formatMeasure(unit: Unit, value: number): string {
+  switch (unit) {
+    case 'count':
+      return compactNumber(value);
+    case 'ms':
+      return formatDuration(value);
+    case 'rate':
+      return `${Math.round(value * 100)}%`;
+    case 'value':
+      // A plain real (views per visit, an event-value sum): keep a decimal while
+      // it carries information, compact it once it stops.
+      return Math.abs(value) >= 1_000 ? compactNumber(value) : trimZero(value.toFixed(1));
+  }
 }
 
 export function formatDuration(ms: number): string {

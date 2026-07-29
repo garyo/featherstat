@@ -1,5 +1,6 @@
 import {
   ACTIVE_WINDOW_MS,
+  isHeartbeat,
   MAX_ENGAGEMENT_ENTRIES,
   PING_CLAMP_MS,
   type RealtimeEngagement,
@@ -11,6 +12,7 @@ import {
 } from '@featherstat/shared';
 import { type Db, type EventRow, listSites, stmt } from '../db/index.ts';
 import type { FlushSummary } from '../pipeline/batcher.ts';
+import { populationWhere } from '../query/population.ts';
 import { VisitorAliaser } from './alias.ts';
 
 /**
@@ -65,13 +67,19 @@ export class RealtimeHub {
    * Post-enrichment hook: called for every stored hit as it happens. Pings keep
    * their visitor active and accrue engaged time, but are not feed items
    * (docs/04 § 4) — the heartbeat is precisely what makes the time honest.
+   *
+   * "Active now" therefore counts the `presence` population — every stored hit —
+   * while the `visitors` KPI counts `actions`. That difference is deliberate and
+   * not an inconsistency: a reader holding a tab open IS here now, and did not
+   * act today. `isHeartbeat` is the same definition the compiler's `actions`
+   * population is built from, imported rather than respelled.
    */
   record(event: EventRow): void {
     const visitor = this.aliaser.alias(event.visitor_id, event.ts);
     this.active.touch(event.site_id, event.visitor_id, event.ts);
     // Touch first: the figure the row carries includes the gap this hit closes.
     const engagedMs = this.engagement.touch(event.site_id, event.visitor_id, event.ts, visitor);
-    if (event.type === 'ping') return;
+    if (isHeartbeat(event.type)) return;
     this.emit({ kind: 'hit', entry: this.ring.push(toRealtimeHit(event, visitor, engagedMs)) });
   }
 
@@ -189,7 +197,7 @@ const SEED_RECENT_LIMIT = 50;
  */
 const SQL_RECENT_EVENTS = `SELECT e.*, s.engaged_ms FROM events e
 LEFT JOIN sessions s ON s.id = e.session_id
-WHERE e.type != 'ping'
+WHERE ${populationWhere('actions', 'e')}
 ORDER BY e.id DESC
 LIMIT ?`;
 

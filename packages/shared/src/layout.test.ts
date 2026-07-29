@@ -11,6 +11,8 @@ import {
   readStoredDashboard,
   upgradeDashboard,
   upgradeToV2,
+  upgradeToV3,
+  withAvgEngagement,
   withEngagedSessions,
 } from './layout.ts';
 
@@ -143,11 +145,55 @@ describe('upgradeToV2', () => {
   });
 });
 
+describe('upgradeToV3', () => {
+  it('gives a KPI query the avg_engagement its tile now READS instead of deriving', () => {
+    // P2 moved the division server-side, so the tile stopped computing
+    // engaged_ms / engaged_sessions and started reading a metric. A layout
+    // written against v2 names neither, and its tile would read '—' forever.
+    const stored = upgradeToV2(DashboardSchema.parse(PRE_VERSIONING));
+    expect(metricsOf(stored, 0)).not.toContain('avg_engagement');
+    expect(metricsOf(upgradeToV3(stored), 0)).toEqual([
+      'visitors',
+      'pageviews',
+      'visits',
+      'engaged_ms',
+      'engaged_sessions',
+      'avg_engagement',
+    ]);
+  });
+
+  it('is idempotent, declines at the metric cap, and leaves other widgets alone', () => {
+    const once = upgradeToV3(upgradeToV2(DashboardSchema.parse(PRE_VERSIONING)));
+    expect(upgradeToV3(once)).toEqual(once);
+    expect(metricsOf(once, 1)).toEqual(['engaged_ms']); // the timeseries
+
+    const atCap = kpiWidget([
+      'visitors',
+      'pageviews',
+      'visits',
+      'events',
+      'outlinks',
+      'downloads',
+      'engaged_ms',
+      'engaged_sessions',
+    ]);
+    expect(withAvgEngagement(atCap)).toBe(atCap);
+  });
+});
+
 describe('upgradeDashboard', () => {
   it('applies every step from the layout version up to this build', () => {
     const upgraded = upgradeDashboard(DashboardSchema.parse(PRE_VERSIONING));
     expect(upgraded.version).toBe(DASHBOARD_LAYOUT_VERSION);
     expect(metricsOf(upgraded, 0)).toContain('engaged_sessions');
+    expect(metricsOf(upgraded, 0)).toContain('avg_engagement');
+  });
+
+  it('carries a v2 layout the one step it is missing, and no more', () => {
+    const v2 = { ...upgradeToV2(DashboardSchema.parse(PRE_VERSIONING)), version: 2 };
+    const upgraded = upgradeDashboard(v2);
+    expect(upgraded.version).toBe(DASHBOARD_LAYOUT_VERSION);
+    expect(metricsOf(upgraded, 0)).toEqual([...metricsOf(v2, 0), 'avg_engagement']);
   });
 
   it('is idempotent and returns an already-current layout untouched', () => {
@@ -163,6 +209,7 @@ describe('upgradeDashboard', () => {
     expect(result).toBe(newer);
     expect(result.version).toBe(99);
     expect(metricsOf(result, 0)).not.toContain('engaged_sessions');
+    expect(metricsOf(result, 0)).not.toContain('avg_engagement');
   });
 });
 
@@ -170,7 +217,7 @@ describe('readStoredDashboard', () => {
   it('upgrades a row written before the vocabulary changed', () => {
     const layout = readStoredDashboard(JSON.stringify(PRE_VERSIONING));
     expect(layout?.version).toBe(DASHBOARD_LAYOUT_VERSION);
-    expect(layout === undefined ? [] : metricsOf(layout, 0)).toContain('engaged_sessions');
+    expect(layout === undefined ? [] : metricsOf(layout, 0)).toContain('avg_engagement');
   });
 
   it('reads a row this build cannot execute as absent, never as a cast', () => {

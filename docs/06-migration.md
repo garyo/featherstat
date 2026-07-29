@@ -102,6 +102,38 @@ metric *means* has to be logged here or the comparison silently drifts.
     downward divergence from Matomo already described below.
   - Reconciliation note: on this pattern featherstat will read ~4 % below Matomo
     on visits every day. Do not chase it.
+- **2026-07-29 — the all-sites cards' visitor figure** stopped being a sum of
+  per-day distinct counts and became the range count the server does once. This
+  is the only figure P2 (populations and measures) actually moves, and it moves
+  **downward**, by roughly the share of readers who come back on a later day.
+  The old number counted them once per day; the KPI tile on the same site's
+  dashboard always counted them once, so the two screens disagreed under one
+  label. The tile's number did not move — the card's now matches it.
+  - On the replay corpus, all six sites together: a single day **171 → 171
+    (unchanged**, as it must be — one bucket is one count); 7 days **934 → 923
+    (−1.2 %)**; 30 days **4120 → 4063 (−1.4 %)**; the whole 93-day corpus
+    **13009 → 12787 (−1.7 %)**. Per site over 30 days the spread is 0 % (site 3,
+    no returning readers in the corpus) to **−4.2 %** (site 6).
+  - Nothing Matomo is compared against changes: the daily per-site visitor
+    totals the reconciliation uses are single-day figures, which are identical
+    before and after. What moved is a multi-day card, which had no Matomo
+    counterpart being tracked.
+  - The card also gained the `~` approximation mark docs/03 always claimed the
+    UI carried: a distinct count is exact within a day and an approximation over
+    a longer range, because the id salt rotates at 00:00 UTC.
+- **2026-07-29 — `avg_engagement` became a server metric.** The value is
+  **unchanged to the last bit** — it is the same `engaged_ms / engaged_sessions`
+  the client was computing, verified identical on the corpus across a day, a
+  week, a month and the whole window (132874.5793 / 151771.7710 / 158668.1447 /
+  161121.9768 ms). What changed is where the division happens and that the
+  sparkline beside it now re-derives the ratio from the declared components
+  instead of running a second, differently-behaved copy of the arithmetic.
+  Nothing to reconcile; logged because the metric vocabulary grew.
+- **2026-07-29 — no other metric moved.** `bounce_rate` went from `AVG(pred)` to
+  `SUM(pred)/COUNT(*)` and the hit-type counters from `SUM(type = 'x')` to
+  `SUM(CASE WHEN type = 'x' THEN 1 ELSE 0 END)` as the population vocabulary
+  took over; both are the same value in SQLite, and the replay oracles and the
+  invariant sweep agree before and after.
 
 ## Cutover sequence
 

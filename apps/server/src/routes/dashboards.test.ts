@@ -309,7 +309,13 @@ describe('dashboards CRUD', () => {
     const detail = (await got.json()) as DashboardDetail;
     // Without the on-read upgrade the tile divides by a metric the batch never
     // asked for, and renders '—' forever.
-    expect(metricsOf(detail, 0)).toEqual(['visitors', 'visits', 'engaged_ms', 'engaged_sessions']);
+    expect(metricsOf(detail, 0)).toEqual([
+      'visitors',
+      'visits',
+      'engaged_ms',
+      'engaged_sessions',
+      'avg_engagement',
+    ]);
     expect(detail.layout.version).toBe(DASHBOARD_LAYOUT_VERSION);
 
     // Read means read: the stored row is exactly as it was found.

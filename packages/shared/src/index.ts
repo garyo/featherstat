@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { RealtimeVisitor } from './alias.ts';
+import type { Measures } from './measures.ts';
 
 // ---------------------------------------------------------------------------
 // Constants (docs/03)
@@ -128,6 +129,7 @@ export const MetricSchema = z.enum([
   'downloads',
   'engaged_ms',
   'engaged_sessions',
+  'avg_engagement',
   'bounce_rate',
   'views_per_visit',
   'event_value_sum',
@@ -187,6 +189,7 @@ export const EVENT_ONLY_DIMENSIONS = [
 export const SESSION_ONLY_METRICS = [
   'engaged_ms',
   'engaged_sessions',
+  'avg_engagement',
   'bounce_rate',
   'views_per_visit',
 ] as const satisfies readonly Metric[];
@@ -331,6 +334,20 @@ export interface QueryResult {
    * rows' own order is then the axis.
    */
   axis?: SiteAxis[];
+  /**
+   * What each metric column of these rows counts, and how it may be recombined
+   * (docs/04 § 3) — declared once per RESULT, never per value, so a 1000-row
+   * breakdown does not carry 1000 copies of its own schema.
+   *
+   * The `aggregate` is what makes a client's re-aggregation legal by
+   * construction: a chart reducing 90 daily points into 12 slices has to
+   * recombine them, and only the server knows whether that is a sum, a
+   * re-division, or a thing with no total at all (see `measureTotal`).
+   *
+   * Absent only for a kind with no measures to declare — the sequence queries,
+   * whose columns are a step signature and the sessions that walked it.
+   */
+  measures?: Measures;
 }
 
 /**
@@ -662,5 +679,6 @@ export interface VersionTick {
 
 export * from './alias.ts';
 export * from './layout.ts';
+export * from './measures.ts';
 export * from './time.ts';
 export * from './widgets.ts';
