@@ -149,7 +149,10 @@ Per incoming hit:
 Restart recovery: on boot, sessions with `last_seen_at` within 30 min are
 loaded back into the map. Crash-loss window ≈ one batch interval.
 
-Derived metrics: `visits` = sessions; `visitors` = distinct `visitor_id`
+Derived metrics: `visits` = sessions — and under an event-level dimension,
+where the answer comes from the event rows rather than the session rows, the
+distinct sessions **of that group's non-ping rows**, so a group can never hold
+a visit whose visitor it did not count; `visitors` = distinct `visitor_id`
 **over non-ping rows** (a heartbeat is a continuation signal, not a visit: a
 session beating past local midnight must not book its visitor into a day it
 never acted in — that reads as `pageviews < visitors`, which is impossible);

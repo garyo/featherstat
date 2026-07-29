@@ -532,4 +532,49 @@ describe('metrics that heartbeats must not distort', () => {
     expect(Number(row?.engaged_sessions)).toBeLessThanOrEqual(Number(row?.visits));
     if (Number(row?.engaged_ms) > 0) expect(Number(row?.engaged_sessions)).toBeGreaterThan(0);
   });
+
+  it('excludes heartbeat-only visits from `visits` under an event-level dimension', () => {
+    // A visit that only beat on a page has a row in that page's group but did
+    // nothing there. Counting it while its visitor is not counted would put two
+    // different populations in one row: a visit with no visitor and no action.
+    const mini = openDb(':memory:');
+    withWriteTransaction(mini, () => {
+      createSite(mini, { id: 1, name: 'one', domains: ['one.test'] });
+      insertEvents(mini, [
+        event({ local_date: DAY, path: '/read', visitor_id: binId(1), session_id: binId(1) }),
+        event({
+          local_date: DAY,
+          path: '/beat',
+          type: 'ping',
+          visitor_id: binId(2),
+          session_id: binId(2),
+        }),
+      ]);
+    });
+    const response = executeQueryRequest(mini, {
+      site: 1,
+      range: { from: DAY, to: DAY },
+      queries: [{ id: 'q', metrics: ['visits', 'visitors', 'pageviews'], dim: 'path' }],
+    });
+    expect(resultOf(response, 'q').rows).toEqual([
+      { path: '/read', visits: 1, visitors: 1, pageviews: 1 },
+      { path: '/beat', visits: 0, visitors: 0, pageviews: 0 },
+    ]);
+    mini.close();
+  });
+
+  it('answers `engaged_sessions` with 0, not null, when nothing matched', () => {
+    // It counts a subset of visits. An empty subset is none of them, not unknown
+    // — only the ratio metrics are entitled to say "no answer" (docs/04).
+    const response = run({
+      queries: [
+        {
+          id: 'q',
+          metrics: ['visits', 'engaged_sessions'],
+          filters: [{ dim: 'country', op: 'eq', value: 'ZZ' }],
+        },
+      ],
+    });
+    expect(resultOf(response, 'q').rows).toEqual([{ visits: 0, engaged_sessions: 0 }]);
+  });
 });

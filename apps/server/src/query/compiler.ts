@@ -114,14 +114,22 @@ const METRICS: Record<Metric, MetricSpec> = {
    */
   engaged_sessions: {
     preferred: 'sessions',
-    sessions: { sql: 'SUM(CASE WHEN s.engaged_ms > 0 THEN 1 ELSE 0 END)' },
+    // A count of a subset is 0 when the subset is empty, never unknown — a bare
+    // SUM over no rows is NULL, which would contradict this metric's own `empty`.
+    sessions: { sql: 'COALESCE(SUM(CASE WHEN s.engaged_ms > 0 THEN 1 ELSE 0 END), 0)' },
     empty: 0,
   },
   visits: {
     preferred: 'sessions',
     sessions: { sql: 'COUNT(*)' },
-    // With an event-level dimension in play this is still the count of sessions in the group.
-    events: { sql: 'COUNT(DISTINCT e.session_id)' },
+    /**
+     * With an event-level dimension in play this is the count of sessions in the
+     * group — over the same non-ping population `visitors` uses. Counting
+     * heartbeats here instead would let a group report visits whose visitors were
+     * never counted and whose rows record no action at all: a visit that did
+     * nothing, in a group it only beat in.
+     */
+    events: { sql: "COUNT(DISTINCT CASE WHEN e.type != 'ping' THEN e.session_id END)" },
     empty: 0,
   },
   pageviews: {

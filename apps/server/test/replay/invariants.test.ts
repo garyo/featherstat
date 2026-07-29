@@ -1,0 +1,548 @@
+import type { Filter, Metric, QueryRequest, ResultRow } from '@featherstat/shared';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createSite, type Db, openDb, withWriteTransaction } from '../../src/db/index.ts';
+import { parseMatomoRequest } from '../../src/ingest/matomo.ts';
+import { createPipeline } from '../../src/pipeline/index.ts';
+import { executeQueryRequest } from '../../src/query/executor.ts';
+import { resultOf } from '../rows.ts';
+import { type Corpus, generateCorpus, REPLAY_HITS_PER_FLUSH, toMatomoQuery } from './generate.ts';
+
+/**
+ * Invariants over the replay corpus: statements that must hold for ANY corpus and
+ * ANY implementation, so they keep their grip while the metric, window and widget
+ * layers are rebuilt underneath them.
+ *
+ * The sibling suites (replay, query, dwell, journeys) assert *values* — this one
+ * asserts *impossible states*. That is the whole point: an expected-value test
+ * re-derives the implementation and moves with it, so a metric bug that is wrong
+ * in both the code and the fixture is invisible to it. Nothing here knows what
+ * the right number is; it only knows which orderings, sums and bounds cannot be
+ * violated without the answer being nonsense.
+ *
+ * Two rules keep it hard to fool:
+ *
+ * - Every check runs over a sweep of sites × windows (a day, a week, a month, the
+ *   whole corpus, each site and `site: "all"`), never one hand-picked scope.
+ * - Where a bound could pass vacuously — an inequality that is always an
+ *   equality, a filter that never removes anything — the suite also asserts that
+ *   the slack was exercised somewhere in the sweep.
+ */
+
+const corpus = generateCorpus();
+
+let db: Db;
+
+beforeAll(() => {
+  db = openDb(':memory:');
+  withWriteTransaction(db, () => {
+    for (const site of corpus.sites) createSite(db, site);
+  });
+  replay(db, corpus);
+}, 120_000);
+
+afterAll(() => {
+  db.close();
+});
+
+/** Bench-style replay: a huge batch interval and explicit flushes — no fake timers needed. */
+function replay(target: Db, source: Corpus): void {
+  const pipeline = createPipeline(target, { batchIntervalMs: 3_600_000 });
+  let queued = 0;
+  for (const entry of source.hits) {
+    const { hits } = parseMatomoRequest({ query: toMatomoQuery(entry) });
+    pipeline.sink(hits, entry.ctx);
+    queued += 1;
+    if (queued === REPLAY_HITS_PER_FLUSH) {
+      queued = 0;
+      pipeline.flush();
+    }
+  }
+  pipeline.shutdown();
+}
+
+// ---------------------------------------------------------------------------
+// The sweep
+// ---------------------------------------------------------------------------
+
+interface Scope {
+  label: string;
+  site: number | 'all';
+  from: string;
+  to: string;
+  /** The window that holds the entire corpus — where the rarer slack is guaranteed to appear. */
+  whole: boolean;
+}
+
+/**
+ * Explicit windows, never presets: a preset resolves per site timezone, so an
+ * all-sites query would compare six different windows and the independent SQL
+ * check below would have no single window to reproduce. `full` is wide enough to
+ * hold every local date the corpus can produce, in any site timezone.
+ */
+const WINDOWS = [
+  { label: 'day', from: '2026-03-11', to: '2026-03-11', whole: false },
+  { label: '7d', from: '2026-03-09', to: '2026-03-15', whole: false },
+  { label: '30d', from: '2026-03-01', to: '2026-03-30', whole: false },
+  { label: 'full', from: '2026-02-14', to: '2026-05-17', whole: true },
+] as const;
+
+/** A window the corpus cannot reach — the empty-denominator case. */
+const EMPTY_WINDOW = { from: '2026-01-01', to: '2026-01-31' } as const;
+
+const SCOPES: Scope[] = WINDOWS.flatMap((window) =>
+  [...corpus.sites.map((site) => site.id), 'all' as const].map((site) => ({
+    label: `site ${site} / ${window.label}`,
+    site,
+    from: window.from,
+    to: window.to,
+    whole: window.whole,
+  })),
+);
+
+function ask(scope: Scope, queries: QueryRequest['queries']) {
+  return executeQueryRequest(db, {
+    site: scope.site,
+    range: { from: scope.from, to: scope.to },
+    queries,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Vocabulary
+// ---------------------------------------------------------------------------
+
+/** The countable things a visitor did. A ping is not one of them: it reports that a page is still open. */
+const ACTIONS = [
+  'pageviews',
+  'events',
+  'outlinks',
+  'downloads',
+] as const satisfies readonly Metric[];
+
+/**
+ * How each metric composes across buckets — the knowledge invariant 5 needs and
+ * the compiler does not yet carry. A later phase moves this into the metric
+ * definitions themselves; this table, asserted against the real engine over the
+ * whole sweep, is what will prove that move correct.
+ *
+ * - `additive`: the ungrouped total is exactly the sum over `bucket: 'day'` rows.
+ * - `distinct`: a distinct count. The total is at most the bucket sum (one person
+ *   active on two days is one visitor overall but two across buckets) and at
+ *   least any single bucket.
+ * - `ratio`: a quotient. It neither sums nor bounds a bucket — averaging averages
+ *   is a lie — so additivity says nothing about it and invariant 6 owns its range.
+ */
+const METRIC_KIND: Record<Metric, 'additive' | 'distinct' | 'ratio'> = {
+  pageviews: 'additive',
+  events: 'additive',
+  outlinks: 'additive',
+  downloads: 'additive',
+  engaged_ms: 'additive',
+  engaged_sessions: 'additive',
+  event_value_sum: 'additive',
+  /**
+   * Additive only while it is answered from `sessions`, where a session belongs
+   * to exactly one local date. Under an event-level dimension it is answered from
+   * `events` and becomes a distinct count — a session that crosses local midnight
+   * then lands in two buckets. The additivity queries below carry no event-level
+   * dimension, so this entry describes the routing they actually get.
+   */
+  visits: 'additive',
+  visitors: 'distinct',
+  bounce_rate: 'ratio',
+  views_per_visit: 'ratio',
+};
+
+const ADDITIVE = (Object.keys(METRIC_KIND) as Metric[]).filter(
+  (metric) => METRIC_KIND[metric] === 'additive',
+);
+
+/** Additive metrics the events table answers — the breakdown side of invariant 8. */
+const EVENT_ADDITIVE = [
+  'pageviews',
+  'events',
+  'outlinks',
+  'downloads',
+  'event_value_sum',
+] as const satisfies readonly Metric[];
+
+/** Additive metrics the sessions table answers. */
+const SESSION_ADDITIVE = [
+  'visits',
+  'engaged_ms',
+  'engaged_sessions',
+] as const satisfies readonly Metric[];
+
+const EVENT_METRICS = [
+  'visitors',
+  ...ACTIONS,
+  'event_value_sum',
+] as const satisfies readonly Metric[];
+
+// ---------------------------------------------------------------------------
+// Row accessors — a metric that comes back the wrong shape is itself a failure
+// ---------------------------------------------------------------------------
+
+function num(row: ResultRow | undefined, metric: string, label: string): number {
+  const value = row?.[metric];
+  if (typeof value !== 'number') {
+    throw new Error(`${label}: '${metric}' should be a number, got ${JSON.stringify(value)}`);
+  }
+  return value;
+}
+
+/** A ratio metric: a number, or `null` when its denominator was empty. Never anything else. */
+function ratio(row: ResultRow | undefined, metric: string, label: string): number | null {
+  const value = row?.[metric];
+  if (value === null) return null;
+  if (typeof value !== 'number') {
+    throw new Error(
+      `${label}: '${metric}' should be a number or null, got ${JSON.stringify(value)}`,
+    );
+  }
+  return value;
+}
+
+function actionsOf(row: ResultRow | undefined, label: string): number {
+  return ACTIONS.reduce((sum, metric) => sum + num(row, metric, label), 0);
+}
+
+function sumOf(rows: readonly ResultRow[], metric: string, label: string): number {
+  return rows.reduce((sum, row) => sum + num(row, metric, label), 0);
+}
+
+// ---------------------------------------------------------------------------
+
+describe('replay corpus invariants', () => {
+  it('1. a population never exceeds the actions it was counted from', () => {
+    // A distinct-visitor count is drawn from rows that record something a person
+    // did; it cannot exceed the number of those rows. If it does, the population
+    // and the actions were counted over different row sets — which is precisely
+    // how a heartbeat leaks into a headline number.
+    for (const scope of SCOPES) {
+      const response = ask(scope, [
+        { id: 'total', metrics: ['visitors', ...ACTIONS] },
+        { id: 'days', metrics: ['visitors', ...ACTIONS], bucket: 'day' },
+        { id: 'paths', metrics: ['visitors', ...ACTIONS], dim: 'path' },
+      ]);
+      for (const id of ['total', 'days', 'paths']) {
+        for (const row of resultOf(response, id).rows) {
+          const label = `${scope.label} ${id}`;
+          expect(num(row, 'visitors', label), `${label} visitors <= actions`).toBeLessThanOrEqual(
+            actionsOf(row, label),
+          );
+        }
+      }
+    }
+  });
+
+  it('1b. under an event-level dimension a visit has a visitor and an action', () => {
+    // `visitors` and `visits` are both distinct counts over the SAME event rows
+    // once an event-level dimension forces the query onto the events table. Every
+    // session has exactly one visitor, so visitors <= visits; and neither can
+    // exceed the actions in the group, because both are distinct counts over rows
+    // that are themselves actions. A group reporting a visit with no visitor and
+    // no action is an impossible state: it means the two populations were drawn
+    // from different rows — the heartbeat set for one, the acting set for the other.
+    for (const scope of SCOPES) {
+      const response = ask(scope, [
+        {
+          id: 'hours',
+          metrics: ['visitors', 'visits', ...ACTIONS],
+          dim: 'local_hour',
+          bucket: 'day',
+        },
+        { id: 'paths', metrics: ['visitors', 'visits', ...ACTIONS], dim: 'path', bucket: 'day' },
+        { id: 'titles', metrics: ['visitors', 'visits', ...ACTIONS], dim: 'title' },
+      ]);
+      for (const id of ['hours', 'paths', 'titles']) {
+        for (const row of resultOf(response, id).rows) {
+          const label = `${scope.label} ${id} ${JSON.stringify(row)}`;
+          const visits = num(row, 'visits', label);
+          expect(num(row, 'visitors', label), `${label} visitors <= visits`).toBeLessThanOrEqual(
+            visits,
+          );
+          expect(visits, `${label} visits <= actions`).toBeLessThanOrEqual(actionsOf(row, label));
+        }
+      }
+    }
+  });
+
+  it('2. every visitor counted has at least one non-ping row', () => {
+    // The honest form of the ordering. `pageviews >= visitors` is NOT asserted
+    // and does not hold in general: a visit whose only action is an outlink or a
+    // server-side event has a visitor and no pageview at all, so any window can
+    // legitimately report more visitors than pageviews.
+    //
+    // What must hold is that the visitor population is drawn from rows that
+    // record an action. This counts that population straight from the table, with
+    // no compiler in the path, and asserts the engine never claims more.
+    let sawTraffic = false;
+    for (const scope of SCOPES) {
+      const label = `${scope.label} visitors`;
+      const reported = num(
+        resultOf(ask(scope, [{ id: 'q', metrics: ['visitors'] }]), 'q').rows[0],
+        'visitors',
+        label,
+      );
+      expect(reported, label).toBeLessThanOrEqual(actingVisitors(scope));
+      if (reported > 0) sawTraffic = true;
+    }
+    expect(sawTraffic, 'the sweep must contain visitors, or it proves nothing').toBe(true);
+  });
+
+  it('3. engaged_sessions never exceeds visits — a measurable visit is a visit', () => {
+    // engaged_sessions is the subset of visits with time on the clock (docs/03);
+    // a subset larger than its set means the two were counted over different rows.
+    let sawUnmeasurable = false;
+    for (const scope of SCOPES) {
+      const response = ask(scope, [
+        { id: 'total', metrics: ['visits', 'engaged_sessions'] },
+        { id: 'days', metrics: ['visits', 'engaged_sessions'], bucket: 'day' },
+        { id: 'refs', metrics: ['visits', 'engaged_sessions'], dim: 'ref_type' },
+      ]);
+      for (const id of ['total', 'days', 'refs']) {
+        for (const row of resultOf(response, id).rows) {
+          const label = `${scope.label} ${id}`;
+          const visits = num(row, 'visits', label);
+          const engaged = num(row, 'engaged_sessions', label);
+          expect(engaged, `${label} engaged_sessions <= visits`).toBeLessThanOrEqual(visits);
+          if (engaged < visits) sawUnmeasurable = true;
+        }
+      }
+    }
+    // Unmeasurable visits exist, so the bound above is a real constraint and not
+    // an identity that would hide a change making every visit "engaged".
+    expect(sawUnmeasurable, 'no unmeasurable visit anywhere — the bound is vacuous').toBe(true);
+  });
+
+  it('4. dwell never times more page views than there were pageviews', () => {
+    // views_measured counts page views the clock could actually reach. Timing
+    // more of them than happened would mean the dwell envelope is picking up rows
+    // the pageview count cannot see.
+    const DEPTH = 200;
+    for (const scope of SCOPES) {
+      const response = ask(scope, [
+        { id: 'dwell', kind: 'dwell', limit: DEPTH },
+        { id: 'pv', metrics: ['pageviews'] },
+      ]);
+      const rows = resultOf(response, 'dwell').rows;
+      const label = `${scope.label} dwell`;
+      // A truncated ranking would make the sum an underestimate and the bound
+      // meaningless, so the sweep must never hit the depth limit.
+      expect(rows.length, `${label} ranking truncated`).toBeLessThan(DEPTH);
+      const measured = sumOf(rows, 'views_measured', label);
+      const pageviews = num(resultOf(response, 'pv').rows[0], 'pageviews', label);
+      expect(measured, `${label} views_measured <= pageviews`).toBeLessThanOrEqual(pageviews);
+      // Over the whole corpus the gap is guaranteed: every visit that left
+      // without a second hit has an untimeable page, and there are always some.
+      if (scope.whole) {
+        expect(measured, `${label} strictly fewer over the full window`).toBeLessThan(pageviews);
+        expect(measured, `${label} measured something`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('5. additive metrics sum across day buckets; distinct counts only bound', () => {
+    let sawReturningVisitor = false;
+    for (const scope of SCOPES) {
+      const response = ask(scope, [
+        { id: 'total', metrics: ADDITIVE },
+        { id: 'days', metrics: ADDITIVE, bucket: 'day' },
+        { id: 'vTotal', metrics: ['visitors'] },
+        { id: 'vDays', metrics: ['visitors'], bucket: 'day' },
+      ]);
+      const total = resultOf(response, 'total').rows[0];
+      const days = resultOf(response, 'days').rows;
+      for (const metric of ADDITIVE) {
+        const label = `${scope.label} ${metric}`;
+        expect(num(total, metric, label), `${label} total = sum of days`).toBeCloseTo(
+          sumOf(days, metric, label),
+          6,
+        );
+      }
+
+      const label = `${scope.label} visitors`;
+      const overall = num(resultOf(response, 'vTotal').rows[0], 'visitors', label);
+      const buckets = resultOf(response, 'vDays').rows.map((row) => num(row, 'visitors', label));
+      const summed = buckets.reduce((sum, value) => sum + value, 0);
+      expect(overall, `${label} total <= sum of days`).toBeLessThanOrEqual(summed);
+      for (const bucket of buckets) {
+        expect(overall, `${label} total >= any single day`).toBeGreaterThanOrEqual(bucket);
+      }
+      if (overall < summed) sawReturningVisitor = true;
+    }
+    // Someone in the corpus came back on a second day. Without that the `<=`
+    // above would be an equality everywhere and would not distinguish a distinct
+    // count from an additive one at all.
+    expect(sawReturningVisitor, 'no visitor spans two days — the distinct bound is vacuous').toBe(
+      true,
+    );
+  });
+
+  it('6. ratios stay in range, and are null — never 0 — on an empty denominator', () => {
+    const RATIOS = ['visits', 'bounce_rate', 'views_per_visit'] as const;
+    for (const scope of SCOPES) {
+      const response = ask(scope, [
+        { id: 'total', metrics: [...RATIOS] },
+        { id: 'days', metrics: [...RATIOS], bucket: 'day' },
+        { id: 'refs', metrics: [...RATIOS], dim: 'ref_type' },
+      ]);
+      for (const id of ['total', 'days', 'refs']) {
+        for (const row of resultOf(response, id).rows) {
+          const label = `${scope.label} ${id}`;
+          const visits = num(row, 'visits', label);
+          const bounce = ratio(row, 'bounce_rate', label);
+          const perVisit = ratio(row, 'views_per_visit', label);
+          if (visits === 0) {
+            expect(bounce, `${label} bounce_rate on no visits`).toBeNull();
+            expect(perVisit, `${label} views_per_visit on no visits`).toBeNull();
+            continue;
+          }
+          // A rate, never a percent: the client formats, the server does not
+          // pre-scale. 0.42 here becoming 42 there is a whole class of bug.
+          expect(bounce, `${label} bounce_rate >= 0`).toBeGreaterThanOrEqual(0);
+          expect(bounce, `${label} bounce_rate <= 1`).toBeLessThanOrEqual(1);
+          expect(perVisit, `${label} views_per_visit >= 0`).toBeGreaterThanOrEqual(0);
+        }
+      }
+    }
+
+    // The empty denominator itself. Zero would be a fabricated answer — the
+    // padding the client once did for the server, and the reason this is asserted
+    // rather than assumed.
+    for (const site of corpus.sites) {
+      const empty: Scope = {
+        label: `site ${site.id} / empty`,
+        site: site.id,
+        whole: false,
+        ...EMPTY_WINDOW,
+      };
+      const row = resultOf(ask(empty, [{ id: 'q', metrics: [...RATIOS] }]), 'q').rows[0];
+      expect(num(row, 'visits', empty.label)).toBe(0);
+      expect(row?.bounce_rate, `${empty.label} bounce_rate`).toBeNull();
+      expect(row?.views_per_visit, `${empty.label} views_per_visit`).toBeNull();
+    }
+  });
+
+  it('7. a filter can only remove — it never adds', () => {
+    /**
+     * Both sides of every comparison stay on the same table. The cross-table case
+     * (`visits` unfiltered from `sessions`, filtered onto `events` by an
+     * event-only dimension) is deliberately NOT asserted: `sessions` dates a
+     * visit by where it started and `events` by when each row happened, so a
+     * visit that crosses local midnight is legitimately in one window and not the
+     * other. That is a scoping difference, not a monotonicity break, and folding
+     * it in here would make the invariant lie.
+     */
+    const EVENT_FILTERS: Filter[] = [
+      { dim: 'path', op: 'starts', value: '/d' },
+      { dim: 'lang', op: 'eq', value: 'en-us' },
+      { dim: 'country', op: 'is_null' },
+    ];
+    const SESSION_FILTERS: Filter[] = [
+      { dim: 'ref_type', op: 'eq', value: 'search' },
+      { dim: 'device_type', op: 'eq', value: 'desktop' },
+      { dim: 'country', op: 'is_null' },
+    ];
+    let sawRemoval = false;
+
+    for (const scope of SCOPES) {
+      const response = ask(scope, [
+        { id: 'events', metrics: [...EVENT_METRICS] },
+        { id: 'sessions', metrics: [...SESSION_ADDITIVE] },
+        ...EVENT_FILTERS.map((filter, i) => ({
+          id: `events${i}`,
+          metrics: [...EVENT_METRICS],
+          filters: [filter],
+        })),
+        ...SESSION_FILTERS.map((filter, i) => ({
+          id: `sessions${i}`,
+          metrics: [...SESSION_ADDITIVE],
+          filters: [filter],
+        })),
+      ]);
+
+      const compare = (base: string, id: string, metrics: readonly Metric[]): void => {
+        const unfiltered = resultOf(response, base).rows[0];
+        const filtered = resultOf(response, id).rows[0];
+        for (const metric of metrics) {
+          const label = `${scope.label} ${id} ${metric}`;
+          const before = num(unfiltered, metric, label);
+          const after = num(filtered, metric, label);
+          expect(after, `${label} filtered <= unfiltered`).toBeLessThanOrEqual(before);
+          if (after < before) sawRemoval = true;
+        }
+      };
+      EVENT_FILTERS.forEach((_, i) => {
+        compare('events', `events${i}`, EVENT_METRICS);
+      });
+      SESSION_FILTERS.forEach((_, i) => {
+        compare('sessions', `sessions${i}`, SESSION_ADDITIVE);
+      });
+    }
+    expect(sawRemoval, 'no filter removed anything — the bound is vacuous').toBe(true);
+  });
+
+  it('8. a full breakdown conserves an additive total', () => {
+    // Every row belongs to exactly one group of a single dimension, including the
+    // NULL group, so the breakdown must add back up to the ungrouped total.
+    // Losing the NULL group is the classic way a breakdown quietly under-reports.
+    let sawNullGroup = false;
+    for (const scope of SCOPES) {
+      const response = ask(scope, [
+        { id: 'eTotal', metrics: [...EVENT_ADDITIVE] },
+        { id: 'byPath', metrics: [...EVENT_ADDITIVE], dim: 'path' },
+        { id: 'byCountry', metrics: [...EVENT_ADDITIVE], dim: 'country' },
+        { id: 'bySite', metrics: [...EVENT_ADDITIVE], dim: 'site' },
+        { id: 'sTotal', metrics: [...SESSION_ADDITIVE] },
+        { id: 'byRefType', metrics: [...SESSION_ADDITIVE], dim: 'ref_type' },
+      ]);
+
+      const conserves = (
+        totalId: string,
+        breakdownId: string,
+        metrics: readonly Metric[],
+      ): void => {
+        const total = resultOf(response, totalId).rows[0];
+        const rows = resultOf(response, breakdownId).rows;
+        for (const metric of metrics) {
+          const label = `${scope.label} ${breakdownId} ${metric}`;
+          expect(num(total, metric, label), `${label} breakdown = total`).toBeCloseTo(
+            sumOf(rows, metric, label),
+            6,
+          );
+        }
+      };
+      conserves('eTotal', 'byPath', EVENT_ADDITIVE);
+      conserves('eTotal', 'byCountry', EVENT_ADDITIVE);
+      conserves('eTotal', 'bySite', EVENT_ADDITIVE);
+      conserves('sTotal', 'byRefType', SESSION_ADDITIVE);
+
+      const dims = ['byPath', 'byCountry'];
+      for (const id of dims) {
+        const key = id === 'byPath' ? 'path' : 'country';
+        if (resultOf(response, id).rows.some((row) => row[key] === null)) sawNullGroup = true;
+      }
+    }
+    // A NULL group really occurs in the sweep, so "conserves the total" is
+    // actually testing that the breakdown keeps it.
+    expect(sawNullGroup, 'no NULL group in any breakdown — conservation proves less').toBe(true);
+  });
+});
+
+/**
+ * The visitor population, counted straight from the rows with no compiler in the
+ * path: distinct visitors across the window's non-ping rows. Every window in the
+ * sweep is explicit, so one date pair scopes every site the same way.
+ */
+function actingVisitors(scope: Scope): number {
+  const sql = `SELECT COUNT(DISTINCT visitor_id) FROM events
+     WHERE type != 'ping' AND local_date BETWEEN ? AND ?${scope.site === 'all' ? '' : ' AND site_id = ?'}`;
+  const params: (string | number)[] = [scope.from, scope.to];
+  if (scope.site !== 'all') params.push(scope.site);
+  return db
+    .prepare(sql)
+    .pluck()
+    .get(...params) as number;
+}
