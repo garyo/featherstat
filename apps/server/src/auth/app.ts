@@ -47,6 +47,14 @@ const SECURITY_HEADERS: Record<string, string> = {
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'DENY',
   'Referrer-Policy': 'same-origin',
+  /**
+   * A private admin surface has no business in an index — and a crawlable,
+   * unexplained password form is exactly the shape Google's deceptive-page
+   * classifier flags (it flagged this deployment's validation hostname in
+   * July 2026). Tracking endpoints carry it harmlessly: nothing here is meant
+   * to be found by search.
+   */
+  'X-Robots-Tag': 'noindex, nofollow',
 };
 
 export interface SecuredAppOptions extends AppOptions {
@@ -124,6 +132,9 @@ export function createSecuredApp(options: SecuredAppOptions = {}): SecuredApp {
 
   app.route('/', createMetricsRoutes({ metrics, db: appOptions.db, token: metricsToken }));
   app.route('/', createApp(appOptions));
+  // Explicit refusal, not just the header: crawlers ask for this file first,
+  // and a self-hosted analytics console should never be indexed anywhere.
+  app.get('/robots.txt', (c) => c.text('User-agent: *\nDisallow: /\n'));
   if (webDir !== undefined) app.route('/', createSpaRoutes({ dir: webDir }));
 
   return { app, auth, metrics, ntfy };

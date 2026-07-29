@@ -299,3 +299,14 @@ select.site-switch {
   gap: 14px;
   padding-top: 4px;
 }
+
+/* The auth pages state what they are: a private console, not a form asking a
+   stranger for credentials. Google's classifier flagged the unexplained
+   version; humans deserved the sentence anyway. */
+.auth-what {
+  margin: 0 0 14px;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.5;
+  max-width: 42ch;
+}

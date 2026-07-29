@@ -23,6 +23,11 @@ function submit(event: SubmitEvent): void {
 <div class="auth-wrap">
   <form class="card auth-card" onsubmit={submit}>
     <div class="wordmark">featherstat<span class="dot">.</span></div>
+    <p class="auth-what">
+      Private analytics console for this site's owner. featherstat is
+      self-hosted, open-source web analytics; this page asks only for the
+      operator's own password and collects nothing from visitors.
+    </p>
     <h1>Log in</h1>
     <label class="field">
       Password

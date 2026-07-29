@@ -573,3 +573,19 @@ describe('SPA serving', () => {
     expect(res.headers.get('content-type')).toContain('text/javascript');
   });
 });
+
+describe('search-engine hygiene', () => {
+  it('refuses crawlers on every response and by robots.txt', async () => {
+    const root = await secured.app.request('/');
+    expect(root.headers.get('x-robots-tag')).toBe('noindex, nofollow');
+
+    const robots = await secured.app.request('/robots.txt');
+    expect(robots.status).toBe(200);
+    expect(await robots.text()).toContain('Disallow: /');
+
+    // A tracking beacon still answers, still uncrawlable, never 4xx (invariant 4).
+    const beacon = await secured.app.request('/matomo.php?idsite=1&rec=1&send_image=0');
+    expect(beacon.status).toBe(204);
+    expect(beacon.headers.get('x-robots-tag')).toBe('noindex, nofollow');
+  });
+});
