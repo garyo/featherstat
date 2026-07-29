@@ -72,7 +72,12 @@ bun run --cwd apps/web dev      # dashboard on :5173, proxies /api to :8080
    Known exception, deliberate: the Journeys sankey and flows table are still
    view-local (their edge-click and depth controls are coupled). Registering
    them is open work, not licence for the next one.
-8. **Query vocabulary, never SQL from clients.** The compiler whitelists
+8. **The alias name is a label, never a key.** Realtime consumers group by the
+   visitor's opaque `ref` (minted per process, ephemeral, exact); the
+   two-word name exists to be read. 384 names for any number of visitors
+   means names collide, and keying on one merges strangers into a single row
+   — that bug shipped once.
+9. **Query vocabulary, never SQL from clients.** The compiler whitelists
    metrics/dimensions/ops; everything is parameterized.
 
 ## Conventions

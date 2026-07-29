@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { aliasFromDigest, DAY_MS, type RealtimeVisitor } from '@featherstat/shared';
 
 /**
@@ -17,10 +17,24 @@ import { aliasFromDigest, DAY_MS, type RealtimeVisitor } from '@featherstat/shar
  */
 export class VisitorAliaser {
   private day = -1;
+  /**
+   * Fresh per process. It is what makes `ref` an ephemeral handle rather than
+   * a second identifier: a leaked frame links rows only until the next boot,
+   * and nothing outside this process can map a ref back to a visitor.
+   */
+  private readonly refSalt = randomBytes(16);
 
   alias(visitorId: Uint8Array, ts: number): RealtimeVisitor {
     const day = Math.floor(ts / DAY_MS);
     if (day > this.day) this.day = day;
-    return aliasFromDigest(createHash('sha256').update(`${this.day}\n`).update(visitorId).digest());
+    const label = aliasFromDigest(
+      createHash('sha256').update(`${this.day}\n`).update(visitorId).digest(),
+    );
+    const ref = createHash('sha256')
+      .update(this.refSalt)
+      .update(visitorId)
+      .digest('hex')
+      .slice(0, 12);
+    return { ...label, ref };
   }
 }

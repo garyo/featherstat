@@ -50,6 +50,8 @@ export interface CountryCount {
 }
 
 export interface VisitorCount {
+  /** The opaque handle rows and trails are keyed by; the name is display only. */
+  ref: string;
   /** The per-day alias — the visitor's identity here (docs/03 § Visitor identity). */
   name: string;
   /** Categorical palette index from the alias; cycling tokens is fine — see shared/alias. */
@@ -72,13 +74,14 @@ export interface VisitorCount {
  * old should read `1 hit`, not `1 hit · 0s`.
  */
 /**
- * A visitor is a (site, alias) pair, never an alias alone. Visitor ids are
- * salted per site, so one person browsing two sites is two visitors by our own
- * identity model — and two strangers can draw one name out of the 384. Keying
- * by name alone merged both cases into one row with a nonsense trail.
+ * The visitor's identity on this wire: the server's opaque per-process ref.
+ * The alias name is a LABEL — 384 of them for any number of visitors — so it
+ * groups nothing. Keying by name merged strangers into one row with an
+ * interleaved trail; keying by ref cannot, and stays exact even when two
+ * visitors draw the same name (they then read alike and behave apart).
  */
-export function visitorKey(siteId: number, name: string): string {
-  return `${siteId}\u0000${name}`;
+export function visitorKey(visitor: { ref: string }): string {
+  return visitor.ref;
 }
 
 export function engagementByName(
@@ -88,7 +91,7 @@ export function engagementByName(
   const byName = new Map<string, number>();
   for (const entry of entries) {
     if (entry.engagedMs <= 0 || !inScope(entry, site)) continue;
-    const key = visitorKey(entry.siteId, entry.name);
+    const key = visitorKey(entry);
     byName.set(key, (byName.get(key) ?? 0) + entry.engagedMs);
   }
   return byName;
@@ -111,10 +114,11 @@ export function visitorTally(
   const byName = new Map<string, VisitorCount>();
   for (const hit of hits) {
     if (now - hit.ts > windowMs) continue;
-    const key = visitorKey(hit.siteId, hit.visitor.name);
+    const key = visitorKey(hit.visitor);
     let row = byName.get(key);
     if (row === undefined) {
       row = {
+        ref: hit.visitor.ref,
         name: hit.visitor.name,
         color: hit.visitor.color,
         siteId: hit.siteId,
@@ -198,7 +202,7 @@ export interface TrailStep {
  */
 export function visitorTrail(
   hits: readonly RealtimeHit[],
-  row: Pick<VisitorCount, 'name' | 'siteId'>,
+  row: Pick<VisitorCount, 'ref'>,
   now: number,
   windowMs = TALLY_WINDOW_MS,
   limit = TRAIL_STEPS,
@@ -208,7 +212,7 @@ export function visitorTrail(
     // The same window the row's own counts use — a trail longer than the row
     // says 'N hits' is the tell that they disagree about who or when.
     if (now - hit.ts > windowMs) continue;
-    if (hit.visitor.name !== row.name || hit.siteId !== row.siteId) continue;
+    if (hit.visitor.ref !== row.ref) continue;
     steps.push({
       ts: hit.ts,
       label: actionLabel(hit),

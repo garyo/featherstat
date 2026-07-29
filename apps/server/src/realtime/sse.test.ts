@@ -281,10 +281,16 @@ describe('GET /api/realtime', () => {
 /** Geo of every hit in this suite, spread into the expected wire shapes. */
 const POINT = { lat: 42.36, lon: -71.06, deviceType: 'desktop' };
 
-/** The alias every wire hit must carry: a two-word name, never an id (docs/03). */
+/**
+ * What every wire hit must carry: a two-word name to read, an opaque ref to
+ * key on — and never a stored id (docs/03). The ref is minted per process, so
+ * its shape is the assertable part; `carries a stable alias` proves it holds
+ * still for one visitor.
+ */
 const ALIAS = {
   name: expect.stringMatching(/^[A-Z][a-z]+ [A-Z][a-z]+$/),
   color: expect.any(Number),
+  ref: expect.stringMatching(/^[0-9a-f]{12}$/),
 };
 
 /** The engagement row for this suite's one visitor, at `engagedMs` of engaged time. */

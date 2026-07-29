@@ -47,11 +47,13 @@ describe('RealtimeHub feed', () => {
     hub.record(row);
 
     const [hit] = hub.recent(50);
+    expect(hit?.visitor.ref).toMatch(/^[0-9a-f]{12}$/);
     expect(hit).toEqual({
       siteId: 1,
       ts: T0,
       type: 'pageview',
-      visitor: { name: 'Easygoing Ermine', color: 2 },
+      engagedMs: undefined,
+      visitor: { name: 'Easygoing Ermine', color: 2, ref: hit?.visitor.ref },
       path: '/a',
       eventAction: 'click',
       country: 'US',
@@ -143,9 +145,11 @@ describe('RealtimeHub visitor aliases', () => {
 
     const aliases = hub.recent(50).map((hit) => hit.visitor);
     expect(aliases).toEqual([
-      { name: 'Easygoing Ermine', color: 2 },
-      { name: 'Easygoing Ermine', color: 2 },
+      expect.objectContaining({ name: 'Easygoing Ermine', color: 2 }),
+      expect.objectContaining({ name: 'Easygoing Ermine', color: 2 }),
     ]);
+    // The ref is what consumers key on: one visitor, one ref, all day.
+    expect(aliases[0]?.ref).toBe(aliases[1]?.ref);
   });
 
   it('re-mints the alias when the UTC day rolls over', () => {
@@ -155,8 +159,8 @@ describe('RealtimeHub visitor aliases', () => {
     hub.record(event({ ts: T0 + DAY_MS, visitor_id: VISITOR, seq: 2 }));
 
     const [today, tomorrow] = hub.recent(50).map((hit) => hit.visitor);
-    expect(today).toEqual({ name: 'Easygoing Ermine', color: 2 });
-    expect(tomorrow).toEqual({ name: 'Wistful Wallaby', color: 1 });
+    expect(today).toMatchObject({ name: 'Easygoing Ermine', color: 2 });
+    expect(tomorrow).toMatchObject({ name: 'Wistful Wallaby', color: 1 });
   });
 
   it('keeps one alias through a backward clock step across midnight', () => {
@@ -259,13 +263,13 @@ describe('RealtimeHub visitor engagement', () => {
     hub.record(event({ ts: T0 + 12_000, visitor_id: VISITOR, seq: 3 }));
 
     expect(hub.visitors(T0 + 12_000)).toEqual([
-      {
+      expect.objectContaining({
         name: 'Easygoing Ermine',
         color: 2,
         siteId: 1,
         engagedMs: 12_000,
         lastTs: T0 + 12_000,
-      },
+      }),
     ]);
   });
 
@@ -378,7 +382,13 @@ describe('RealtimeHub visitor engagement', () => {
     });
 
     expect(createRealtimeHub(db).visitors(T0)).toEqual([
-      { name: 'Easygoing Ermine', color: 2, siteId: 1, engagedMs: 12_000, lastTs: T0 - 60_000 },
+      expect.objectContaining({
+        name: 'Easygoing Ermine',
+        color: 2,
+        siteId: 1,
+        engagedMs: 12_000,
+        lastTs: T0 - 60_000,
+      }),
     ]);
   });
 });

@@ -534,6 +534,8 @@ export interface RealtimeHit {
  * session timeout starts it over, so the figure reads as time on site.
  */
 export interface RealtimeEngagement {
+  /** Same opaque handle the hits carry — what the client joins on. */
+  ref: string;
   name: string;
   color: number;
   siteId: number;

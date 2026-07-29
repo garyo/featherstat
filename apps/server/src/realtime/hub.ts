@@ -379,6 +379,7 @@ class VisitorEngagement {
     entry.lastTs = ts;
     // The alias re-mints at 00:00 UTC and the hits follow it, so this must too —
     // otherwise the entry keeps a name no row in the feed still wears.
+    entry.ref = visitor.ref;
     entry.name = visitor.name;
     entry.color = visitor.color;
     return entry.engagedMs;
@@ -393,6 +394,7 @@ class VisitorEngagement {
     visitor: RealtimeVisitor,
   ): void {
     this.byVisitor.set(visitorKey(siteId, visitorId), {
+      ref: visitor.ref,
       name: visitor.name,
       color: visitor.color,
       siteId,

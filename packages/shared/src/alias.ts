@@ -225,6 +225,14 @@ export const ALIAS_ANIMALS = [
 export const ALIAS_COLOR_COUNT = 3;
 
 export interface RealtimeVisitor {
+  /**
+   * What consumers KEY on. Opaque, exact, and process-scoped: minted from a
+   * salt made fresh at boot, so it links one visitor's rows within a session
+   * of the server and means nothing outside it — not the stored visitor id,
+   * not derivable from it. The name below is for reading, never for grouping:
+   * 384 labels collide, refs do not.
+   */
+  ref: string;
   /** Two-word alias, e.g. `Avaricious Aardvark` — the visitor's identity for the day. */
   name: string;
   /** Categorical palette index, `0 ≤ color < ALIAS_COLOR_COUNT`; stable per name. */
@@ -243,7 +251,7 @@ function cycle(list: readonly string[], index: number): string {
  * byte picks the letter, one each picks the adjective and animal within it, so
  * the name reveals at most ~6.6 bits of the digest — nothing linkable.
  */
-export function aliasFromDigest(digest: Uint8Array): RealtimeVisitor {
+export function aliasFromDigest(digest: Uint8Array): Omit<RealtimeVisitor, 'ref'> {
   const letters = ALIAS_ADJECTIVES.length / GROUP;
   const letter = (digest[0] ?? 0) % letters;
   const adjective = (digest[1] ?? 0) % GROUP;

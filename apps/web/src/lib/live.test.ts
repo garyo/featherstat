@@ -46,7 +46,7 @@ const hit: RealtimeHit = {
   siteId: 4,
   ts: 1_770_000_000_000,
   type: 'pageview',
-  visitor: { name: 'Nimble Narwhal', color: 1 },
+  visitor: { name: 'Nimble Narwhal', color: 1, ref: 'ref-n' },
   path: '/timeline',
 };
 const tick: VersionTick = { siteId: 4, version: 12 };

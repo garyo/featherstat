@@ -16,15 +16,26 @@ const hit = (over: Partial<RealtimeHit>): RealtimeHit => ({
   siteId: 1,
   ts: 0,
   type: 'pageview',
-  visitor: { name: 'Amiable Aardvark', color: 0 },
+  visitor: { name: 'Amiable Aardvark', color: 0, ref: 'ref-a' },
   ...over,
 });
 
-const visitor = (name: string, color = 0) => ({ name, color });
+/** Refs are opaque and per-visitor; tests derive a stable one from the label. */
+/**
+ * Refs are opaque and per (site, visitor) — the server mints them from the
+ * visitor id, which is itself salted per site. Tests spell them out so a test
+ * can put one NAME on two sites and still describe two visitors.
+ */
+const visitor = (name: string, color = 0, site = 1) => ({
+  name,
+  color,
+  ref: `ref-${site}-${name}`,
+});
 
 const engagement = (over: Partial<RealtimeEngagement> & { name: string }): RealtimeEngagement => ({
   color: 0,
   siteId: 1,
+  ref: `ref-${over.siteId ?? 1}-${over.name}`,
   engagedMs: 0,
   lastTs: 0,
   ...over,
@@ -61,13 +72,32 @@ describe('visitorTally', () => {
       hit({ ts: now - 1_000, visitor: visitor('Bashful Badger', 1) }), // newest: no geo yet
       hit({ ts: now - 2_000, visitor: visitor('Bashful Badger', 1), city: 'Hanoi', country: 'VN' }),
       hit({ ts: now - 3_000, visitor: visitor('Bashful Badger', 1), city: 'Hue', country: 'VN' }),
-      hit({ ts: now - 4_000, visitor: visitor('Zesty Zebra', 2), country: 'DE', siteId: 3 }),
-      hit({ ts: now - 31 * 60_000, visitor: visitor('Zesty Zebra', 2) }), // outside the window
+      hit({ ts: now - 4_000, visitor: visitor('Zesty Zebra', 2, 3), country: 'DE', siteId: 3 }),
+      // Outside the window: same visitor, still not counted.
+      hit({ ts: now - 31 * 60_000, visitor: visitor('Zesty Zebra', 2, 3), siteId: 3 }),
     ];
     expect(visitorTally(hits, now)).toEqual([
-      { name: 'Bashful Badger', color: 1, count: 3, siteId: 1, city: 'Hanoi', country: 'VN' },
+      {
+        ref: 'ref-1-Bashful Badger',
+        name: 'Bashful Badger',
+        color: 1,
+        count: 3,
+        siteId: 1,
+        city: 'Hanoi',
+        country: 'VN',
+        engagedMs: undefined,
+      },
       // siteId follows the newest hit, like the place fields
-      { name: 'Zesty Zebra', color: 2, count: 1, siteId: 3, city: undefined, country: 'DE' },
+      {
+        ref: 'ref-3-Zesty Zebra',
+        name: 'Zesty Zebra',
+        color: 2,
+        count: 1,
+        siteId: 3,
+        city: undefined,
+        country: 'DE',
+        engagedMs: undefined,
+      },
     ]);
   });
 
@@ -110,13 +140,11 @@ describe('visitor engagement', () => {
     // Either way, summing them into one figure invents a person.
     expect(engagementByName(entries, 'all')).toEqual(
       new Map([
-        [visitorKey(1, 'Observant Ocelot'), 100_000],
-        [visitorKey(2, 'Observant Ocelot'), 60_000],
+        ['ref-1-Observant Ocelot', 100_000],
+        ['ref-2-Observant Ocelot', 60_000],
       ]),
     );
-    expect(engagementByName(entries, 2)).toEqual(
-      new Map([[visitorKey(2, 'Observant Ocelot'), 60_000]]),
-    );
+    expect(engagementByName(entries, 2)).toEqual(new Map([['ref-2-Observant Ocelot', 60_000]]));
     expect(engagementByName(entries, 3)).toEqual(new Map());
   });
 
@@ -131,7 +159,7 @@ describe('visitor engagement', () => {
         country: 'NZ',
       }),
       hit({ ts: now - 1_000, siteId: 1, visitor: visitor('Observant Ocelot') }),
-      hit({ ts: now - 2_000, siteId: 2, visitor: visitor('Observant Ocelot') }),
+      hit({ ts: now - 2_000, siteId: 2, visitor: visitor('Observant Ocelot', 0, 2) }),
       hit({ ts: now - 3_000, siteId: 1, visitor: visitor('Quiet Quokka') }),
     ];
     const rows = visitorTally(hits, now, engagementByName(entries, 'all'));
@@ -153,11 +181,16 @@ describe('visitor engagement', () => {
 
   it('walks one visitor′s trail: their site, their window, newest first', () => {
     const now = 60 * 60_000;
-    const mine = { name: 'Observant Ocelot', siteId: 1 };
+    const mine = { ref: 'ref-1-Observant Ocelot' };
     const hits = [
       hit({ ts: now - 1_000, siteId: 1, visitor: visitor('Observant Ocelot'), path: '/newest' }),
       // Same name, other site: a different visitor, never this visitor's step.
-      hit({ ts: now - 2_000, siteId: 2, visitor: visitor('Observant Ocelot'), path: '/theirs' }),
+      hit({
+        ts: now - 2_000,
+        siteId: 2,
+        visitor: visitor('Observant Ocelot', 0, 2),
+        path: '/theirs',
+      }),
       hit({ ts: now - 3_000, siteId: 1, visitor: visitor('Observant Ocelot'), path: '/older' }),
       // Outside the tally window the row is counted over.
       hit({
