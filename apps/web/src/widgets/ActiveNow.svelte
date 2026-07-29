@@ -7,7 +7,7 @@ let { active, scope = 'all' }: WidgetProps = $props();
 const count = $derived(
   scope === 'all'
     ? Object.values(active ?? {}).reduce((sum, n) => sum + n, 0)
-    : ((active ?? {})[scope] ?? 0),
+    : (active?.[scope] ?? 0),
 );
 </script>
 

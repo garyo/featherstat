@@ -47,6 +47,7 @@ interface Props {
   rangeLabel?: string;
   active?: Record<number, number>;
   recent?: readonly RealtimeHit[];
+  now?: number;
   scope?: SiteScope;
   sites?: ReadonlyMap<number, SiteInfo>;
   saving: boolean;
@@ -66,6 +67,7 @@ let {
   active,
   recent,
   scope,
+  now,
   sites,
   saving,
   saveError,
@@ -204,6 +206,7 @@ function handleImport(dashboard: Dashboard): void {
   {active}
   {recent}
   {scope}
+  {now}
   {sites}
   onreorder={(from, to) => (draft.grid = reorder(draft.grid, from, to))}
   onresize={(id, w) => (draft.grid = resizeWidget(draft.grid, id, w))}

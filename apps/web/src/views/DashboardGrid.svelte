@@ -26,6 +26,7 @@ interface Props {
   range?: RangePreset;
   recent?: readonly RealtimeHit[];
   scope?: SiteScope;
+  now?: number;
   onopenrealtime?: () => void;
   active?: Record<number, number>;
   sites?: ReadonlyMap<number, SiteInfo>;
@@ -45,6 +46,7 @@ let {
   range,
   recent,
   scope,
+  now,
   onopenrealtime,
   active,
   sites,
@@ -93,6 +95,7 @@ async function showQuery(spec: WidgetSpec): Promise<void> {
           {range}
           {recent}
           {scope}
+          {now}
           {onopenrealtime}
           {active}
           {sites}

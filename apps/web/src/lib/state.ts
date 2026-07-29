@@ -1,4 +1,5 @@
 import type { Filter, QueryRequest, Range } from '@featherstat/shared';
+import { localToday } from '../widgets/site-stats.ts';
 import { parseFilters, sameFilters, serializeFilter } from './filters.ts';
 
 /**
@@ -58,6 +59,19 @@ export const RANGE_LABELS: Record<RangePreset, string> = {
   '90d': '90 days',
   mtd: 'Month to date',
 };
+
+/**
+ * A key that changes when any site rolls into a new local day. `today` and
+ * `mtd` are resolved server-side per site, so their data changes at each
+ * site's own midnight — not the reader's, and not on a data tick. Watching
+ * this is what makes a dashboard left open overnight correct in the morning.
+ */
+export function localDayKey(zones: readonly string[], now: Date): string {
+  return [...new Set(zones)]
+    .sort()
+    .map((zone) => localToday(zone, now))
+    .join('|');
+}
 
 /** Widget-title qualifier (mockup: "Traffic by hour · last 30 days"). */
 export const RANGE_QUALIFIER: Record<RangePreset, string> = {

@@ -8,7 +8,7 @@ import { createDashboardStore } from '../lib/dashboards.svelte.ts';
 import { createEditorMode } from '../lib/editor-mode.svelte.ts';
 import { sameFilter } from '../lib/filters.ts';
 import { createRevalidator, type LiveStream } from '../lib/live.ts';
-import { RANGE_LABELS, RANGE_QUALIFIER, type RangePreset } from '../lib/state.ts';
+import { localDayKey, RANGE_LABELS, RANGE_QUALIFIER, type RangePreset } from '../lib/state.ts';
 import { bucketedWindow, bucketLabel, currentHourBucket, presetWindow } from '../widgets/format.ts';
 import { createBatchRunner } from './batch.svelte.ts';
 import { collectBatch, hourlyWhenToday, withoutBlockedMetrics } from './batch.ts';
@@ -17,6 +17,8 @@ import DashboardGrid from './DashboardGrid.svelte';
 interface Props {
   /** SSE live feed from the shell — the feed widget reads it. */
   recent?: readonly RealtimeHit[];
+  /** The shell's clock; window-bounded ranges follow it (docs/05 R22). */
+  now?: number;
   /** Opens the Realtime view — the feed card's heading links there. */
   onopenrealtime?: () => void;
   admin: AdminClient;
@@ -43,6 +45,7 @@ let {
   onselectrange,
   onfilters,
   recent,
+  now = Date.now(),
   onopenrealtime,
 }: Props = $props();
 
@@ -72,6 +75,9 @@ const request = $derived.by<QueryRequest>(() => requestFor(collectBatch(dashboar
 // One batch per view state, held until the dashboard lookup answers (still ONE
 // fetch — never a default-then-stored double batch); re-issued on state change …
 $effect(() => {
+  // The rollover is part of "view state": `today`/`mtd` are resolved
+  // server-side, so their answer changes at this site's own midnight.
+  void dayKey;
   if (store.ready) runner.run(request);
 });
 // … and when debounced version ticks say this site's data moved (docs/05 R22).
@@ -90,6 +96,7 @@ $effect(() =>
   ),
 );
 
+const dayKey = $derived(localDayKey(timezone === undefined ? [] : [timezone], new Date(now)));
 // Edit mode (docs/05): the editor is a code-split chunk, loaded on entry.
 // svelte-ignore state_referenced_locally
 const mode = createEditorMode(store, () => site);
@@ -138,7 +145,7 @@ const window = $derived(
 const seriesWindow = $derived.by(() => {
   if (window === undefined) return undefined;
   if (heldRange !== 'today' || timezone === undefined) return window;
-  return { from: `${window.from} 00:00`, to: currentHourBucket(timezone) };
+  return { from: `${window.from} 00:00`, to: currentHourBucket(timezone, new Date(now)) };
 });
 const note = $derived.by(() => {
   if (failed) {
@@ -168,6 +175,7 @@ const note = $derived.by(() => {
     window={seriesWindow}
     rangeLabel={RANGE_QUALIFIER[heldRange]}
     {recent}
+    {now}
     scope={site}
     saving={store.saving}
     saveError={store.error}
@@ -205,6 +213,7 @@ const note = $derived.by(() => {
     window={seriesWindow}
     rangeLabel={RANGE_QUALIFIER[heldRange]}
     {recent}
+    {now}
     scope={site}
     {onopenrealtime}
     onfilter={addFilter}

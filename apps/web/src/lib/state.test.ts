@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   applyViewState,
   DEFAULT_VIEW_STATE,
+  localDayKey,
   parseViewState,
   RANGE_LABELS,
   RANGE_PRESETS,
@@ -124,5 +125,33 @@ describe('resolveNav', () => {
       site: 'all',
       view: 'dash',
     });
+  });
+});
+
+describe('localDayKey', () => {
+  const noon = new Date('2026-07-29T12:00:00Z');
+
+  it('changes when a site rolls into a new local day', () => {
+    const before = new Date('2026-07-29T03:59:00Z'); // 23:59 in New York
+    const after = new Date('2026-07-29T04:01:00Z'); // 00:01 in New York
+    expect(localDayKey(['America/New_York'], before)).not.toBe(
+      localDayKey(['America/New_York'], after),
+    );
+  });
+
+  it('holds steady across an ordinary hour', () => {
+    const later = new Date('2026-07-29T13:00:00Z');
+    expect(localDayKey(['America/New_York'], noon)).toBe(localDayKey(['America/New_York'], later));
+  });
+
+  it('tracks every zone on screen, and is order- and duplicate-insensitive', () => {
+    // 12:00 UTC is the 29th in New York and already the 30th in Auckland.
+    const key = localDayKey(['America/New_York', 'Pacific/Auckland'], noon);
+    expect(key).toContain('2026-07-29');
+    expect(key).toContain('2026-07-30');
+    expect(localDayKey(['Pacific/Auckland', 'America/New_York'], noon)).toBe(key);
+    expect(localDayKey(['America/New_York', 'America/New_York'], noon)).toBe(
+      localDayKey(['America/New_York'], noon),
+    );
   });
 });

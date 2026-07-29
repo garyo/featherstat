@@ -54,6 +54,20 @@ $effect(() => () => {
 // Held at the app level so the counts (and the realtime feed) are already warm
 // when a view mounts — the SSE snapshot fires once per connection, not per view.
 let active = $state<Record<number, number>>({});
+/**
+ * The dashboards' clock. Windows like `today` are bounded by the hour in
+ * progress, so without a tick a chart stops growing the moment the data does —
+ * and a page left open overnight keeps yesterday (docs/05 R22). One minute is
+ * finer than the smallest bucket, so nothing visibly lags.
+ */
+let now = $state(Date.now());
+$effect(() => {
+  const clock = setInterval(() => {
+    now = Date.now();
+  }, 60_000);
+  return () => clearInterval(clock);
+});
+
 let recent = $state<RealtimeHit[]>([]);
 /** Per-visitor engaged time: server-side, since only it sees the heartbeat pings. */
 let visitorTimes = $state<RealtimeEngagement[]>([]);
@@ -183,6 +197,7 @@ const logout = (): void => {
       byId={directory.byId}
       range={view.current.range}
       {recent}
+      {now}
       onopenrealtime={() => selectView('realtime')}
       onselectrange={selectRange}
       onselectsite={selectSite}
@@ -194,6 +209,7 @@ const logout = (): void => {
       {live}
       {site}
       {recent}
+      {now}
       onopenrealtime={() => selectView('realtime')}
       timezone={directory.byId.get(site)?.timezone}
       range={view.current.range}

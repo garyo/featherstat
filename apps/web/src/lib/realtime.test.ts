@@ -6,7 +6,6 @@ import {
   pushFeed,
   relativeAgo,
   seedFeed,
-  visitorKey,
   visitorMeta,
   visitorTally,
   visitorTrail,

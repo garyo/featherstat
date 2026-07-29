@@ -5,7 +5,16 @@ import { siteSortOf, siteStats } from './site-stats.ts';
 import { topPages } from './top-pages.ts';
 import { sliceOf, type WidgetProps } from './types.ts';
 
-let { spec, data, active, sites, onselectsite, range = '30d', rangeLabel }: WidgetProps = $props();
+let {
+  spec,
+  data,
+  active,
+  sites,
+  onselectsite,
+  range = '30d',
+  rangeLabel,
+  now,
+}: WidgetProps = $props();
 
 const slice = $derived(sliceOf(data, 'main'));
 const stats = $derived(
@@ -15,7 +24,7 @@ const stats = $derived(
         slice.result.rows,
         slice.result.compare,
         sites === undefined ? undefined : [...sites.values()],
-        new Date(),
+        new Date(now ?? Date.now()),
         siteSortOf(spec.options.sort),
       )
     : [],

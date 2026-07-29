@@ -8,7 +8,7 @@ import { createDashboardStore } from '../lib/dashboards.svelte.ts';
 import { withLiveSiteIds } from '../lib/dashboards.ts';
 import { createEditorMode } from '../lib/editor-mode.svelte.ts';
 import { createRevalidator, type LiveStream } from '../lib/live.ts';
-import { RANGE_QUALIFIER, type RangePreset } from '../lib/state.ts';
+import { localDayKey, RANGE_QUALIFIER, type RangePreset } from '../lib/state.ts';
 import { createBatchRunner } from './batch.svelte.ts';
 import { collectBatch, hourlyWhenToday } from './batch.ts';
 import DashboardGrid from './DashboardGrid.svelte';
@@ -16,6 +16,8 @@ import DashboardGrid from './DashboardGrid.svelte';
 interface Props {
   /** SSE live feed from the shell — the feed widget reads it. */
   recent?: readonly RealtimeHit[];
+  /** The shell's clock; window-bounded ranges follow it (docs/05 R22). */
+  now?: number;
   /** Opens the Realtime view — the feed card's heading links there. */
   onopenrealtime?: () => void;
   admin: AdminClient;
@@ -43,6 +45,7 @@ let {
   range,
   onselectrange,
   recent,
+  now = Date.now(),
   onopenrealtime,
 }: Props = $props();
 
@@ -76,7 +79,10 @@ const requestFor = (queries: readonly Query[]): QueryRequest => ({
 const request = $derived.by<QueryRequest>(() => requestFor(collectBatch(dashboard).queries));
 
 $effect(() => {
-  // one batch, once the directory AND the dashboard lookup are in
+  // One batch, once the directory AND the dashboard lookup are in — and once
+  // more when a site rolls into a new local day, because `today` and `mtd`
+  // are resolved server-side and their answer changes at that site's midnight.
+  void dayKey;
   if (sites !== undefined && store.ready) runner.run(request);
 });
 $effect(() =>
@@ -89,6 +95,12 @@ $effect(() =>
   ),
 );
 
+const dayKey = $derived(
+  localDayKey(
+    (sites ?? []).map((entry) => entry.timezone),
+    new Date(now),
+  ),
+);
 // Edit mode (docs/05): the editor is a code-split chunk, loaded on entry.
 // svelte-ignore state_referenced_locally
 const mode = createEditorMode(store, () => 'all');
@@ -116,6 +128,7 @@ const note = $derived(
     error={runner.error}
     {active}
     {recent}
+    {now}
     scope="all"
     sites={byId}
     saving={store.saving}
@@ -154,6 +167,7 @@ const note = $derived(
     {range}
     rangeLabel={RANGE_QUALIFIER[range]}
     {recent}
+    {now}
     scope="all"
     {onopenrealtime}
     {onselectsite}

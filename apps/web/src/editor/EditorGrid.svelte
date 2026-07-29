@@ -20,6 +20,7 @@ interface Props {
   rangeLabel?: string;
   active?: Record<number, number>;
   recent?: readonly RealtimeHit[];
+  now?: number;
   scope?: SiteScope;
   sites?: ReadonlyMap<number, SiteInfo>;
   onreorder: (from: number, to: number) => void;
@@ -37,6 +38,7 @@ let {
   active,
   recent,
   scope,
+  now,
   sites,
   onreorder,
   onresize,
@@ -131,7 +133,7 @@ function endDrag(): void {
         <p class="widget-note">The “{spec.viz}” widget isn’t available yet.</p>
       {:else}
         {@const Widget = entry.component}
-        <Widget {spec} data={dataFor(spec)} {window} {rangeLabel} {active} {recent} {scope} {sites} />
+        <Widget {spec} data={dataFor(spec)} {window} {rangeLabel} {active} {recent} {scope} {now} {sites} />
       {/if}
     </div>
   {/each}
