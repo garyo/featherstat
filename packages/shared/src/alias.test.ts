@@ -4,9 +4,9 @@ import { ALIAS_ADJECTIVES, ALIAS_ANIMALS, ALIAS_COLOR_COUNT, aliasFromDigest } f
 const digest = (...bytes: number[]): Uint8Array => Uint8Array.from(bytes);
 
 describe('alias word lists', () => {
-  it('hold 48 curated words each, capitalized and letter-only', () => {
+  it('hold 96 curated words each, capitalized and letter-only', () => {
     for (const list of [ALIAS_ADJECTIVES, ALIAS_ANIMALS]) {
-      expect(list).toHaveLength(48);
+      expect(list).toHaveLength(96);
       expect(new Set(list).size).toBe(list.length);
       for (const word of list) expect(word).toMatch(/^[A-Z][a-z]+$/);
     }

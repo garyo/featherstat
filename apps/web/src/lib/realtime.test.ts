@@ -6,8 +6,10 @@ import {
   pushFeed,
   relativeAgo,
   seedFeed,
+  visitorKey,
   visitorMeta,
   visitorTally,
+  visitorTrail,
 } from './realtime.ts';
 
 const hit = (over: Partial<RealtimeHit>): RealtimeHit => ({
@@ -102,31 +104,70 @@ describe('visitor engagement', () => {
     engagement({ name: 'Quiet Quokka', engagedMs: 0, siteId: 1 }),
   ];
 
-  it('sums a visitor across their sites, scopes to one, and drops a fresh 0', () => {
-    expect(engagementByName(entries, 'all')).toEqual(new Map([['Observant Ocelot', 160_000]]));
-    expect(engagementByName(entries, 2)).toEqual(new Map([['Observant Ocelot', 60_000]]));
+  it('keys engagement per (site, visitor) — one name on two sites is two visitors', () => {
+    // Visitor ids are salted per site, so the same person on two sites is two
+    // visitors by our identity model; two strangers can also draw one name.
+    // Either way, summing them into one figure invents a person.
+    expect(engagementByName(entries, 'all')).toEqual(
+      new Map([
+        [visitorKey(1, 'Observant Ocelot'), 100_000],
+        [visitorKey(2, 'Observant Ocelot'), 60_000],
+      ]),
+    );
+    expect(engagementByName(entries, 2)).toEqual(
+      new Map([[visitorKey(2, 'Observant Ocelot'), 60_000]]),
+    );
     expect(engagementByName(entries, 3)).toEqual(new Map());
   });
 
-  it('merges the time into the tally by alias and reads as one row', () => {
+  it('gives a shared name one row per site, each with its own hits and time', () => {
     const now = 60_000;
     const hits = [
-      hit({ ts: now, visitor: visitor('Observant Ocelot'), city: 'Masterton', country: 'NZ' }),
-      hit({ ts: now - 1_000, visitor: visitor('Observant Ocelot') }),
-      hit({ ts: now - 2_000, visitor: visitor('Observant Ocelot') }),
-      hit({ ts: now - 3_000, visitor: visitor('Quiet Quokka') }),
+      hit({
+        ts: now,
+        siteId: 1,
+        visitor: visitor('Observant Ocelot'),
+        city: 'Masterton',
+        country: 'NZ',
+      }),
+      hit({ ts: now - 1_000, siteId: 1, visitor: visitor('Observant Ocelot') }),
+      hit({ ts: now - 2_000, siteId: 2, visitor: visitor('Observant Ocelot') }),
+      hit({ ts: now - 3_000, siteId: 1, visitor: visitor('Quiet Quokka') }),
     ];
-    const [ocelot, quokka] = visitorTally(hits, now, engagementByName(entries, 'all'));
-    if (ocelot === undefined || quokka === undefined) throw new Error('expected two rows');
+    const rows = visitorTally(hits, now, engagementByName(entries, 'all'));
+    const one = rows.find((row) => row.siteId === 1 && row.name === 'Observant Ocelot');
+    const two = rows.find((row) => row.siteId === 2 && row.name === 'Observant Ocelot');
+    if (one === undefined || two === undefined) throw new Error('expected a row per site');
 
-    expect(ocelot).toMatchObject({ count: 3, engagedMs: 160_000 });
-    expect(visitorMeta(ocelot, 'Masterton, NZ', 'deep-timeline.org')).toBe(
-      '3 hits · 2m 40s · Masterton, NZ · deep-timeline.org',
+    expect(one).toMatchObject({ count: 2, engagedMs: 100_000 });
+    expect(two).toMatchObject({ count: 1, engagedMs: 60_000 });
+    expect(visitorMeta(one, 'Masterton, NZ', 'deep-timeline.org')).toBe(
+      '2 hits · 1m 40s · Masterton, NZ · deep-timeline.org',
     );
 
     // Nothing on the clock yet: the row reads `1 hit`, never `1 hit · 0s`.
-    expect(quokka.engagedMs).toBeUndefined();
-    expect(visitorMeta(quokka)).toBe('1 hit');
+    const quokka = rows.find((row) => row.name === 'Quiet Quokka');
+    expect(quokka?.engagedMs).toBeUndefined();
+    expect(quokka === undefined ? '' : visitorMeta(quokka)).toBe('1 hit');
+  });
+
+  it('walks one visitor′s trail: their site, their window, newest first', () => {
+    const now = 60 * 60_000;
+    const mine = { name: 'Observant Ocelot', siteId: 1 };
+    const hits = [
+      hit({ ts: now - 1_000, siteId: 1, visitor: visitor('Observant Ocelot'), path: '/newest' }),
+      // Same name, other site: a different visitor, never this visitor's step.
+      hit({ ts: now - 2_000, siteId: 2, visitor: visitor('Observant Ocelot'), path: '/theirs' }),
+      hit({ ts: now - 3_000, siteId: 1, visitor: visitor('Observant Ocelot'), path: '/older' }),
+      // Outside the tally window the row is counted over.
+      hit({
+        ts: now - 45 * 60_000,
+        siteId: 1,
+        visitor: visitor('Observant Ocelot'),
+        path: '/ages',
+      }),
+    ];
+    expect(visitorTrail(hits, mine, now).map((step) => step.label)).toEqual(['/newest', '/older']);
   });
 
   it('leaves the tally alone when no engagement has arrived', () => {

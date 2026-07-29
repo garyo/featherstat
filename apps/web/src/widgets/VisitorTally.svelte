@@ -72,7 +72,7 @@ const toggle = (name: string): void => {
         </button>
       </div>
       {#if isOpen}
-        {@const trail = visitorTrail(scoped, row.name, scope)}
+        {@const trail = visitorTrail(scoped, row, now)}
         <ol class="trail">
           {#each trail as step, i (i)}
             <li>

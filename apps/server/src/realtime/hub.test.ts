@@ -51,7 +51,7 @@ describe('RealtimeHub feed', () => {
       siteId: 1,
       ts: T0,
       type: 'pageview',
-      visitor: { name: 'Exuberant Ermine', color: 1 },
+      visitor: { name: 'Easygoing Ermine', color: 2 },
       path: '/a',
       eventAction: 'click',
       country: 'US',
@@ -143,8 +143,8 @@ describe('RealtimeHub visitor aliases', () => {
 
     const aliases = hub.recent(50).map((hit) => hit.visitor);
     expect(aliases).toEqual([
-      { name: 'Exuberant Ermine', color: 1 },
-      { name: 'Exuberant Ermine', color: 1 },
+      { name: 'Easygoing Ermine', color: 2 },
+      { name: 'Easygoing Ermine', color: 2 },
     ]);
   });
 
@@ -155,8 +155,8 @@ describe('RealtimeHub visitor aliases', () => {
     hub.record(event({ ts: T0 + DAY_MS, visitor_id: VISITOR, seq: 2 }));
 
     const [today, tomorrow] = hub.recent(50).map((hit) => hit.visitor);
-    expect(today).toEqual({ name: 'Exuberant Ermine', color: 1 });
-    expect(tomorrow).toEqual({ name: 'Wistful Wallaby', color: 2 });
+    expect(today).toEqual({ name: 'Easygoing Ermine', color: 2 });
+    expect(tomorrow).toEqual({ name: 'Wistful Wallaby', color: 1 });
   });
 
   it('keeps one alias through a backward clock step across midnight', () => {
@@ -179,7 +179,7 @@ describe('RealtimeHub visitor aliases', () => {
     hub.record(event({ ts: T0, visitor_id: OTHER }));
 
     const names = hub.recent(50).map((hit) => hit.visitor.name);
-    expect(names).toEqual(['Exuberant Ermine', 'Humble Hedgehog']);
+    expect(names).toEqual(['Easygoing Ermine', 'Humble Heron']);
   });
 
   it('puts alias names on the wire but never a 16-hex token or an IP shape', () => {
@@ -188,8 +188,8 @@ describe('RealtimeHub visitor aliases', () => {
     hub.record(event({ ts: T0, visitor_id: OTHER, path: '/b', country: 'VN', city: 'Hanoi' }));
 
     const wire = JSON.stringify(hub.recent(50));
-    expect(wire).toContain('"name":"Exuberant Ermine"');
-    expect(wire).toContain('"name":"Humble Hedgehog"');
+    expect(wire).toContain('"name":"Easygoing Ermine"');
+    expect(wire).toContain('"name":"Humble Heron"');
     // The stronger property: no visitor hex — and nothing even shaped like one.
     expect(wire).not.toContain(Buffer.from(VISITOR).toString('hex'));
     expect(wire).not.toMatch(/[0-9a-f]{16}/i);
@@ -260,8 +260,8 @@ describe('RealtimeHub visitor engagement', () => {
 
     expect(hub.visitors(T0 + 12_000)).toEqual([
       {
-        name: 'Exuberant Ermine',
-        color: 1,
+        name: 'Easygoing Ermine',
+        color: 2,
         siteId: 1,
         engagedMs: 12_000,
         lastTs: T0 + 12_000,
@@ -274,7 +274,7 @@ describe('RealtimeHub visitor engagement', () => {
     hub.record(event({ ts: T0, visitor_id: VISITOR }));
     hub.record(event({ ts: T0 + 60_000, visitor_id: VISITOR, seq: 2 }));
 
-    expect(timeByName(hub, T0 + 60_000)).toEqual({ 'Exuberant Ermine': PING_CLAMP_MS });
+    expect(timeByName(hub, T0 + 60_000)).toEqual({ 'Easygoing Ermine': PING_CLAMP_MS });
   });
 
   it('starts the figure over when a visitor returns on a new session', () => {
@@ -283,14 +283,14 @@ describe('RealtimeHub visitor engagement', () => {
     // Another visitor at the window edge: the sweep runs, and an entry exactly
     // at the cutoff must survive it — otherwise this proves nothing below.
     hub.record(event({ ts: T0 + TALLY_WINDOW_MS, visitor_id: OTHER }));
-    expect(timeByName(hub, T0 + TALLY_WINDOW_MS)['Exuberant Ermine']).toBe(0);
+    expect(timeByName(hub, T0 + TALLY_WINDOW_MS)['Easygoing Ermine']).toBe(0);
 
     const returning = T0 + SESSION_TIMEOUT_MS + 1_000;
     hub.record(event({ ts: returning, visitor_id: VISITOR, seq: 2 }));
     hub.record(event({ ts: returning + 3_000, visitor_id: VISITOR, seq: 3 }));
 
     // The card reads as time on THIS visit, not a day's worth of them.
-    expect(timeByName(hub, returning + 3_000)['Exuberant Ermine']).toBe(3_000);
+    expect(timeByName(hub, returning + 3_000)['Easygoing Ermine']).toBe(3_000);
   });
 
   it('forgets a visitor once the tally window has passed, reader or none', () => {
@@ -316,15 +316,15 @@ describe('RealtimeHub visitor engagement', () => {
     hub.record(event({ ts: T0 + 2_000, visitor_id: OTHER }));
 
     expect(hub.visitors(T0 + 2_000)).toEqual([
-      expect.objectContaining({ name: 'Exuberant Ermine', siteId: 1 }),
-      expect.objectContaining({ name: 'Exuberant Ermine', siteId: 2 }),
-      expect.objectContaining({ name: 'Humble Hedgehog', siteId: 1 }),
+      expect.objectContaining({ name: 'Easygoing Ermine', siteId: 1 }),
+      expect.objectContaining({ name: 'Easygoing Ermine', siteId: 2 }),
+      expect.objectContaining({ name: 'Humble Heron', siteId: 1 }),
     ]);
     // Same names the feed carries, so the two views merge into one row per visitor.
     expect(hub.recent(50).map((hit) => hit.visitor.name)).toEqual([
-      'Exuberant Ermine',
-      'Exuberant Ermine',
-      'Humble Hedgehog',
+      'Easygoing Ermine',
+      'Easygoing Ermine',
+      'Humble Heron',
     ]);
 
     const wire = JSON.stringify(hub.visitors(T0 + 2_000));
@@ -360,13 +360,13 @@ describe('RealtimeHub visitor engagement', () => {
     });
 
     const hub = createRealtimeHub(db);
-    expect(timeByName(hub, T0)).toEqual({ 'Exuberant Ermine': 90_000, 'Humble Hedgehog': 45_000 });
+    expect(timeByName(hub, T0)).toEqual({ 'Easygoing Ermine': 90_000, 'Humble Heron': 45_000 });
     // The wider seed query must not widen the counter itself.
     expect(hub.activeCounts(T0)).toEqual({ 1: 1, 2: 0 });
 
     // A deploy is not a break in the visit: the next hit continues the figure.
     hub.record(event({ ts: T0, visitor_id: VISITOR }));
-    expect(timeByName(hub, T0)['Exuberant Ermine']).toBe(90_000 + PING_CLAMP_MS);
+    expect(timeByName(hub, T0)['Easygoing Ermine']).toBe(90_000 + PING_CLAMP_MS);
   });
 
   it('restores the newest session of a visitor who has more than one', () => {
@@ -378,7 +378,7 @@ describe('RealtimeHub visitor engagement', () => {
     });
 
     expect(createRealtimeHub(db).visitors(T0)).toEqual([
-      { name: 'Exuberant Ermine', color: 1, siteId: 1, engagedMs: 12_000, lastTs: T0 - 60_000 },
+      { name: 'Easygoing Ermine', color: 2, siteId: 1, engagedMs: 12_000, lastTs: T0 - 60_000 },
     ]);
   });
 });

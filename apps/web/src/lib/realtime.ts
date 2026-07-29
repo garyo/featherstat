@@ -71,6 +71,16 @@ export interface VisitorCount {
  * Only visitors with time on the clock appear: a row whose visit is one instant
  * old should read `1 hit`, not `1 hit · 0s`.
  */
+/**
+ * A visitor is a (site, alias) pair, never an alias alone. Visitor ids are
+ * salted per site, so one person browsing two sites is two visitors by our own
+ * identity model — and two strangers can draw one name out of the 384. Keying
+ * by name alone merged both cases into one row with a nonsense trail.
+ */
+export function visitorKey(siteId: number, name: string): string {
+  return `${siteId}\u0000${name}`;
+}
+
 export function engagementByName(
   entries: readonly RealtimeEngagement[],
   site: SiteScope,
@@ -78,7 +88,8 @@ export function engagementByName(
   const byName = new Map<string, number>();
   for (const entry of entries) {
     if (entry.engagedMs <= 0 || !inScope(entry, site)) continue;
-    byName.set(entry.name, (byName.get(entry.name) ?? 0) + entry.engagedMs);
+    const key = visitorKey(entry.siteId, entry.name);
+    byName.set(key, (byName.get(key) ?? 0) + entry.engagedMs);
   }
   return byName;
 }
@@ -100,16 +111,17 @@ export function visitorTally(
   const byName = new Map<string, VisitorCount>();
   for (const hit of hits) {
     if (now - hit.ts > windowMs) continue;
-    let row = byName.get(hit.visitor.name);
+    const key = visitorKey(hit.siteId, hit.visitor.name);
+    let row = byName.get(key);
     if (row === undefined) {
       row = {
         name: hit.visitor.name,
         color: hit.visitor.color,
         siteId: hit.siteId,
         count: 0,
-        engagedMs: engagement.get(hit.visitor.name),
+        engagedMs: engagement.get(key),
       };
-      byName.set(row.name, row);
+      byName.set(key, row);
     }
     row.count += 1;
     // First LOCATED hit wins (the newest, given the order) — an unlocated one
@@ -186,13 +198,17 @@ export interface TrailStep {
  */
 export function visitorTrail(
   hits: readonly RealtimeHit[],
-  name: string,
-  site: SiteScope,
+  row: Pick<VisitorCount, 'name' | 'siteId'>,
+  now: number,
+  windowMs = TALLY_WINDOW_MS,
   limit = TRAIL_STEPS,
 ): TrailStep[] {
   const steps: TrailStep[] = [];
   for (const hit of hits) {
-    if (hit.visitor.name !== name || !inScope(hit, site)) continue;
+    // The same window the row's own counts use — a trail longer than the row
+    // says 'N hits' is the tell that they disagree about who or when.
+    if (now - hit.ts > windowMs) continue;
+    if (hit.visitor.name !== row.name || hit.siteId !== row.siteId) continue;
     steps.push({
       ts: hit.ts,
       label: actionLabel(hit),
@@ -201,7 +217,8 @@ export function visitorTrail(
     });
     if (steps.length >= limit) break;
   }
-  return steps.reverse();
+  // Newest first, like the feed above it.
+  return steps;
 }
 
 export const TRAIL_STEPS = 12;
