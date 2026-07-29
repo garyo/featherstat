@@ -1,4 +1,4 @@
-import { MAX_WIDGETS_PER_DASHBOARD } from '@featherstat/shared';
+import { DASHBOARD_LAYOUT_VERSION, MAX_WIDGETS_PER_DASHBOARD } from '@featherstat/shared';
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openTestDb, T0 } from '../../test/rows.ts';
@@ -32,8 +32,42 @@ const LAYOUT = {
   ],
 };
 
+/**
+ * A row exactly as the pre-f47d1e5 server stored one: no `version` field, and an
+ * avg-engagement tile whose query never names `engaged_sessions` — the metric
+ * did not exist yet. Nothing upgrades this on write, so it can only be repaired
+ * on read.
+ */
+const PRE_VERSIONING_LAYOUT = {
+  name: 'Overview',
+  site: 1,
+  grid: [
+    {
+      id: 'w-kpis',
+      viz: 'kpi-row',
+      w: 12,
+      h: 1,
+      options: { tiles: ['visitors', 'avg_engagement'] },
+      query: { id: 'kpis', metrics: ['visitors', 'visits', 'engaged_ms'] },
+    },
+  ],
+};
+
 function widgets(count: number): object[] {
   return Array.from({ length: count }, (_, i) => ({ id: `w${i}`, viz: 'kpi-row', w: 1, h: 1 }));
+}
+
+/** The metrics of one widget's query, as the route answered them. */
+function metricsOf(detail: DashboardDetail, index: number): string[] {
+  const query = detail.layout.grid[index]?.query;
+  return query !== undefined && 'metrics' in query ? [...query.metrics] : [];
+}
+
+function storedLayout(db: Db, id: number): unknown {
+  const row = db.prepare('SELECT layout FROM dashboards WHERE id = ?').get(id) as {
+    layout: string;
+  };
+  return JSON.parse(row.layout);
 }
 
 let db: Db;
@@ -257,6 +291,43 @@ describe('dashboards CRUD', () => {
       headers: { cookie: session.cookie },
     });
     expect(repaired.status).toBe(200);
+  });
+
+  it('upgrades a layout stored before the metric vocabulary changed', async () => {
+    const session = await login();
+    await mutate(session, 'POST', '/api/admin/dashboards', LAYOUT);
+    // Bypass the API the way history did: this row was written by a build that
+    // had never heard of engaged_sessions.
+    db.prepare('UPDATE dashboards SET layout = ? WHERE id = 1').run(
+      JSON.stringify(PRE_VERSIONING_LAYOUT),
+    );
+
+    const got = await app.request('/api/admin/dashboards/1', {
+      headers: { cookie: session.cookie },
+    });
+    expect(got.status).toBe(200);
+    const detail = (await got.json()) as DashboardDetail;
+    // Without the on-read upgrade the tile divides by a metric the batch never
+    // asked for, and renders '—' forever.
+    expect(metricsOf(detail, 0)).toEqual(['visitors', 'visits', 'engaged_ms', 'engaged_sessions']);
+    expect(detail.layout.version).toBe(DASHBOARD_LAYOUT_VERSION);
+
+    // Read means read: the stored row is exactly as it was found.
+    expect(storedLayout(db, 1)).toEqual(PRE_VERSIONING_LAYOUT);
+  });
+
+  it('stores the current vocabulary when an older client saves', async () => {
+    const session = await login();
+    const created = await mutate(session, 'POST', '/api/admin/dashboards', PRE_VERSIONING_LAYOUT);
+    expect(created.status).toBe(201);
+    const detail = (await created.json()) as DashboardDetail;
+    expect(metricsOf(detail, 0)).toContain('engaged_sessions');
+    // A write is where a row converges — so no read path ever has to write.
+    expect(storedLayout(db, 1)).toMatchObject({ version: DASHBOARD_LAYOUT_VERSION });
+    expect(
+      (await mutate(session, 'PUT', '/api/admin/dashboards/1', PRE_VERSIONING_LAYOUT)).status,
+    ).toBe(200);
+    expect(storedLayout(db, 1)).toMatchObject({ version: DASHBOARD_LAYOUT_VERSION });
   });
 
   it('replaces the layout on PUT and bumps updated_at', async () => {

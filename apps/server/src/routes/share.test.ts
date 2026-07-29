@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { DASHBOARD_LAYOUT_VERSION } from '@featherstat/shared';
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { event, openTestDb, session, T0 } from '../../test/rows.ts';
@@ -22,6 +23,22 @@ const LAYOUT = {
       query: { id: 'kpis', metrics: ['visitors', 'pageviews'] },
     },
     { id: 'w-title', viz: 'feed', w: 12, h: 2 }, // a widget with no query contributes nothing
+  ],
+};
+
+/** As the pre-f47d1e5 server stored it: no version, no `engaged_sessions`. */
+const PRE_VERSIONING_LAYOUT = {
+  name: 'Overview',
+  site: 1,
+  grid: [
+    {
+      id: 'w-kpis',
+      viz: 'kpi-row',
+      w: 12,
+      h: 1,
+      options: { tiles: ['visitors', 'avg_engagement'] },
+      query: { id: 'kpis', metrics: ['visitors', 'visits', 'engaged_ms'] },
+    },
   ],
 };
 
@@ -175,6 +192,34 @@ describe('GET /share/:token', () => {
     expect(res.status).toBe(500);
     const body = (await res.json()) as { error: string };
     expect(body.error).not.toContain('not'); // no internals, no layout echo
+  });
+
+  it('upgrades a layout stored before the metric vocabulary changed, then executes it', async () => {
+    vi.useFakeTimers({ now: SEEDED_NOW, toFake: ['Date'] });
+    const token = await mintShare(await login());
+    // The row a pre-f47d1e5 build stored: no version, and an avg-engagement
+    // tile whose query never names the denominator it divides by.
+    db.prepare('UPDATE dashboards SET layout = ? WHERE id = 1').run(
+      JSON.stringify(PRE_VERSIONING_LAYOUT),
+    );
+
+    const res = await app.request(`/share/${token}`);
+    expect(res.status).toBe(200);
+    const view = (await res.json()) as ShareView;
+    expect(view.dashboard.version).toBe(DASHBOARD_LAYOUT_VERSION);
+
+    // The proof is in what the server actually ran: the answered row carries the
+    // upgraded metric, so the shared tile has its denominator.
+    const result = view.results.kpis;
+    expect(result !== undefined && 'rows' in result ? result.rows[0] : undefined).toHaveProperty(
+      'engaged_sessions',
+    );
+
+    // A read-only link stays read-only: the row is untouched.
+    const stored = db.prepare('SELECT layout FROM dashboards WHERE id = 1').get() as {
+      layout: string;
+    };
+    expect(JSON.parse(stored.layout)).toEqual(PRE_VERSIONING_LAYOUT);
   });
 
   it('rate-limits executed batches per IP, while 304 revalidations stay free', async () => {

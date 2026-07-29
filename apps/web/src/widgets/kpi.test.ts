@@ -1,3 +1,9 @@
+import {
+  collectBatch,
+  type Dashboard,
+  DashboardSchema,
+  upgradeDashboard,
+} from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
 import { tileLabel, tileModels, tileNames } from './kpi.ts';
 import type { SeriesPoint } from './series.ts';
@@ -65,6 +71,48 @@ describe('tileModels', () => {
   it('shows an em-dash value when the stat is unanswerable', () => {
     const [tile] = tileModels(['avg_engagement'], { engaged_ms: 0, visits: 0 }, undefined, []);
     expect(tile?.value).toBe('—');
+  });
+
+  it('renders again for a stored layout that predates engaged_sessions', () => {
+    // The whole defect, end to end: a dashboard saved before f47d1e5 asks for
+    // engaged_ms without the denominator, so its tile can only read '—'.
+    const stored = DashboardSchema.parse({
+      name: 'Overview',
+      site: 1,
+      grid: [
+        {
+          id: 'kpis',
+          viz: 'kpi-row',
+          w: 12,
+          h: 1,
+          options: { tiles: ['avg_engagement'] },
+          query: { id: 'kpis', metrics: ['visits', 'engaged_ms'] },
+        },
+      ],
+    });
+    // Executing what was stored answers only the metrics it named.
+    const answer = (metrics: readonly string[]) =>
+      Object.fromEntries(
+        metrics.map((metric) => [metric, metric === 'engaged_ms' ? 3_060_000 : 100]),
+      );
+    const queryOf = (dashboard: Dashboard) => {
+      const query = collectBatch(dashboard).queries[0];
+      if (query === undefined || 'kind' in query) throw new Error('metric query expected');
+      return query;
+    };
+
+    const [before] = tileModels(['avg_engagement'], answer(queryOf(stored).metrics), undefined, []);
+    expect(before?.value).toBe('—');
+
+    const upgraded = upgradeDashboard(stored);
+    expect(queryOf(upgraded).metrics).toContain('engaged_sessions');
+    const [after] = tileModels(
+      ['avg_engagement'],
+      answer(queryOf(upgraded).metrics),
+      undefined,
+      [],
+    );
+    expect(after?.value).toBe('31s'); // 3 060 000 ms over 100 measured visits
   });
 
   it('reduces the companion series into at most 12 spark points', () => {

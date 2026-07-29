@@ -2,12 +2,11 @@ import { createHash, randomBytes } from 'node:crypto';
 import {
   collectBatch,
   type Dashboard,
-  DashboardSchema,
-  dashboardBatchIssue,
   hourlyWhenToday,
   type QueryRequest,
   type QueryResponse,
   RangeSchema,
+  readStoredDashboard,
 } from '@featherstat/shared';
 import { type Context, Hono } from 'hono';
 import type { Auth, AuthEnv } from '../auth/auth.ts';
@@ -125,11 +124,13 @@ export function createShareRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
       return c.json({ error: 'range must be a preset (7d, 30d, …)' }, 400);
     }
 
-    // Re-validate the stored JSON column (CLAUDE.md: zod at every boundary,
-    // JSON columns included). The write path validated it, but this endpoint is
-    // public and executes what it reads — a migration, rollback or manual edit
-    // must degrade to an error here, never reach the compiler unchecked.
-    const layout = parseLayout(dashboard.layout);
+    // Re-validate the stored JSON column and carry it to the current vocabulary
+    // (CLAUDE.md: zod at every boundary, JSON columns included). The write path
+    // validated it, but this endpoint is public and executes what it reads — a
+    // migration, rollback or manual edit must degrade to an error here, never
+    // reach the compiler unchecked. The upgrade stays in memory: a read-only
+    // link does not write, least of all on the one public route that executes.
+    const layout = readStoredDashboard(dashboard.layout);
     if (layout === undefined) {
       console.error(`share: stored dashboard ${dashboard.id} has an invalid layout`);
       return c.json(
@@ -195,19 +196,6 @@ export function createShareRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
 
 function sha256(token: string): Buffer {
   return createHash('sha256').update(token).digest();
-}
-
-/** The layout column, re-validated: parse failures and unbatchable layouts read as absent. */
-function parseLayout(raw: string): Dashboard | undefined {
-  let json: unknown;
-  try {
-    json = JSON.parse(raw);
-  } catch {
-    return undefined;
-  }
-  const parsed = DashboardSchema.safeParse(json);
-  if (!parsed.success) return undefined;
-  return dashboardBatchIssue(parsed.data) === undefined ? parsed.data : undefined;
 }
 
 function unknownLink(c: Context): Response {

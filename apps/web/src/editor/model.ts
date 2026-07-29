@@ -5,8 +5,10 @@ import {
   dashboardBatchIssue,
   MAX_WIDGETS_PER_DASHBOARD,
   type Metric,
+  upgradeDashboard,
   type VizType,
   type WidgetSpec,
+  withEngagedSessions,
 } from '@featherstat/shared';
 
 /**
@@ -108,27 +110,26 @@ export function buildWidget(draft: WidgetDraft, id: string): WidgetSpec {
   };
   switch (draft.viz) {
     case 'kpi-row': {
-      // Engagement tiles divide by visits — the query must carry them.
-      // Engagement tiles divide by their own denominators — bounce by visits,
-      // avg engagement by the MEASURED visits — so the query must carry them.
+      // Engagement tiles divide by their own denominators, so the query must
+      // carry them: bounce by visits here, avg engagement by the MEASURED visits
+      // in the shared rule the v1 → v2 layout upgrade also applies.
       const all = [...metrics];
       if (metrics.includes('engaged_ms') || metrics.includes('bounce_rate')) {
         if (!all.includes('visits')) all.push('visits');
       }
-      if (metrics.includes('engaged_ms') && !all.includes('engaged_sessions')) {
-        all.push('engaged_sessions');
-      }
       const tiles = metrics
         .map((metric) => METRIC_TILES[metric])
         .filter((tile): tile is string => tile !== undefined);
-      return parseSpec({
-        ...base,
-        viz: draft.viz,
-        w: 12,
-        h: 1,
-        query: { id, metrics: all },
-        options: tiles.length > 0 ? { tiles } : {},
-      });
+      return withEngagedSessions(
+        parseSpec({
+          ...base,
+          viz: draft.viz,
+          w: 12,
+          h: 1,
+          query: { id, metrics: all },
+          options: tiles.length > 0 ? { tiles } : {},
+        }),
+      );
     }
     case 'timeseries':
       // docs/05 caps shared-axis charts at 4 series.
@@ -206,7 +207,9 @@ export type ParsedDashboard = { ok: true; dashboard: Dashboard } | { ok: false; 
  * Import = paste the JSON back (docs/05: export/import is copy the JSON).
  * Errors are readable `path: message` lines, and the batch invariants
  * (duplicate query ids, the derived-query count against the batch cap) are
- * checked here — the schema alone can't see them.
+ * checked here — the schema alone can't see them. Pasted JSON is a stored
+ * layout like any other: an export taken before a vocabulary change is carried
+ * forward by the same shared steps the read paths run.
  */
 export function parseDashboardJson(text: string): ParsedDashboard {
   let raw: unknown;
@@ -225,7 +228,8 @@ export function parseDashboardJson(text: string): ParsedDashboard {
       ),
     };
   }
-  const issue = dashboardBatchIssue(parsed.data);
+  const dashboard = upgradeDashboard(parsed.data);
+  const issue = dashboardBatchIssue(dashboard);
   if (issue !== undefined) return { ok: false, errors: [issue] };
-  return { ok: true, dashboard: parsed.data };
+  return { ok: true, dashboard };
 }

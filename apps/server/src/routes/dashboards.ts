@@ -1,4 +1,10 @@
-import { type Dashboard, DashboardSchema, dashboardBatchIssue } from '@featherstat/shared';
+import {
+  type Dashboard,
+  DashboardSchema,
+  dashboardBatchIssue,
+  readStoredDashboard,
+  upgradeDashboard,
+} from '@featherstat/shared';
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { Auth, AuthEnv } from '../auth/auth.ts';
@@ -114,18 +120,12 @@ function toInfo(row: DashboardRow): DashboardInfo {
 }
 
 /** Undefined when the stored layout no longer validates (schema OR batch
- * invariants) — the caller decides how loudly. A layout this returns is one
- * `collectBatch` can always turn into a fetchable request. */
+ * invariants) — the caller decides how loudly. A layout this returns is at the
+ * current vocabulary and is one `collectBatch` can turn into a fetchable
+ * request. The row itself is left as it was: the upgrade is a read, not a write. */
 function toDetail(row: DashboardRow): DashboardDetail | undefined {
-  let json: unknown;
-  try {
-    json = JSON.parse(row.layout);
-  } catch {
-    return undefined;
-  }
-  const parsed = DashboardSchema.safeParse(json);
-  if (!parsed.success || dashboardBatchIssue(parsed.data) !== undefined) return undefined;
-  return { ...toInfo(row), layout: parsed.data };
+  const layout = readStoredDashboard(row.layout);
+  return layout === undefined ? undefined : { ...toInfo(row), layout };
 }
 
 function siteOf(row: DashboardRow): Dashboard['site'] {
@@ -163,7 +163,11 @@ async function parseBody<T>(c: Context, schema: SchemaLike<T>): Promise<Parsed<T
 async function parseLayoutBody(c: Context): Promise<Parsed<Dashboard>> {
   const body = await parseBody(c, DashboardSchema);
   if (body.ok === false) return body;
-  const issue = dashboardBatchIssue(body.data);
+  // Carried forward on the way in as well as on the way out, so a save from a
+  // client that speaks an older vocabulary stores the current one and the row
+  // converges — without any read path ever writing to the database.
+  const layout = upgradeDashboard(body.data);
+  const issue = dashboardBatchIssue(layout);
   if (issue !== undefined) return { ok: false, response: c.json({ error: issue }, 400) };
-  return body;
+  return { ok: true, data: layout };
 }

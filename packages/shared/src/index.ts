@@ -15,6 +15,8 @@ export const PING_CLAMP_MS = 20_000;
 export const BATCH_INTERVAL_MS = 200;
 export const MAX_QUERIES_PER_BATCH = 32;
 export const MAX_WIDGETS_PER_DASHBOARD = 24;
+/** Metrics one query may name (docs/04 § 3) — also the ceiling a layout upgrade must respect. */
+export const MAX_METRICS_PER_QUERY = 8;
 
 // Realtime SSE wire contract (docs/04 § 4)
 /** "Active" = distinct visitors seen inside this window. */
@@ -186,7 +188,7 @@ export type Filter = z.infer<typeof FilterSchema>;
 
 export const MetricQuerySchema = z.object({
   id: z.string().min(1).max(64),
-  metrics: z.array(MetricSchema).min(1).max(8),
+  metrics: z.array(MetricSchema).min(1).max(MAX_METRICS_PER_QUERY),
   dim: DimensionSchema.optional(),
   dim2: DimensionSchema.optional(),
   bucket: BucketSchema.optional(),
@@ -487,6 +489,19 @@ export const WidgetSpecSchema = z.object({
 export type WidgetSpec = z.infer<typeof WidgetSpecSchema>;
 
 export const DashboardSchema = z.object({
+  /**
+   * Which metric vocabulary this document was written against (docs/05 § Layout
+   * versions). A stored layout is a query plan the server executes long after it
+   * was authored, so it states which plan it is and `upgradeDashboard` carries
+   * it forward on read.
+   *
+   * Absent — every row written before versioning — and anything unreadable both
+   * read as `OLDEST_DASHBOARD_LAYOUT_VERSION` (spelled literally so the schema
+   * imports nothing). Reading low costs one idempotent upgrade pass; reading
+   * high would keep a stale plan forever, and refusing the row outright would
+   * strand a dashboard nobody can repair.
+   */
+  version: z.number().int().min(1).catch(1),
   name: z.string().min(1).max(200),
   site: z.union([z.number().int().positive(), z.literal('all')]),
   grid: z.array(WidgetSpecSchema).max(MAX_WIDGETS_PER_DASHBOARD),
@@ -567,4 +582,5 @@ export interface VersionTick {
 }
 
 export * from './alias.ts';
+export * from './layout.ts';
 export * from './widgets.ts';

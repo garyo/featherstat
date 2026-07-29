@@ -1,4 +1,9 @@
-import { type Dashboard, MAX_WIDGETS_PER_DASHBOARD, type WidgetSpec } from '@featherstat/shared';
+import {
+  DASHBOARD_LAYOUT_VERSION,
+  type Dashboard,
+  MAX_WIDGETS_PER_DASHBOARD,
+  type WidgetSpec,
+} from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
 import { siteOverview } from '../dashboards/site-overview.ts';
 import {
@@ -116,6 +121,17 @@ describe('buildWidget', () => {
     expect(spec.query.metrics).toEqual(['visitors', 'bounce_rate', 'visits']);
   });
 
+  it('builds an engagement tile through the shared rule, so it is born at the current version', () => {
+    const spec = buildWidget(
+      { viz: 'kpi-row', title: '', metrics: ['engaged_ms'], dim: '', limit: undefined },
+      'w1',
+    );
+    if (spec.query === undefined || 'kind' in spec.query) throw new Error('metric query expected');
+    // `visits` for the bounce denominator, `engaged_sessions` from the v1 → v2
+    // layout rule — one statement of it, applied here and on every read.
+    expect(spec.query.metrics).toEqual(['engaged_ms', 'visits', 'engaged_sessions']);
+  });
+
   it('pins the fixed-shape vizzes regardless of the picks', () => {
     const heatmap = buildWidget(
       { viz: 'heatmap', title: '', metrics: ['pageviews', 'events'], dim: 'country', limit: 3 },
@@ -176,6 +192,31 @@ describe('export / import round trip', () => {
   it('round-trips the shipped default', () => {
     const parsed = parseDashboardJson(exportJson(siteOverview));
     expect(parsed).toEqual({ ok: true, dashboard: siteOverview });
+  });
+
+  it('carries an export taken before the vocabulary changed forward on import', () => {
+    // Pasted JSON is a stored layout like any other: an export from an older
+    // build must come back usable, not with a tile that renders '—'.
+    const older = {
+      name: 'Overview',
+      site: 1,
+      grid: [
+        {
+          id: 'kpis',
+          viz: 'kpi-row',
+          w: 12,
+          h: 1,
+          options: { tiles: ['avg_engagement'] },
+          query: { id: 'kpis', metrics: ['visits', 'engaged_ms'] },
+        },
+      ],
+    };
+    const parsed = parseDashboardJson(JSON.stringify(older));
+    if (!parsed.ok) throw new Error(parsed.errors.join('; '));
+    expect(parsed.dashboard.version).toBe(DASHBOARD_LAYOUT_VERSION);
+    const query = parsed.dashboard.grid[0]?.query;
+    if (query === undefined || 'kind' in query) throw new Error('metric query expected');
+    expect(query.metrics).toEqual(['visits', 'engaged_ms', 'engaged_sessions']);
   });
 
   it('reports non-JSON readably', () => {

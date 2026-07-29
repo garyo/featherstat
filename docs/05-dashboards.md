@@ -106,6 +106,32 @@ A dashboard is JSON: a grid of widget cards.
   name), so selecting/editing/reordering works there with the same mechanism
   as everywhere else.
 
+### Layout versions
+
+A saved dashboard is a client-authored query plan the server executes later —
+on the detail route and behind a public share link — so the metric vocabulary
+it names can move under it. Every layout carries a `version` and is carried
+forward on read:
+
+- **The field is liberal.** Absent (every row written before versioning) or
+  unreadable both read as version 1, never as a validation failure: a stored row
+  is a boundary, and refusing one strands a dashboard nobody can repair. A
+  version *newer* than the running build is answered as it stands — a rollback
+  must not blank a dashboard.
+- **The upgrade is a sequence of small steps**, one per vocabulary change, in
+  `packages/shared/src/layout.ts`. A change appends a step; it never edits a
+  landed one, because rows written against that step still exist. The first step
+  (v1 → v2) gives a KPI query naming `engaged_ms` the `engaged_sessions` its
+  avg-engagement tile divides by — the metric added in f47d1e5, without which
+  the tile reads `—` forever.
+- **Reads never write.** `readStoredDashboard` is the one path from the
+  `dashboards.layout` column to a `Dashboard`, and it upgrades in memory only.
+  Share links are read-only and public: rewriting a row from a GET there would
+  put an anonymous reader on the single-writer path (docs/02) that ingest needs,
+  and bump the write counter every cache revalidation keys off. Rows converge
+  instead on their next *save* — the admin write path applies the same steps
+  before storing, so an older client's save lands at the current version.
+
 ### What editability costs at runtime
 
 Nothing measurable on the view path, provided one invariant holds:
