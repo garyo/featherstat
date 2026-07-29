@@ -78,6 +78,23 @@ function utcFormat(date: string, options: Intl.DateTimeFormatOptions): string {
  * on its local today. This is what the filter row labels and the charts pad to;
  * the data extent (`bucketedWindow`) would shrink both on quiet edge days.
  */
+/**
+ * The site-local hour bucket happening right now, e.g. `2026-07-29 13:00`.
+ * `today` runs midnight → THIS hour: padding past it invents future zeros (a
+ * sparkline that flatlines at noon and a −100% trend), stopping short of it
+ * hides the quiet hours since the last hit.
+ */
+export function currentHourBucket(timezone: string, now: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: timezone,
+    hour: '2-digit',
+    hour12: false,
+  }).formatToParts(now);
+  // Some locales render midnight as `24`; the bucket keys never do.
+  const hour = (parts.find((part) => part.type === 'hour')?.value ?? '00').replace('24', '00');
+  return `${localToday(timezone, now)} ${hour}:00`;
+}
+
 export function presetWindow(
   preset: RangePreset,
   timezone: string,

@@ -1,6 +1,6 @@
 import type { ResultRow, SiteInfo } from '@featherstat/shared';
 import type { RangePreset } from '../lib/state.ts';
-import { presetWindow } from './format.ts';
+import { currentHourBucket, presetWindow } from './format.ts';
 import { addDaysIso, num } from './series.ts';
 
 /**
@@ -53,7 +53,12 @@ export interface SiteStat {
 export function windowBuckets(preset: RangePreset, timezone: string, now: Date): string[] {
   const { from, to } = presetWindow(preset, timezone, now);
   if (preset === 'today') {
-    return Array.from({ length: 24 }, (_, hour) => `${to} ${String(hour).padStart(2, '0')}:00`);
+    // Up to and including the hour in progress — never the whole calendar day.
+    const last = Number(currentHourBucket(timezone, now).slice(11, 13));
+    return Array.from(
+      { length: last + 1 },
+      (_, hour) => `${to} ${String(hour).padStart(2, '0')}:00`,
+    );
   }
   const buckets: string[] = [];
   for (let day = from; day <= to; day = addDaysIso(day, 1)) buckets.push(day);

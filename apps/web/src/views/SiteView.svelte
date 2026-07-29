@@ -9,7 +9,7 @@ import { createEditorMode } from '../lib/editor-mode.svelte.ts';
 import { sameFilter } from '../lib/filters.ts';
 import { createRevalidator, type LiveStream } from '../lib/live.ts';
 import { RANGE_LABELS, RANGE_QUALIFIER, type RangePreset } from '../lib/state.ts';
-import { bucketedWindow, bucketLabel, presetWindow } from '../widgets/format.ts';
+import { bucketedWindow, bucketLabel, currentHourBucket, presetWindow } from '../widgets/format.ts';
 import { createBatchRunner } from './batch.svelte.ts';
 import { collectBatch, hourlyWhenToday, withoutBlockedMetrics } from './batch.ts';
 import DashboardGrid from './DashboardGrid.svelte';
@@ -130,6 +130,16 @@ const heldRange = $derived(
 const window = $derived(
   timezone !== undefined ? presetWindow(heldRange, timezone) : bucketedWindow(runner.response),
 );
+/**
+ * What the CHARTS pad to. Same window, hour-shaped under `today`, so a series
+ * runs to the hour in progress rather than stopping at the last hit. The label
+ * above keeps the date form.
+ */
+const seriesWindow = $derived.by(() => {
+  if (window === undefined) return undefined;
+  if (heldRange !== 'today' || timezone === undefined) return window;
+  return { from: `${window.from} 00:00`, to: currentHourBucket(timezone) };
+});
 const note = $derived.by(() => {
   if (failed) {
     // A user-initiated change that never landed reads differently from a live
@@ -155,7 +165,7 @@ const note = $derived.by(() => {
     request={requestFor}
     response={runner.response}
     error={runner.error}
-    {window}
+    window={seriesWindow}
     rangeLabel={RANGE_QUALIFIER[heldRange]}
     {recent}
     scope={site}
@@ -192,7 +202,7 @@ const note = $derived.by(() => {
     response={runner.response}
     error={runner.error}
     refetching={runner.refetching}
-    {window}
+    window={seriesWindow}
     rangeLabel={RANGE_QUALIFIER[heldRange]}
     {recent}
     scope={site}

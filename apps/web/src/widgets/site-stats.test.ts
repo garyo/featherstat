@@ -29,11 +29,17 @@ describe('windowBuckets', () => {
     expect(days.at(-1)).toBe(TODAY);
   });
 
-  it('enumerates 24 hour buckets under today', () => {
+  it('enumerates today only up to the hour in progress, never the whole day', () => {
+    // NOW is noon UTC: hours 00:00–12:00, and nothing from the future.
     const hours = windowBuckets('today', 'UTC', NOW);
-    expect(hours).toHaveLength(24);
+    expect(hours).toHaveLength(13);
     expect(hours[0]).toBe(`${TODAY} 00:00`);
-    expect(hours.at(-1)).toBe(`${TODAY} 23:00`);
+    expect(hours.at(-1)).toBe(`${TODAY} 12:00`);
+  });
+
+  it('follows the SITE clock, not the reader\u2019s', () => {
+    // 12:00 UTC is 08:00 in New York: eight buckets there, thirteen in UTC.
+    expect(windowBuckets('today', 'America/New_York', NOW)).toHaveLength(9);
   });
 });
 

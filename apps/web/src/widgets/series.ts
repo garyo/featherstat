@@ -50,13 +50,19 @@ export function fillBuckets(
     const to = window !== undefined && window.to > last.bucket ? window.to : last.bucket;
     return fill(points, metrics, dateSequence(from, to));
   }
-  if (points.length < 2) return points;
   const hours = points.map((p) => HOUR_RE.exec(p.bucket));
   if (
     hours.every((m): m is RegExpExecArray => m !== null) &&
     new Set(hours.map((m) => m[1])).size === 1
   ) {
-    return fill(points, metrics, hourSequence(first.bucket, last.bucket));
+    // Same rule as the day series: pad to what was REQUESTED, so the quiet
+    // hours since the last hit are visible instead of the chart just stopping.
+    const hourWindow = window !== undefined && HOUR_RE.test(window.to) ? window : undefined;
+    const from =
+      hourWindow !== undefined && hourWindow.from < first.bucket ? hourWindow.from : first.bucket;
+    const to =
+      hourWindow !== undefined && hourWindow.to > last.bucket ? hourWindow.to : last.bucket;
+    return fill(points, metrics, hourSequence(from, to));
   }
   return points;
 }

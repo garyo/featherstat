@@ -107,3 +107,38 @@ describe('sliceRanges', () => {
     ]);
   });
 });
+
+describe('fillBuckets hour padding', () => {
+  const hour = (h: number, visitors: number) => ({
+    bucket: `2026-07-29 ${String(h).padStart(2, '0')}:00`,
+    visitors,
+  });
+
+  it('pads an hour series out to the requested window, not the last hit', () => {
+    // Hits stopped at 11:00; it is now 13:00. The quiet hours are the point.
+    const series = fillBuckets([hour(9, 4), hour(11, 2)], ['visitors'], {
+      from: '2026-07-29 00:00',
+      to: '2026-07-29 13:00',
+    });
+    expect(series).toHaveLength(14);
+    expect(series[0]).toEqual({ bucket: '2026-07-29 00:00', values: { visitors: 0 } });
+    expect(series.at(-1)).toEqual({ bucket: '2026-07-29 13:00', values: { visitors: 0 } });
+    expect(series[9]?.values.visitors).toBe(4);
+  });
+
+  it('pads a single-hour series too, rather than drawing one point', () => {
+    const series = fillBuckets([hour(2, 7)], ['visitors'], {
+      from: '2026-07-29 00:00',
+      to: '2026-07-29 04:00',
+    });
+    expect(series.map((point) => point.values.visitors)).toEqual([0, 0, 7, 0, 0]);
+  });
+
+  it('ignores a date-shaped window for an hour series', () => {
+    const series = fillBuckets([hour(9, 1), hour(10, 1)], ['visitors'], {
+      from: '2026-07-01',
+      to: '2026-07-29',
+    });
+    expect(series).toHaveLength(2);
+  });
+});
