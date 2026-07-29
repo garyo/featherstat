@@ -136,7 +136,8 @@ idle timeout — the industry-standard visit definition, matching Matomo's.
 Per incoming hit:
 
 1. Lookup the open session; if none, or `now − last_seen > 30 min`, create a
-   session row (attribution + device + geo copied from this first hit).
+   session row (attribution + device + geo copied from this first hit) — unless
+   the hit is a ping, which never starts a visit (see below).
 2. Update counters, `exit_path`, `last_seen_at`; assign the hit's `seq` from
    the session's running event count.
 3. **Engagement**: add `min(now − last_seen, 20 s)` to `engaged_ms`. Heartbeat
@@ -149,13 +150,69 @@ Per incoming hit:
 Restart recovery: on boot, sessions with `last_seen_at` within 30 min are
 loaded back into the map. Crash-loss window ≈ one batch interval.
 
-Derived metrics: `visits` = sessions — and under an event-level dimension,
+### A ping never starts a visit (session revival)
+
+The heartbeat only fires while the tab is **focused and visible** — deliberately,
+so a page parked on a second monitor does not ping forever. A reader who reads
+for three minutes, switches away for half an hour and comes back therefore sends
+nothing at all in between, and their next hit is a *ping*.
+
+Treating that ping like any other hit opened a brand-new session with no
+pageview in it: an extra visit, and a second span of attention credited to no
+page at all (`dwell` drops events before a session's first pageview). On
+production that was 4.1 % of visits.
+
+A ping is a **continuation signal**, so:
+
+- With no live session it **revives the visitor's most recent one** —
+  same `session_id`, same `started_at`, `local_date` and first-touch
+  attribution, `seq` carrying on. Reviving is bounded by the
+  **returning-reader window** (`SESSION_REVIVAL_MS`, 4 h): long enough to cover
+  a lunch break or a meeting, short enough that a machine woken the next
+  morning starts a fresh visit rather than resurrecting last night's, and short
+  enough that revived engagement lands on the same site-local day in all but a
+  sliver of cases.
+- The 20 s clamp is untouched, so bridging half an hour of silence credits **one
+  heartbeat's worth** of attention, not half an hour. 3 min + 3 min reads as
+  ~6 min of engagement on one page, which is what it was.
+- With nothing to revive the ping is **dropped**: never stored, never counted.
+  A visit whose every row is a heartbeat is a visit nobody made, and its rows
+  could not be attributed to a page anyway. Ingest's only other drop is bots.
+
+**Limitation, stated rather than papered over**: `visitor_id` rotates at 00:00
+UTC (see Identity), so revival can never cross that boundary — its effective
+reach is `min(4 h, time since the last UTC midnight)`. For a US-Eastern site
+that boundary falls at 20:00 local, mid-evening: a reader who steps away at
+19:50 and returns at 20:20 is a different visitor by then, and their heartbeats
+are dropped rather than joined to the earlier visit. Sites that opt into `uid`
+hashing get a stable per-site salt, so revival works across the whole window
+for them.
+
+A revived visit can stop being a bounce, and that is correct: bounce is
+engagement-aware (below), and a focus-gated heartbeat is evidence of attention.
+The clamp bounds what one revival can grant to 20 s, so no visit is argued out
+of bounce status by idleness alone.
+
+Where revival reads from: **not** a widened open-session map (restart recovery
+still loads only the 30-minute window) but a targeted indexed read of one
+visitor's latest session — `ix_sessions_open (site_id, visitor_id,
+last_seen_at)` — on the rare ping-with-no-live-session path. The live map is
+asked first and its answer is final: an entry still held there carries hits the
+current batch has not committed, which the store cannot see. For the same reason
+the eviction sweep leaves an entry alone until its rows are committed; retention
+is unchanged (a committed entry still goes at the idle window), it just cannot be
+dropped while the store would then be the only, and stale, account of a visit.
+
+### Derived metrics
+
+`visits` = sessions — and under an event-level dimension,
 where the answer comes from the event rows rather than the session rows, the
 distinct sessions **of that group's non-ping rows**, so a group can never hold
 a visit whose visitor it did not count; `visitors` = distinct `visitor_id`
 **over non-ping rows** (a heartbeat is a continuation signal, not a visit: a
 session beating past local midnight must not book its visitor into a day it
-never acted in — that reads as `pageviews < visitors`, which is impossible);
+never acted in — that reads as `pageviews < visitors`, which is impossible; the
+same reasoning is why a ping cannot open a session at all, above);
 `engagement time` = `engaged_ms`, averaged over `engaged_sessions` (visits with
 time on the clock) rather than all visits — a single-hit visit is unmeasurable,
 not zero-length, and dividing by it reports the measurement gap as brevity, the

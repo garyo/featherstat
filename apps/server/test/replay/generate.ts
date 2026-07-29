@@ -4,6 +4,7 @@ import {
   type HitContext,
   type HitType,
   PING_CLAMP_MS,
+  SESSION_REVIVAL_MS,
   SESSION_TIMEOUT_MS,
 } from '@featherstat/shared';
 
@@ -17,7 +18,8 @@ import {
  *    matomo.php requests and pushed through the real ingest path.
  * 2. `totals` — per site per local day, counted by this module's own bookkeeping
  *    from the emitted stream using the rules of docs/03 (identity, 30-min idle
- *    timeout, engagement-aware bounce). Nothing here is derived by re-running the
+ *    timeout, heartbeats that continue a visit rather than start one,
+ *    engagement-aware bounce). Nothing here is derived by re-running the
  *    pipeline, so the replay test compares two independent implementations.
  *
  * Everything is driven by a seeded PRNG — `Math.random` is never called, so a
@@ -61,8 +63,12 @@ export interface Corpus {
   hits: ReplayHit[];
   /** Sorted by site id then local date; a day appears only if something happened. */
   totals: DayTotals[];
-  /** Non-bot hits — the exact number of `events` rows a replay must produce. */
+  /** The exact number of `events` rows a replay must produce. */
   storedHits: number;
+  /** Heartbeats with no visit to continue: never stored, never counted (docs/03). */
+  droppedPings: number;
+  /** Heartbeats that revived a visit instead of starting one — the returning readers. */
+  revivedPings: number;
   startMs: number;
   endMs: number;
 }
@@ -273,6 +279,15 @@ const SKIM_DWELL_SPREAD_MS = 11_000;
 const MAX_PINGS_PER_STEP = 8;
 /** Heartbeats are focus-gated, so a share of them never fires (docs/01). */
 const PING_FOCUS_LOSS = 0.15;
+/**
+ * Share of engaged sessions whose reader switches away and comes back to the
+ * still-open tab — the production shape session revival exists for (docs/03).
+ * Nothing at all is sent while they are away: the heartbeat is focus-gated.
+ */
+const RETURN_SHARE = 0.06;
+/** Away for 31 min to ~4.5 h, so the window's far edge is crossed by some of them. */
+const RETURN_AWAY_MS = SESSION_TIMEOUT_MS + 60_000;
+const RETURN_AWAY_SPREAD_MS = SESSION_REVIVAL_MS;
 const BOT_SHARE = 0.12;
 /** A crawler takes this many pages in one burst. */
 const BOT_BURST_PAGES = 3;
@@ -358,8 +373,13 @@ export function generateCorpus(options: GenerateOptions = {}): Corpus {
   // in — a session's own steps can never be reordered against each other.
   hits.sort((a, b) => a.ctx.receivedAt - b.ctx.receivedAt);
 
-  const { totals, storedHits } = account(hits);
-  return { sites: SITES, hits, totals, storedHits, startMs, endMs: startMs + days * DAY_MS };
+  return {
+    sites: SITES,
+    hits,
+    ...account(hits),
+    startMs,
+    endMs: startMs + days * DAY_MS,
+  };
 }
 
 function buildVisitors(site: SiteProfile, rng: Rng): Visitor[] {
@@ -433,6 +453,13 @@ function emitSession(
       : SKIM_DWELL_MS + Math.floor(rng() * SKIM_DWELL_SPREAD_MS);
     if (engaged) emitPings(site, visitor, url, ts, dwell, rng, out);
     ts += dwell;
+  }
+
+  // They come back to the tab they left open and read the same page some more.
+  if (engaged && rng() < RETURN_SHARE) {
+    const back = ts + RETURN_AWAY_MS + Math.floor(rng() * RETURN_AWAY_SPREAD_MS);
+    const again = ENGAGED_DWELL_MS + Math.floor(rng() * ENGAGED_DWELL_SPREAD_MS);
+    emitPings(site, visitor, url, back, again, rng, out);
   }
 }
 
@@ -599,12 +626,21 @@ interface CountedSession {
   lastSeenAt: number;
 }
 
-function account(hits: readonly ReplayHit[]): { totals: DayTotals[]; storedHits: number } {
+interface Accounted {
+  totals: DayTotals[];
+  storedHits: number;
+  droppedPings: number;
+  revivedPings: number;
+}
+
+function account(hits: readonly ReplayHit[]): Accounted {
   const zones = new Map(SITES.map((site) => [site.id, site.timezone]));
   const buckets = new Map<string, DayBucket>();
   const open = new Map<string, CountedSession>();
   const sessions: CountedSession[] = [];
   let storedHits = 0;
+  let droppedPings = 0;
+  let revivedPings = 0;
 
   for (const { hit, ctx } of hits) {
     const timezone = zones.get(hit.siteId) ?? 'UTC';
@@ -614,17 +650,32 @@ function account(hits: readonly ReplayHit[]): { totals: DayTotals[]; storedHits:
       bucket.botDrops += 1;
       continue;
     }
-    storedHits += 1;
 
     // The visitor hash mixes in the site and a salt that rotates at 00:00 UTC, so
-    // one person is a different visitor on either side of a UTC midnight (docs/03).
+    // one person is a different visitor on either side of a UTC midnight (docs/03)
+    // — which is also the hard ceiling on how far revival can reach back.
     const identity = `${hit.siteId}|${Math.floor(ctx.receivedAt / DAY_MS)}|${fingerprint(hit, ctx)}`;
+
+    // A ping is a continuation signal, never the start of a visit (docs/03), so it
+    // reaches further back than any other hit: past the idle timeout it revives the
+    // visitor's own last session, and past the returning-reader window it is
+    // dropped rather than booked as a visit with nothing in it.
+    const prior = open.get(identity);
+    const reach = hit.type === 'ping' ? SESSION_REVIVAL_MS : SESSION_TIMEOUT_MS;
+    const idle = prior === undefined ? Number.POSITIVE_INFINITY : ctx.receivedAt - prior.lastSeenAt;
+    if (hit.type === 'ping' && idle > reach) {
+      droppedPings += 1;
+      continue;
+    }
+    if (hit.type === 'ping' && idle > SESSION_TIMEOUT_MS) revivedPings += 1;
+    storedHits += 1;
+
     // A heartbeat is not a visit: a session beating past local midnight must not
     // book its visitor into a day they never acted in (docs/03).
     if (hit.type !== 'ping') bucket.visitors.add(identity);
 
-    let session = open.get(identity);
-    if (session === undefined || ctx.receivedAt - session.lastSeenAt > SESSION_TIMEOUT_MS) {
+    let session = idle <= reach ? prior : undefined;
+    if (session === undefined) {
       session = {
         siteId: hit.siteId,
         localDate,
@@ -662,7 +713,7 @@ function account(hits: readonly ReplayHit[]): { totals: DayTotals[]; storedHits:
   const totals = [...buckets.values()]
     .map(({ visitors, ...bucket }) => ({ ...bucket, visitors: visitors.size }))
     .sort((a, b) => a.siteId - b.siteId || a.localDate.localeCompare(b.localDate));
-  return { totals, storedHits };
+  return { totals, storedHits, droppedPings, revivedPings };
 }
 
 function bucketFor(buckets: Map<string, DayBucket>, siteId: number, localDate: string): DayBucket {

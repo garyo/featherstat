@@ -1,5 +1,5 @@
+import { localClock } from '@featherstat/shared';
 import type { EventRow, NewSite, SessionRow } from '../db/index.ts';
-import { localParts } from '../pipeline/sessionizer.ts';
 
 /**
  * Pure row mappers for the Matomo importer (docs/06): plain Matomo 5 row
@@ -176,7 +176,7 @@ export function mapVisit(row: MatomoVisitRow, timezone: string): SessionRow | nu
     visitor_id: visitorId,
     started_at: started,
     last_seen_at: utcMs(row.visit_last_action_time) ?? started,
-    local_date: localParts(timezone, started).date,
+    local_date: localClock(timezone, started).date,
     entry_path: actionPath(row.entry_url_name, row.entry_url_prefix),
     exit_path: actionPath(row.exit_url_name, row.exit_url_prefix),
     // Matomo has no pure pageview counter on the visit; total_actions
@@ -205,7 +205,7 @@ export function mapAction(row: MatomoActionRow, timezone: string): Omit<EventRow
   if (ts === null || visitorId === null) return null;
   const action = classifyAction(row);
   if (action === null) return null;
-  const local = localParts(timezone, ts);
+  const local = localClock(timezone, ts);
   return {
     site_id: row.idsite,
     ts,

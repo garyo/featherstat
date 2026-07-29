@@ -74,6 +74,34 @@ metric *means* has to be logged here or the comparison silently drifts.
   0 with no actions recorded at all.
 - **2026-07-29 — `engaged_sessions`** returns 0 rather than NULL for a group
   matching no session (52249a6). Affects rendering of empty groups, not totals.
+- **2026-07-29 — a heartbeat no longer starts a visit.** Headline `visits` DOES
+  move here, downward, and this is a **deliberate definitional divergence from
+  Matomo**, not an accounting error. A ping is a continuation signal, so with no
+  live session it revives the visitor's own last session (returning-reader
+  window, 4 h) and with nothing to revive it is dropped (docs/03 §
+  Sessionization). Matomo, on the same 30-minute timeout, counts the reader who
+  comes back to an open tab after half an hour as **two** visits; we count one
+  visit with the attention of both — the owner's ruling: *"3 minutes, away half
+  an hour, 3 more minutes should count as 6 minutes of engagement with that
+  page rather than two visits."*
+  - Production symptom that prompted it: **14 of 340 visits (4.1 %) had zero
+    pageviews and zero events** — their first stored row was a ping. Those
+    visits also credited their whole span of attention to no page at all,
+    because per-page dwell drops events before a session's first pageview.
+  - On the replay corpus, which now includes returning readers at production-ish
+    prevalence: **visits 14385 → 13813 (−572, −3.98 %)**; pageview-less sessions
+    764 → 192 (the 192 left are packzen's page-less webhook events, which are
+    real actions); **heartbeat-only sessions 572 → 0**; stored event rows
+    138249 → 137487 (−762 orphan heartbeats dropped, 0.55 %); `engaged_sessions`
+    12014 → 11482 (−4.43 %); average engagement per engaged session 154.1 s →
+    161.1 s (+4.6 %), since the two spans are now one visit.
+  - **Bounce count barely moves** (2183 → 2181 on the corpus) because
+    pageview-less sessions were never bounces — but **bounce *rate* rises**
+    (0.1518 → 0.1579) purely because the denominator shrank. Expect the reported
+    bounce rate to tick up by roughly the visit reduction, on top of the
+    downward divergence from Matomo already described below.
+  - Reconciliation note: on this pattern featherstat will read ~4 % below Matomo
+    on visits every day. Do not chase it.
 
 ## Cutover sequence
 
@@ -105,7 +133,8 @@ metric *means* has to be logged here or the comparison silently drifts.
   background the tab 20, return for 2 → a "24-minute visit". Our `engaged_ms`
   is *accrued active time* (inter-ping gaps clamped at 20 s), so the same
   visit reads ~4 min. Both metrics get more truthful at cutover; neither delta
-  is a regression.
+  is a regression. Note that this is *one* visit for us and, past the 30-minute
+  timeout, two for Matomo — see the heartbeat entry above.
 - Bot filtering differs (isbot list vs Matomo's): totals may dip a few
   percent. The diagnostics counter makes the delta visible instead of
   mysterious.

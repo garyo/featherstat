@@ -1,7 +1,15 @@
-import { BATCH_INTERVAL_MS, type Hit, type HitContext } from '@featherstat/shared';
+import {
+  BATCH_INTERVAL_MS,
+  DAY_MS,
+  type Hit,
+  type HitContext,
+  PING_CLAMP_MS,
+  SESSION_REVIVAL_MS,
+} from '@featherstat/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DESKTOP_UA, GOOGLEBOT_UA, T0 } from '../../test/rows.ts';
+import { DESKTOP_UA, GOOGLEBOT_UA, resultOf, T0 } from '../../test/rows.ts';
 import { createSite, type Db, getBotDrops, openDb, withWriteTransaction } from '../db/index.ts';
+import { executeQueryRequest } from '../query/executor.ts';
 import type { GeoProvider } from './geo.ts';
 import type { Pipeline } from './index.ts';
 import { createPipeline } from './index.ts';
@@ -126,5 +134,111 @@ describe('createPipeline', () => {
     expect(rows[0]?.session_id).toEqual(rows[1]?.session_id);
     const session = db.prepare('SELECT pageviews, engaged_ms, exit_path FROM sessions').get();
     expect(session).toEqual({ pageviews: 2, engaged_ms: 20_000, exit_path: '/b' });
+  });
+});
+
+/**
+ * The production shape this rule exists for (docs/03 § Sessionization): heartbeats
+ * are focus-gated, so a reader who switches away stops pinging entirely. Coming
+ * back to the same open tab half an hour later used to book a second, pageview-less
+ * visit and credit the second span of attention to no page at all.
+ */
+describe('a reader who comes back to an open tab', () => {
+  const HEARTBEAT_MS = 15_000;
+  const READING_MS = 3 * 60_000;
+  const AWAY_MS = 35 * 60_000;
+
+  /** `enableHeartBeatTimer(15)` for `forMs`, starting one beat after `from`. */
+  function read(from: number, forMs: number): number {
+    let at = from;
+    for (let beat = HEARTBEAT_MS; beat <= forMs; beat += HEARTBEAT_MS) {
+      at = from + beat;
+      pipeline.sink([hit({ type: 'ping' })], ctx({ receivedAt: at }));
+    }
+    return at;
+  }
+
+  function rows<T>(sql: string, ...params: unknown[]): T[] {
+    return db.prepare(sql).all(...params) as T[];
+  }
+
+  /**
+   * 3 min of beats, one clamped beat bridging the silence, then the remaining
+   * 2:45 of beats: ~6 min of attention, not the 41 min of wall clock between the
+   * first hit and the last, and not two visits.
+   */
+  const ENGAGED_MS = READING_MS + PING_CLAMP_MS + (READING_MS - HEARTBEAT_MS);
+
+  it('counts one visit, ~6 minutes of engagement, and attributes it to the page', () => {
+    pipeline.sink([hit()], ctx());
+    const left = read(T0, READING_MS);
+    pipeline.flush(); // the visit is durable before the silence, as in production
+    read(left + AWAY_MS, READING_MS);
+    pipeline.flush();
+
+    const sessions = rows<{ pageviews: number; engaged_ms: number; entry_path: string }>(
+      'SELECT pageviews, engaged_ms, entry_path FROM sessions',
+    );
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toEqual({ pageviews: 1, engaged_ms: ENGAGED_MS, entry_path: '/a' });
+    const minutes = (sessions[0]?.engaged_ms ?? 0) / 60_000;
+    expect(minutes).toBeGreaterThan(5.9); // the ruling's "6 minutes", not 41
+    expect(minutes).toBeLessThan(6.2);
+
+    // One session, one contiguous seq run, and its first row is the pageview.
+    const stored = rows<{ seq: number; type: string; session_id: Buffer }>(
+      'SELECT seq, type, session_id FROM events ORDER BY seq',
+    );
+    expect(stored.map((row) => row.seq)).toEqual(stored.map((_, i) => i + 1));
+    expect(new Set(stored.map((row) => row.session_id.toString('hex'))).size).toBe(1);
+    expect(stored[0]?.type).toBe('pageview');
+
+    // No pageview-less session anywhere — the defect's own signature.
+    expect(db.prepare('SELECT COUNT(*) FROM sessions WHERE pageviews = 0').pluck().get()).toBe(0);
+
+    // And the second span of attention lands on the page, not on nothing: the
+    // same total, attributed per page instead of per session.
+    const dwell = resultOf(
+      executeQueryRequest(db, {
+        site: 1,
+        range: { from: '2026-07-27', to: '2026-07-27' },
+        queries: [{ id: 'q', kind: 'dwell', limit: 10 }],
+      }),
+      'q',
+    ).rows;
+    expect(dwell).toEqual([
+      { path: '/a', views_measured: 1, avg_page_ms: ENGAGED_MS, max_page_ms: ENGAGED_MS },
+    ]);
+  });
+
+  it('drops heartbeats that come back past the returning-reader window', () => {
+    pipeline.sink([hit()], ctx());
+    const left = read(T0, READING_MS);
+    pipeline.flush();
+    read(left + SESSION_REVIVAL_MS + 60_000, READING_MS);
+    pipeline.flush();
+
+    // Nothing to continue, so they are dropped rather than booked as a visit:
+    // still exactly the first visit, and only its own heartbeats stored.
+    expect(db.prepare('SELECT COUNT(*) FROM sessions').pluck().get()).toBe(1);
+    expect(db.prepare("SELECT COUNT(*) FROM events WHERE type = 'ping'").pluck().get()).toBe(
+      READING_MS / HEARTBEAT_MS,
+    );
+  });
+
+  it('cannot reach across the 00:00 UTC visitor-id rotation (docs/03)', () => {
+    const beforeMidnight = Math.floor(T0 / DAY_MS) * DAY_MS + DAY_MS - 5 * 60_000;
+    pipeline.sink([hit()], ctx({ receivedAt: beforeMidnight }));
+    const left = read(beforeMidnight, 60_000);
+    pipeline.flush();
+
+    // 40 min later is well inside the revival window, but on the other side of the
+    // rotation: the same person is a different visitor, so there is nothing of
+    // theirs to find. The heartbeats are dropped, not turned into a second visit.
+    read(left + 40 * 60_000, 60_000);
+    pipeline.flush();
+    expect(db.prepare('SELECT COUNT(*) FROM sessions').pluck().get()).toBe(1);
+    expect(db.prepare('SELECT COUNT(*) FROM sessions WHERE pageviews = 0').pluck().get()).toBe(0);
+    expect(db.prepare('SELECT COUNT(*) FROM events').pluck().get()).toBe(5); // 1 + 4 beats
   });
 });

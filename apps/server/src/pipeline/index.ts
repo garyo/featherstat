@@ -1,10 +1,10 @@
-import type { Hit, HitContext } from '@featherstat/shared';
+import { type Hit, type HitContext, localClock } from '@featherstat/shared';
 import { type Db, type EventRow, getSite } from '../db/index.ts';
 import { type FlushHook, WriteBatcher } from './batcher.ts';
 import { isBotUserAgent, parseUserAgent, preferredLanguage } from './enrich.ts';
 import { type GeoProvider, NullProvider } from './geo.ts';
 import { Identity } from './identity.ts';
-import { loadOpenSessions, localParts, Sessionizer } from './sessionizer.ts';
+import { loadOpenSessions, priorSessionLookup, Sessionizer } from './sessionizer.ts';
 
 /** Where normalized hits go. `createPipeline` builds the real one; routes call it. */
 export type HitSink = (hits: Hit[], ctx: HitContext) => void;
@@ -35,9 +35,10 @@ export interface Pipeline {
 export function createPipeline(db: Db, options: PipelineOptions = {}): Pipeline {
   const geo = options.geo ?? new NullProvider();
   const identity = new Identity(db);
-  const sessionizer = new Sessionizer();
+  const sessionizer = new Sessionizer(priorSessionLookup(db));
   sessionizer.restore(loadOpenSessions(db, Date.now()));
   const batcher = new WriteBatcher(db, options.batchIntervalMs);
+  batcher.onFlush(() => sessionizer.noteFlush());
   batcher.start();
   const hitHooks: HitHook[] = [];
 
@@ -49,10 +50,10 @@ export function createPipeline(db: Db, options: PipelineOptions = {}): Pipeline 
       const site = getSite(db, hit.siteId);
       if (site === undefined) continue; // unknown site id → dropped, never 4xx (docs/04)
       if (device === null) {
-        batcher.addBotDrop(site.id, localParts(site.timezone, ctx.receivedAt).date);
+        batcher.addBotDrop(site.id, localClock(site.timezone, ctx.receivedAt).date);
         continue;
       }
-      const { event, session } = sessionizer.process({
+      const sessionized = sessionizer.process({
         site,
         hit,
         visitorId: identity.visitorId(hit, ctx),
@@ -61,6 +62,8 @@ export function createPipeline(db: Db, options: PipelineOptions = {}): Pipeline 
         geo: geoResult,
         lang: preferredLanguage(ctx.acceptLanguage, hit.lang),
       });
+      if (sessionized === undefined) continue; // an orphan heartbeat: no visit to continue
+      const { event, session } = sessionized;
       batcher.addEvent(event);
       batcher.addSession(session);
       for (const hook of hitHooks) hook(event);

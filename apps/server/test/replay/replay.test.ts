@@ -1,4 +1,8 @@
-import { BATCH_INTERVAL_MS, ENGAGEMENT_THRESHOLD_MS } from '@featherstat/shared';
+import {
+  BATCH_INTERVAL_MS,
+  ENGAGEMENT_THRESHOLD_MS,
+  SESSION_TIMEOUT_MS,
+} from '@featherstat/shared';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createSite, type Db, openDb, withWriteTransaction } from '../../src/db/index.ts';
 import { parseMatomoRequest } from '../../src/ingest/matomo.ts';
@@ -165,12 +169,29 @@ describe('replay harness', () => {
     }
   });
 
-  it('stores one event row per accepted hit and nothing at all for bots', () => {
+  it('stores one event row per accepted hit; bots and orphan heartbeats are all it drops', () => {
     expect(count(db, 'SELECT COUNT(*) FROM events')).toBe(corpus.storedHits);
     const botDrops = corpus.totals.reduce((sum, day) => sum + day.botDrops, 0);
     expect(botDrops).toBeGreaterThan(0);
     expect(count(db, 'SELECT COALESCE(SUM(count), 0) FROM bot_drops')).toBe(botDrops);
-    expect(corpus.hits.length - corpus.storedHits).toBe(botDrops);
+    expect(corpus.hits.length - corpus.storedHits).toBe(botDrops + corpus.droppedPings);
+  });
+
+  it('exercises both sides of the returning-reader window (docs/03)', () => {
+    // Revived and dropped heartbeats both occur, so neither branch of the rule is
+    // asserted vacuously — and no session anywhere begins with a heartbeat.
+    expect(corpus.revivedPings).toBeGreaterThan(0);
+    expect(corpus.droppedPings).toBeGreaterThan(0);
+    expect(
+      count(
+        db,
+        `SELECT COUNT(*) FROM sessions s
+         WHERE (SELECT type FROM events e WHERE e.session_id = s.id AND e.seq = 1) = 'ping'`,
+      ),
+    ).toBe(0);
+    // A revived visit outlives the idle window, which is exactly the point.
+    const outlived = 'SELECT COUNT(*) FROM sessions WHERE last_seen_at - started_at > ?';
+    expect(count(db, outlived, SESSION_TIMEOUT_MS)).toBeGreaterThan(0);
   });
 
   it('matches the expected totals for every site and every local day', () => {

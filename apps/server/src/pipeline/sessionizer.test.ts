@@ -2,11 +2,13 @@ import {
   ENGAGEMENT_THRESHOLD_MS,
   type Hit,
   PING_CLAMP_MS,
+  SESSION_REVIVAL_MS,
   SESSION_TIMEOUT_MS,
 } from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
-import { T0, VISITOR } from '../../test/rows.ts';
+import { binId, T0, VISITOR } from '../../test/rows.ts';
 import {
+  type Db,
   insertEvents,
   openDb,
   type Site,
@@ -15,7 +17,7 @@ import {
 } from '../db/index.ts';
 import type { DeviceInfo } from './enrich.ts';
 import type { SessionizerInput } from './sessionizer.ts';
-import { loadOpenSessions, localParts, Sessionizer } from './sessionizer.ts';
+import { loadOpenSessions, priorSessionLookup, Sessionizer } from './sessionizer.ts';
 
 const SITE: Site = {
   id: 1,
@@ -32,7 +34,7 @@ const DEVICE: DeviceInfo = {
   device_type: 'desktop',
 };
 
-function run(
+function offer(
   sessionizer: Sessionizer,
   now: number,
   hit: Partial<Hit> = {},
@@ -48,6 +50,13 @@ function run(
     lang: 'en-US',
     ...input,
   });
+}
+
+/** A hit that must be stored. Use `offer` where the point is that it might not be. */
+function run(...args: Parameters<typeof offer>) {
+  const stored = offer(...args);
+  if (stored === undefined) throw new Error('the sessionizer dropped a hit it should have stored');
+  return stored;
 }
 
 describe('session lifecycle', () => {
@@ -102,9 +111,22 @@ describe('session lifecycle', () => {
     const s = new Sessionizer();
     run(s, T0);
     expect(s.size).toBe(1);
-    const other = Uint8Array.from([9, 9, 9, 9, 9, 9, 9, 9]);
+    s.noteFlush(); // the batch landed, so the sweep is free to drop the row
+    const other = binId(9);
     run(s, T0 + 2 * SESSION_TIMEOUT_MS, {}, { visitorId: other });
     expect(s.size).toBe(1); // the expired session was swept, not retained alongside
+  });
+
+  it('holds a swept session until its rows are committed, then lets it go', () => {
+    const s = new Sessionizer();
+    run(s, T0);
+    // The batch has not landed, so the store is not yet the account of this visit
+    // and dropping it would strand its seq and counters.
+    run(s, T0 + 2 * SESSION_TIMEOUT_MS, {}, { visitorId: binId(9) });
+    expect(s.size).toBe(2);
+    s.noteFlush();
+    run(s, T0 + 4 * SESSION_TIMEOUT_MS, {}, { visitorId: binId(8) });
+    expect(s.size).toBe(1);
   });
 
   it('rolls over after idle timeout with fresh counters, seq, and attribution', () => {
@@ -312,46 +334,6 @@ describe('attribution', () => {
 });
 
 describe('timezones (docs/03)', () => {
-  it('computes local date and hour in the site timezone', () => {
-    expect(localParts('America/New_York', Date.UTC(2026, 0, 15, 14, 30))).toEqual({
-      date: '2026-01-15',
-      hour: 9, // EST, UTC-5
-    });
-    expect(localParts('America/New_York', Date.UTC(2026, 6, 15, 14, 30))).toEqual({
-      date: '2026-07-15',
-      hour: 10, // EDT, UTC-4
-    });
-  });
-
-  it('handles the spring-forward DST boundary (2026-03-08, 02:00 EST skipped)', () => {
-    expect(localParts('America/New_York', Date.UTC(2026, 2, 8, 6, 59))).toEqual({
-      date: '2026-03-08',
-      hour: 1,
-    });
-    expect(localParts('America/New_York', Date.UTC(2026, 2, 8, 7, 1))).toEqual({
-      date: '2026-03-08',
-      hour: 3,
-    });
-  });
-
-  it('handles the fall-back DST boundary (2026-11-01, 01:00 repeats)', () => {
-    expect(localParts('America/New_York', Date.UTC(2026, 10, 1, 5, 30)).hour).toBe(1); // EDT
-    expect(localParts('America/New_York', Date.UTC(2026, 10, 1, 6, 30)).hour).toBe(1); // EST
-    expect(localParts('America/New_York', Date.UTC(2026, 10, 1, 7, 30)).hour).toBe(2);
-  });
-
-  it('rolls the local date at local midnight, not UTC midnight', () => {
-    expect(localParts('America/New_York', Date.UTC(2026, 6, 28, 3, 30)).date).toBe('2026-07-27');
-    expect(localParts('America/New_York', Date.UTC(2026, 6, 28, 4, 30)).date).toBe('2026-07-28');
-  });
-
-  it('falls back to UTC for an invalid timezone instead of breaking ingest', () => {
-    expect(localParts('Not/A_Zone', Date.UTC(2026, 6, 27, 14))).toEqual({
-      date: '2026-07-27',
-      hour: 14,
-    });
-  });
-
   it("keeps the session's local_date at its start while event rows roll over", () => {
     const s = new Sessionizer();
     const beforeMidnight = Date.UTC(2026, 6, 28, 3, 45); // 23:45 EDT on 07-27
@@ -459,5 +441,132 @@ describe('restart recovery', () => {
     expect(session.ref_type).toBe('search');
     expect(event.ref_type).toBe('search');
     db.close();
+  });
+});
+
+describe('session revival (docs/03)', () => {
+  const PRIOR = binId(7);
+
+  /** A flushed session for VISITOR, exactly as the batcher would have left it. */
+  function seed(db: Db, lastSeenAt: number): void {
+    withWriteTransaction(db, () => {
+      upsertSessions(db, [
+        {
+          id: PRIOR,
+          site_id: 1,
+          visitor_id: VISITOR,
+          started_at: lastSeenAt - 180_000,
+          last_seen_at: lastSeenAt,
+          local_date: '2026-07-27',
+          entry_path: '/a',
+          exit_path: '/a',
+          pageviews: 1,
+          events: 0,
+          engaged_ms: 180_000,
+          ref_type: 'search',
+          ref_domain: 'google.com',
+        },
+      ]);
+      insertEvents(db, [
+        {
+          site_id: 1,
+          ts: lastSeenAt,
+          local_date: '2026-07-27',
+          local_hour: 10,
+          type: 'ping',
+          visitor_id: VISITOR,
+          session_id: PRIOR,
+          seq: 13,
+        },
+      ]);
+    });
+  }
+
+  function withSeededDb(lastSeenAt: number, body: (s: Sessionizer) => void): void {
+    const db = openDb(':memory:');
+    seed(db, lastSeenAt);
+    try {
+      body(new Sessionizer(priorSessionLookup(db)));
+    } finally {
+      db.close();
+    }
+  }
+
+  it('drops a ping with nothing to continue instead of opening a pageview-less visit', () => {
+    const s = new Sessionizer();
+    expect(offer(s, T0, { type: 'ping' })).toBeUndefined();
+    expect(s.size).toBe(0);
+    expect(s.droppedPings).toBe(1);
+  });
+
+  it("revives the visitor's last session rather than starting one, and continues its seq", () => {
+    const away = T0 + SESSION_TIMEOUT_MS + 5 * 60_000; // 35 min of silence
+    withSeededDb(T0, (s) => {
+      const { event, session } = run(s, away, { type: 'ping' });
+      expect(Buffer.from(session.id)).toEqual(Buffer.from(PRIOR));
+      expect(event.seq).toBe(14);
+      expect(session.pageviews).toBe(1); // a ping is not a pageview, revived or not
+      expect(session.started_at).toBe(T0 - 180_000); // still the visit's own start
+      expect(session.local_date).toBe('2026-07-27');
+      expect(session.ref_type).toBe('search'); // first-touch attribution survives
+      expect(s.droppedPings).toBe(0);
+    });
+  });
+
+  it('credits the silence one clamped heartbeat, never the whole gap', () => {
+    const away = T0 + 30 * 60_000;
+    withSeededDb(T0, (s) => {
+      expect(run(s, away, { type: 'ping' }).session.engaged_ms).toBe(180_000 + PING_CLAMP_MS);
+    });
+  });
+
+  it('reaches back exactly SESSION_REVIVAL_MS and no further', () => {
+    withSeededDb(T0, (s) => {
+      expect(offer(s, T0 + SESSION_REVIVAL_MS, { type: 'ping' })).toBeDefined();
+    });
+    withSeededDb(T0, (s) => {
+      expect(offer(s, T0 + SESSION_REVIVAL_MS + 1, { type: 'ping' })).toBeUndefined();
+      expect(s.droppedPings).toBe(1);
+      expect(s.size).toBe(0);
+    });
+  });
+
+  it('revives once, then continues live: no second lookup starts a second visit', () => {
+    const away = T0 + 35 * 60_000;
+    withSeededDb(T0, (s) => {
+      const first = run(s, away, { type: 'ping' });
+      const second = run(s, away + 15_000, { type: 'ping' });
+      expect(Buffer.from(second.session.id)).toEqual(Buffer.from(first.session.id));
+      expect(second.event.seq).toBe(15);
+      expect(second.session.engaged_ms).toBe(180_000 + PING_CLAMP_MS + 15_000);
+      expect(s.size).toBe(1);
+    });
+  });
+
+  it('never revives for an action — a pageview past the timeout is a new visit', () => {
+    const away = T0 + 35 * 60_000;
+    for (const type of ['pageview', 'event', 'outlink', 'download'] as const) {
+      withSeededDb(T0, (s) => {
+        const { event, session } = run(s, away, {
+          type,
+          event: { category: 'ui', action: 'click' },
+          targetUrl: 'https://other.org/x',
+        });
+        expect(Buffer.from(session.id), type).not.toEqual(Buffer.from(PRIOR));
+        expect(event.seq, type).toBe(1);
+        expect(session.ref_type, type).toBe('direct'); // attribution re-evaluated
+      });
+    }
+  });
+
+  it('never revives another site or another visitor', () => {
+    const away = T0 + 35 * 60_000;
+    withSeededDb(T0, (s) => {
+      expect(
+        offer(s, away, { siteId: 2, type: 'ping' }, { site: { ...SITE, id: 2 } }),
+      ).toBeUndefined();
+      expect(offer(s, away, { type: 'ping' }, { visitorId: binId(9) })).toBeUndefined();
+      expect(s.droppedPings).toBe(2);
+    });
   });
 });

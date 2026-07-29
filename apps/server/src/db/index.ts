@@ -383,6 +383,30 @@ export function selectOpenSessions(db: Db, since: number): Array<SessionRow & { 
   >;
 }
 
+/**
+ * Session revival (docs/03): one visitor's most recent session, no older than
+ * `since`. Read-only and rare — a heartbeat with no live session — and served
+ * whole by `ix_sessions_open (site_id, visitor_id, last_seen_at)`.
+ */
+const SQL_LATEST_SESSION = `SELECT s.*,
+  (SELECT COALESCE(MAX(e.seq), 0) FROM events e WHERE e.session_id = s.id) AS max_seq
+FROM sessions s
+WHERE s.site_id = ? AND s.visitor_id = ? AND s.last_seen_at >= ?
+ORDER BY s.last_seen_at DESC LIMIT 1`;
+
+export function selectLatestSession(
+  db: Db,
+  siteId: number,
+  visitorId: Uint8Array,
+  since: number,
+): (SessionRow & { max_seq: number }) | undefined {
+  return stmt<SessionRow & { max_seq: number }>(db, SQL_LATEST_SESSION).get(
+    siteId,
+    visitorId,
+    since,
+  ) as (SessionRow & { max_seq: number }) | undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Settings & diagnostics counters
 // ---------------------------------------------------------------------------

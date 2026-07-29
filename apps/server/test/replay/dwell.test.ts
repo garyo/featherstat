@@ -4,6 +4,7 @@ import {
   type HitType,
   PING_CLAMP_MS,
   type QueryRequest,
+  SESSION_REVIVAL_MS,
   SESSION_TIMEOUT_MS,
 } from '@featherstat/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -99,8 +100,14 @@ function sessionize(source: Corpus): OracleSession[] {
     // Identity rotates at UTC midnight (docs/03), so the UTC day is part of the key.
     const day = Math.floor(ctx.receivedAt / DAY_MS);
     const identity = `${hit.siteId}|${day}|${hit.visitorId ?? `${ctx.ip}\n${ctx.userAgent}`}`;
-    let session = open.get(identity);
-    if (session === undefined || ctx.receivedAt - session.lastSeen > SESSION_TIMEOUT_MS) {
+    // A ping continues a visit, never starts one (docs/03): it reaches back to the
+    // returning-reader window, and past that it is dropped rather than stored.
+    const prior = open.get(identity);
+    const reach = hit.type === 'ping' ? SESSION_REVIVAL_MS : SESSION_TIMEOUT_MS;
+    const idle = prior === undefined ? Number.POSITIVE_INFINITY : ctx.receivedAt - prior.lastSeen;
+    if (hit.type === 'ping' && idle > reach) continue;
+    let session = idle <= reach ? prior : undefined;
+    if (session === undefined) {
       session = {
         siteId: hit.siteId,
         localDate: localStamp(zones.get(hit.siteId) ?? 'UTC', ctx.receivedAt).date,

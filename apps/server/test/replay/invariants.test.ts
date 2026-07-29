@@ -268,6 +268,34 @@ describe('replay corpus invariants', () => {
     }
   });
 
+  it('1c. every stored visit holds at least one action', () => {
+    // The session-table side of the same idea, and the reason ungrouped `visits`
+    // is not compared against actions above: a visit is dated by where it started,
+    // an action by when it happened, so a visit that crosses local midnight would
+    // legitimately break the comparison inside a window.
+    //
+    // What cannot happen in any window is a visit with no action ANYWHERE in it.
+    // A heartbeat reports that a page is still open; it can continue a visit, so a
+    // visit whose every row is a heartbeat is a visit nobody made. This counts
+    // straight from the tables, with no compiler in the path.
+    expect(
+      db
+        .prepare(
+          `SELECT COUNT(*) FROM sessions s
+             WHERE NOT EXISTS (
+               SELECT 1 FROM events e WHERE e.session_id = s.id AND e.type != 'ping'
+             )`,
+        )
+        .pluck()
+        .get(),
+      'a visit whose every row is a heartbeat',
+    ).toBe(0);
+    // And the corpus does contain heartbeats, so that is not vacuous.
+    expect(
+      db.prepare("SELECT COUNT(*) FROM events WHERE type = 'ping'").pluck().get(),
+    ).toBeGreaterThan(0);
+  });
+
   it('2. every visitor counted has at least one non-ping row', () => {
     // The honest form of the ordering. `pageviews >= visitors` is NOT asserted
     // and does not hold in general: a visit whose only action is an outlink or a
