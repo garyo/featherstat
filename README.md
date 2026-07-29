@@ -78,6 +78,45 @@ GitHub as `featherstat` when ready.
 Implementation in progress — M0 (walking skeleton), following
 [docs/08-implementation-plan.md](docs/08-implementation-plan.md).
 
+## Development
+
+bun, never npm. Node ≥ 24.
+
+```bash
+bun install
+bun run --cwd apps/server seed   # data/dev.db: 90 days × 6 sites, deterministic
+bun run --cwd apps/server dev    # API on :8080
+bun run --cwd apps/web dev       # dashboard on :5173, proxies /api to :8080
+```
+
+### The gates
+
+```bash
+bun run ci       # everything below, cheapest first; non-zero if any gate fails
+```
+
+| Gate | What it enforces |
+| --- | --- |
+| `bun run check` | biome lint + format, `tsc --noEmit`, `svelte-check` |
+| `bun run build` | tracker bundles, SPA, esbuild server bundle |
+| `bun run test` | vitest: units, the golden Matomo corpus, the replay assertions, and the tracker + web bundle-size ratchets |
+| `bun run bench` | the replay perf budget (docs/02); thresholds in `apps/server/test/replay/bench-thresholds.json` |
+
+The bundle budgets and the bench thresholds are **ratchets**: they tighten,
+never loosen. A breach means the thing grew or slowed, not that the number was
+wrong.
+
+Enable the hooks once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+`pre-commit` runs the fast gates (`bun run check`, ~5 s); `pre-push` runs the
+whole of `bun run ci` (~25 s) — the same script
+[GitHub Actions](.github/workflows/ci.yml) runs. Either can be bypassed with
+`--no-verify` when you mean to.
+
 ## Deploy (Docker)
 
 One container: SPA + query/admin API + tracking endpoints, SQLite on a volume.

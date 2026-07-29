@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+#
+# Fast gates only — biome lint/format, tsc, svelte-check (~5s). The full suite
+# runs at pre-push; a pre-commit slow enough to be resented is a pre-commit that
+# gets disabled, which is worse than no hook at all.
+#
+# This checks the working tree, not the staged index. Stashing unstaged work to
+# check the index exactly is a well-known way to lose that work — pre-push is
+# the gate that has to be exact, and it is.
+#
+# Enable: git config core.hooksPath .githooks
+# Bypass: git commit --no-verify
+
+set -uo pipefail
+
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+if ! bun run check; then
+  echo "" >&2
+  echo "pre-commit: 'bun run check' failed — fix it, or commit with --no-verify." >&2
+  exit 1
+fi

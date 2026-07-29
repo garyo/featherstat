@@ -16,8 +16,10 @@ after edits and keep the a11y `<title>`).
 
 ```bash
 bun install
+bun run ci           # every gate: check, build, test, bench — green before every push
 bun run check        # biome lint+format check, then tsc — green before every commit
 bun run test         # vitest, all packages
+bun run bench        # replay perf budget (runs Node, see below)
 bun run fix          # biome auto-fix
 bun run --cwd apps/server seed  # seed data/dev.db (90 days × 6 sites, deterministic)
 bun run --cwd apps/server dev   # dev API on :8080 (script runs Node: better-sqlite3
@@ -64,10 +66,12 @@ bun run --cwd apps/web dev      # dashboard on :5173, proxies /api to :8080
    batch for nothing.
 
    Corollary — **one rendering per thing rendered**: never copy markup into a
-   second file; extract it (`FeedRows.svelte`, `BarRows.svelte`) and let both
-   callers render it. The realtime feed forked exactly this way, and every fix
-   after that had to be made twice; `feed-rows.test.ts` now fails if a second
-   file grows those rows.
+   second file; extract it (`FeedRows.svelte`, `BarRows.svelte`,
+   `WidgetGrid.svelte`) and let both callers render it — decorating the shared
+   piece, never re-implementing it. The realtime feed forked exactly this way,
+   and every fix after that had to be made twice; `feed-rows.test.ts` and
+   `widget-grid.test.ts` now fail if a second file grows those rows or a second
+   file renders the registry.
 
    Known exception, deliberate: the Journeys sankey and flows table are still
    view-local (their edge-click and depth controls are coupled). Registering
@@ -98,7 +102,12 @@ bun run --cwd apps/web dev      # dashboard on :5173, proxies /api to :8080
 
 ## Quality bar
 
-`bun run check && bun run test` green before every commit. Self-review the
-diff first: reuse, dead code, magic numbers, hot-path allocations. Perf
-budgets from docs/02 are CI-enforced via the replay bench — treat a bench
-regression like a failing test.
+`bun run check && bun run test` green before every commit, `bun run ci` — which
+adds the build and the replay perf bench — green before every push. Self-review
+the diff first: reuse, dead code, magic numbers, hot-path allocations. Treat a
+bench regression like a failing test: the docs/02 perf budgets are gated, not
+advisory.
+
+The gates run themselves if you enable the hooks once per clone:
+`git config core.hooksPath .githooks` (pre-commit → `check`, pre-push → `ci`).
+`.github/workflows/ci.yml` runs the same `bun run ci` on push and PR.

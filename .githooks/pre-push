@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+#
+# Every gate before anything leaves the machine — the same `bun run ci` that
+# GitHub Actions runs (~25s).
+#
+# Enable: git config core.hooksPath .githooks
+# Bypass: git push --no-verify
+
+set -uo pipefail
+
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+# Branch deletions push no commits, so there is nothing to gate. Only skip on a
+# positive reading of stdin: an unread or empty ref list must still run the
+# gates, or a quirk of the caller becomes a silent bypass.
+saw_ref=0
+only_deletes=1
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+  saw_ref=1
+  case "$local_sha" in
+    *[!0]*) only_deletes=0 ;;
+  esac
+done
+if [ "$saw_ref" -eq 1 ] && [ "$only_deletes" -eq 1 ]; then
+  exit 0
+fi
+
+if ! bun run ci; then
+  echo "" >&2
+  echo "pre-push: gates failed — fix them, or push with --no-verify." >&2
+  exit 1
+fi
