@@ -1,16 +1,14 @@
 <script lang="ts">
-import { inScope, relativeAgo } from '../lib/realtime.ts';
-import { countryName, flagEmoji } from '../widgets/geo.ts';
-import { dotColor } from './alias-colors.ts';
-import { displayDuration } from './format.ts';
-import { type WidgetProps } from './types.ts';
+import { inScope } from '../lib/realtime.ts';
+import FeedRows from './FeedRows.svelte';
+import type { WidgetProps } from './types.ts';
 
 /**
- * The live-feed widget: the Realtime view's feed, card-sized (docs/05 `feed`).
+ * The live-feed widget (docs/05 `feed`): the Realtime view's feed, card-sized.
  * No query — it rides the SSE stream every view already holds, so adding it to
- * a dashboard costs zero batch work (CLAUDE.md invariant 1 untouched). The
- * Realtime view remains the full-fat sibling (tally, hover-highlight,
- * engagement); this one is glanceable rows only.
+ * a dashboard costs zero batch work (CLAUDE.md invariant 1). The rows are
+ * FeedRows, the same component the Realtime view renders: this widget is a
+ * frame around it, never a second copy of it.
  */
 let { spec, recent, scope = 'all', sites, onopenrealtime }: WidgetProps = $props();
 
@@ -33,59 +31,19 @@ function feedLimit(raw: unknown): number {
   const value = typeof raw === 'number' ? Math.floor(raw) : 10;
   return Math.min(Math.max(value, 5), 50);
 }
-
-function whereOf(hit: (typeof shown)[number]): string {
-  if (hit.city !== undefined && hit.country !== undefined) return `${hit.city}, ${hit.country}`;
-  if (hit.country !== undefined) return countryName(hit.country);
-  return 'Unknown';
-}
-
-function whatOf(hit: (typeof shown)[number]): string {
-  if (hit.type === 'event') {
-    const action = hit.eventAction ?? 'event';
-    return hit.eventCategory !== undefined ? `${hit.eventCategory} · ${action}` : action;
-  }
-  return hit.path ?? '/';
-}
-
-const siteNameOf = (id: number): string => sites?.get(id)?.name ?? `Site ${id}`;
 </script>
 
 {#if onopenrealtime === undefined}
   <h2>{spec.title ?? 'Realtime'}</h2>
 {:else}
-  <h2><button class="h2link" type="button" onclick={onopenrealtime}>{spec.title ?? 'Realtime'}</button></h2>
+  <h2>
+    <button class="h2link" type="button" onclick={onopenrealtime}>{spec.title ?? 'Realtime'}</button>
+  </h2>
 {/if}
 {#if recent === undefined}
   <p class="widget-note">Live feed — available in the app, not in shared views.</p>
 {:else if shown.length === 0}
   <p class="widget-note">Waiting for the first hit…</p>
 {:else}
-  <div class="feed" role="list">
-    {#each shown as hit, i (i)}
-      {@const spent = displayDuration(hit.engagedMs)}
-      <div
-        class="feed-row"
-        role="listitem"
-        class:hl={hover === hit.visitor.name}
-        onmouseenter={() => (hover = hit.visitor.name)}
-        onmouseleave={() => (hover = undefined)}
-      >
-        <span class="ago">{relativeAgo(hit.ts, now)}</span>
-        <span class="vdot" style="background: {dotColor(hit.visitor.color)}"></span>
-        <span class="vname">{hit.visitor.name}</span>
-        {#if spent !== undefined}<span class="vtime">{spent}</span>{/if}
-        {#if hit.country !== undefined}
-          {@const flag = flagEmoji(hit.country)}
-          {#if flag !== undefined}<span class="flag" title={countryName(hit.country)}>{flag}</span
-            >{/if}
-        {/if}
-        <span class="where">{whereOf(hit)}</span>
-        <span class="path">
-          {#if hit.type === 'event'}<span class="evt-dot"></span>{/if}{whatOf(hit)}
-        </span>
-        {#if scope === 'all'}<span class="fsite">{siteNameOf(hit.siteId)}</span>{/if}
-      </div>
-    {/each}
-  </div>
+  <FeedRows hits={shown} {now} {scope} {sites} {hover} onhover={(name) => (hover = name)} />
 {/if}

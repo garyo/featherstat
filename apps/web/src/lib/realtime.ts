@@ -1,5 +1,6 @@
 import { type RealtimeEngagement, type RealtimeHit, TALLY_WINDOW_MS } from '@featherstat/shared';
 import { displayDuration } from '../widgets/format.ts';
+import { countryName } from '../widgets/geo.ts';
 import type { SiteScope } from './state.ts';
 
 /**
@@ -152,4 +153,18 @@ export function countryTally(
   return list
     .slice(0, TALLY_ROWS)
     .map((row) => ({ ...row, pct: ((row.count / max) * 100).toFixed(1) }));
+}
+
+/** A hit's place, as the feed prints it: `City, CC`, else the country, else Unknown. */
+export function placeLabel(hit: RealtimeHit): string {
+  if (hit.city !== undefined && hit.country !== undefined) return `${hit.city}, ${hit.country}`;
+  if (hit.country !== undefined) return countryName(hit.country);
+  return 'Unknown';
+}
+
+/** What the visitor did: an event reads `category · action`, anything else its path. */
+export function actionLabel(hit: RealtimeHit): string {
+  if (hit.type !== 'event') return hit.path ?? '/';
+  const action = hit.eventAction ?? 'event';
+  return hit.eventCategory !== undefined ? `${hit.eventCategory} · ${action}` : action;
 }

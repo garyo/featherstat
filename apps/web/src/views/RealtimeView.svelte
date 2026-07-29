@@ -12,7 +12,7 @@ import {
 } from '../lib/realtime.ts';
 import type { SiteScope } from '../lib/state.ts';
 import { dotColor } from '../widgets/alias-colors.ts';
-import { displayDuration } from '../widgets/format.ts';
+import FeedRows from '../widgets/FeedRows.svelte';
 import { countryName, flagEmoji } from '../widgets/geo.ts';
 
 /**
@@ -39,14 +39,9 @@ interface Props {
 
 let { active, recent, visitorTimes, site, sites }: Props = $props();
 
-/**
- * Alias dot colors: the chart-safe categorical tokens, CYCLED by index. That is
- * deliberate — visitor identity is carried by the NAME, the dot only aids
- * scanning — so the dataviz never-cycle rule for data series does not apply.
- */
-
-const siteNameOf = (id: number): string =>
-  sites?.find((entry) => entry.id === id)?.name ?? `Site ${id}`;
+/** FeedRows looks sites up by id; this view is handed the directory as a list. */
+const siteMap = $derived(new Map((sites ?? []).map((entry) => [entry.id, entry])));
+const siteNameOf = (id: number): string => siteMap.get(id)?.name ?? `Site ${id}`;
 
 /** Alias under the cursor — its every row lights up, feed and tally alike. */
 let hover = $state<string | undefined>(undefined);
@@ -75,21 +70,6 @@ function placeOf(row: VisitorCount): string | undefined {
   if (row.city !== undefined && row.country !== undefined) return `${row.city}, ${row.country}`;
   if (row.city !== undefined) return row.city;
   return row.country !== undefined ? countryName(row.country) : undefined;
-}
-
-function whereOf(hit: RealtimeHit): string {
-  if (hit.city !== undefined && hit.country !== undefined) return `${hit.city}, ${hit.country}`;
-  if (hit.country !== undefined) return countryName(hit.country);
-  return 'Unknown';
-}
-
-function whatOf(hit: RealtimeHit): string {
-  if (hit.type === 'event') {
-    const action = hit.eventAction ?? 'event';
-    // Mockup + Events card shape: `category · action`.
-    return hit.eventCategory !== undefined ? `${hit.eventCategory} · ${action}` : action;
-  }
-  return hit.path ?? '/';
 }
 </script>
 
@@ -131,34 +111,7 @@ function whatOf(hit: RealtimeHit): string {
     {#if shown.length === 0}
       <p class="widget-note">Waiting for the first hit…</p>
     {:else}
-      <div class="feed" role="list">
-        {#each shown as hit, i (i)}
-          {@const spent = displayDuration(hit.engagedMs)}
-          <div
-            class="feed-row"
-            role="listitem"
-            class:hl={hover === hit.visitor.name}
-            onmouseenter={() => (hover = hit.visitor.name)}
-            onmouseleave={() => (hover = undefined)}
-          >
-            <span class="ago">{relativeAgo(hit.ts, now)}</span>
-            <span class="vdot" style="background: {dotColor(hit.visitor.color)}"></span>
-            <span class="vname">{hit.visitor.name}</span>
-            {#if spent !== undefined}<span class="vtime">{spent}</span>{/if}
-            {#if hit.country !== undefined}
-              {@const flag = flagEmoji(hit.country)}
-              {#if flag !== undefined}<span class="flag" title={countryName(hit.country)}
-                  >{flag}</span
-                >{/if}
-            {/if}
-            <span class="where">{whereOf(hit)}</span>
-            <span class="path">
-              {#if hit.type === 'event'}<span class="evt-dot"></span>{/if}{whatOf(hit)}
-            </span>
-            {#if site === 'all'}<span class="fsite">{siteNameOf(hit.siteId)}</span>{/if}
-          </div>
-        {/each}
-      </div>
+      <FeedRows hits={shown} {now} scope={site} sites={siteMap} {hover} onhover={(name) => (hover = name)} />
     {/if}
   </div>
 

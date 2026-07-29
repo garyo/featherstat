@@ -54,7 +54,14 @@ bun run --cwd apps/web dev      # dashboard on :5173, proxies /api to :8080
    (`apps/server/test/fixtures/matomo/`) and the perf thresholds only gain
    cases / get stricter. Never delete a fixture or loosen a threshold to make
    a change pass — surface the conflict instead.
-7. **Query vocabulary, never SQL from clients.** The compiler whitelists
+7. **One rendering per thing rendered.** A view must not hand-roll markup a
+   widget already provides (or could): extract the shared piece into
+   `apps/web/src/widgets/` and have both render it. The realtime feed forked
+   this way — inline in its view first, copied into the widget later — and
+   every fix after that had to be made twice. `feed-rows.test.ts` and
+   `bar-rows.ts` are the shape to follow: rows in one component, pure labels
+   in a tested module.
+8. **Query vocabulary, never SQL from clients.** The compiler whitelists
    metrics/dimensions/ops; everything is parameterized.
 
 ## Conventions
