@@ -7,6 +7,7 @@ import {
   type QueryResponse,
   RangeSchema,
   readStoredDashboard,
+  type SiteWindow,
 } from '@featherstat/shared';
 import { type Context, Hono } from 'hono';
 import type { Auth, AuthEnv } from '../auth/auth.ts';
@@ -21,12 +22,7 @@ import {
   schemaVersion,
   withWriteTransaction,
 } from '../db/index.ts';
-import {
-  executeQueryRequest,
-  resolveSiteWindows,
-  type SiteWindow,
-  UnknownSiteError,
-} from '../query/executor.ts';
+import { executeQueryRequest, resolveSiteWindows, UnknownSiteError } from '../query/executor.ts';
 import { parseDashboardId } from './dashboards.ts';
 import { clientIp } from './track.ts';
 
@@ -180,8 +176,15 @@ export function createShareRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
       results: response.results,
       // dataVersion is a global write counter across ALL sites — inside the
       // hashed ETag it revalidates caches, but it must not ride readable in a
-      // public body where it meters other sites' write volume.
-      meta: { generatedInMs: response.meta.generatedInMs, dataVersion: 0 },
+      // public body where it meters other sites' write volume. The windows do
+      // ride along: without them a share page could only guess at the range it
+      // is showing, which is exactly how it came to render different window
+      // semantics from the in-app dashboard.
+      meta: {
+        generatedInMs: response.meta.generatedInMs,
+        dataVersion: 0,
+        windows: response.meta.windows,
+      },
     };
     return c.json(body, 200, cacheHeaders(tag));
   });
@@ -220,7 +223,7 @@ function etag(
   canonicalBody: string,
   windows: readonly SiteWindow[],
 ): string {
-  const resolved = windows.map((w) => `${w.siteId}:${w.from}:${w.to}`).join(',');
+  const resolved = windows.map((w) => `${w.siteId}:${w.timezone}:${w.from}:${w.to}`).join(',');
   const hash = createHash('sha256')
     .update(`${version}|${schema}|${canonicalBody}|${resolved}`)
     .digest('base64url');

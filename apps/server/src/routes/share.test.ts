@@ -167,6 +167,13 @@ describe('GET /share/:token', () => {
     });
     // The global write counter must not ride readable in a public body.
     expect(view.meta.dataVersion).toBe(0);
+    // The resolved window does ride along, and it is the SAME one the in-app
+    // dashboard gets. A share page has no site directory, so before this it fell
+    // back to the data extent and the two screens showed different windows
+    // through identical widget code.
+    expect(view.meta.windows).toEqual([
+      { siteId: 1, timezone: 'America/New_York', from: '2023-10-16', to: '2023-11-14' },
+    ]);
     expect(res.headers.get('x-robots-tag')).toBe('noindex');
 
     // Revalidation is free, exactly like /api/query.

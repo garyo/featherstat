@@ -124,10 +124,65 @@ transaction.
 }
 ```
 
-Response: `{ results: { [id]: { rows, compare? } | { error } }, meta: { generatedInMs, dataVersion } }`.
+Response:
+`{ results: { [id]: { rows, compare?, bucket?, axis? } | { error } }, meta: { generatedInMs, dataVersion, windows } }`.
 A query the vocabulary cannot answer honestly (e.g. `bounce_rate` × `title`) or
 a kind that ships in a later milestone yields a per-query `error` entry — the
 batch itself still succeeds, and never returns wrong numbers.
+
+- **The response describes itself.** Resolving a range preset needs the site's
+  timezone and a clock; enumerating a chart's x axis needs that *and* the
+  granularity the query ran at. The server has all three, so it says what it
+  computed and no client re-derives it. An earlier draft of this section called
+  the field `meta.range`; it is **`meta.windows`**, plural, and the plural is
+  load-bearing:
+
+  ```jsonc
+  "meta": {
+    "generatedInMs": 16.4,
+    "dataVersion": 91824,
+    "windows": [                                  // one per site in scope
+      { "siteId": 4, "timezone": "America/New_York", "from": "2026-06-30", "to": "2026-07-29" }
+    ]
+  }
+  ```
+
+  `site: "all"` fans out across sites whose timezones differ, so around a local
+  midnight there is no single window that describes the batch. This is the same
+  array the ETag hashes.
+- **Bucketed results carry their axis.** A result grouped by `bucket` states the
+  granularity it ran at and the bucket keys it enumerated, per site:
+
+  ```jsonc
+  "series": {
+    "rows": [ { "bucket": "2026-07-29", "visitors": 41 } ],   // SPARSE
+    "bucket": "day",
+    "axis": [ { "siteId": 4, "keys": ["2026-06-30", "…", "2026-07-29"], "clip": "2026-07-29" } ]
+  }
+  ```
+
+  **Rows stay sparse** — the axis is the key list a client zips them against,
+  never a promise of a row per key. Dense zero-filling is deliberately *not* the
+  contract: `pages~<id>` (`path × day`) is unlimited by design, so filling it
+  would manufacture tens of thousands of rows on a code path a stored layout
+  reaches through a public share link. For that reason `axis` is emitted only
+  when `bucket` is the result's one grouping besides `site` (the dimension the
+  axis is already keyed by), and only while the window enumerates at most
+  `MAX_AXIS_KEYS` keys.
+
+  `keys` is a pure function of the window and the granularity — never of the
+  clock — so a body replayed from cache on a 304 can never state a stale axis.
+  `clip` is the clock-dependent part: the newest key whose bucket had **begun**
+  when the response was generated, which is where real data stops inside the
+  window. `today` resolves to a whole local day, so its hour axis runs to
+  `23:00` while only the keys through `clip` can hold anything; padding past it
+  invents future zeros. A reader whose clock has moved on since the fetch shows
+  *more* than `clip`, never less — that one trim is the only time derivation
+  left in the browser.
+- **Hour keys come from the zone, not from counting.** A spring-forward day has
+  23 hour keys and no `02:00` (an hour that never happened, so SQL can never
+  return a row for it); a fall-back day has 24, with the doubled local hour
+  sharing one key because both passes carry the same `local_hour`.
 
 - **Vocabulary, not SQL.** Metrics: `visitors`, `visits`, `pageviews`,
   `events`, `outlinks`, `downloads`, `engaged_ms`, `bounce_rate`
@@ -163,8 +218,10 @@ batch itself still succeeds, and never returns wrong numbers.
 - **Click-to-filter falls out for free**: clicking a row in any breakdown adds
   a `filters` entry and re-issues the same batch.
 - **Caching**: response ETag = hash(max event rowid, schema version,
-  canonicalized request body, resolved per-site date windows — so a preset
-  like `today` expires at site-local midnight even when no data changed).
+  canonicalized request body, resolved per-site windows *including their
+  timezones* — so a preset like `today` expires at site-local midnight even when
+  no data changed, and re-zoning a site expires an explicit `from`/`to` range
+  whose bounds did not move but whose hour axis did).
   Unchanged data → 304 with zero queries executed. Realtime SSE tells the
   client *when* to revalidate, so there's no polling loop.
 - `"site": "all"` grants the all-sites overview the same one-request property,

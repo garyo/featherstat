@@ -3,7 +3,7 @@ import type { QueryResponse } from '@featherstat/shared';
 import { type SharePayload, shareEndpoint } from '../lib/share.ts';
 import { toggleTheme } from '../lib/theme.ts';
 import DashboardGrid from '../views/DashboardGrid.svelte';
-import { bucketedWindow } from '../widgets/format.ts';
+import { windowLabel } from '../widgets/format.ts';
 
 /**
  * The read-only page behind a share link (docs/04 § 5). It carries no session,
@@ -50,7 +50,14 @@ async function load(): Promise<void> {
 const response = $derived<QueryResponse | undefined>(
   payload === undefined ? undefined : { results: payload.results, meta: payload.meta },
 );
-const window = $derived(bucketedWindow(response));
+/**
+ * The range this page is showing, read off the same `meta.windows` the in-app
+ * dashboard reads. A share page has no site directory and so could never resolve
+ * a preset; it used to fall back to the DATA extent, which is why the two screens
+ * rendered different window semantics through identical widget code. Neither
+ * derives anything now, so they agree by construction.
+ */
+const span = $derived(windowLabel(payload?.meta.windows));
 </script>
 
 <main class="shell">
@@ -73,14 +80,15 @@ const window = $derived(bucketedWindow(response));
     <div class="card"><p class="widget-note">Loading…</p></div>
   {:else}
     <div class="filters">
-      <span class="compare-note">{payload.dashboard.name}</span>
+      <span class="compare-note"
+        >{payload.dashboard.name}{span === undefined ? '' : ` · ${span}`}</span
+      >
     </div>
     <DashboardGrid
       dashboard={payload.dashboard}
       {response}
       error={undefined}
       refetching={false}
-      {window}
       chrome={false}
     />
   {/if}

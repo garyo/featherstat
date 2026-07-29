@@ -6,6 +6,7 @@ import {
   type RealtimeEngagement,
   type RealtimeHit,
   type SiteInfo,
+  type SiteWindow,
   type WidgetSpec,
 } from '@featherstat/shared';
 import type { RangePreset, SiteScope } from '../lib/state.ts';
@@ -27,8 +28,12 @@ export interface WidgetProps {
    * (CLAUDE.md invariant 1 — a widget declares a query or it declares none).
    */
   data?: WidgetData;
-  /** The requested site-local date window — charts pad their series out to it. */
-  window?: { from: string; to: string };
+  /**
+   * The windows the SERVER resolved this response's range to, one per site
+   * (`meta.windows`). Charts read their axis off the result and these; nothing
+   * in the browser resolves a preset or enumerates a bucket (widgets/axis.ts).
+   */
+  windows?: readonly SiteWindow[];
   /** Range qualifier for titles (mockup: "Traffic by hour · last 30 days"). */
   rangeLabel?: string;
   /** The active preset — bucket clock for range-driven widgets (site cards). */

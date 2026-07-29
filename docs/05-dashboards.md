@@ -183,7 +183,22 @@ every chart inherits them. The mockup instantiates all of this.
   encode magnitude, not identity: single-hue sequential washes with node
   labels in ink — never one color per path.
 - **Time series x-axis** buckets by the site's timezone (the `local_*`
-  columns), so "today" means the site's today.
+  columns), so "today" means the site's today — and the axis is **the server's**,
+  not the browser's. A widget reads `result.axis` (per site) and `meta.windows`
+  off the response it was handed (04 § 3) and zips its sparse rows against them;
+  it resolves no presets and enumerates no buckets. The one thing a browser still
+  owns is the READER's clock: an axis is trimmed to whichever is newer, the
+  server's `clip` or the bucket the reader is in, so a dashboard left open lets
+  `today` grow as the hour turns and a 304 revalidation still moves. That single
+  trim carries the DST tests, because it is now the only place a client turns a
+  clock into a bucket.
+
+  The consequence worth naming: the in-app dashboard, the editor preview and the
+  public share page cannot disagree about the window on screen, because none of
+  them derives it. The share page has no site directory and so could never
+  resolve a preset — it used to fall back to the *data extent*, which is why the
+  same widget code rendered two different window semantics depending on which
+  page it was on.
 
 ## Numbers
 

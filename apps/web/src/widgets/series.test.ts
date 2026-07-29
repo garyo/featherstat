@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addDaysIso, fillBuckets, num, sliceRanges } from './series.ts';
+import { num, seriesOf, sliceRanges } from './series.ts';
 
 describe('num', () => {
   it('coerces result cells to chartable numbers', () => {
@@ -10,79 +10,75 @@ describe('num', () => {
   });
 });
 
-describe('addDaysIso', () => {
-  it('crosses month and year boundaries in plain UTC math', () => {
-    expect(addDaysIso('2026-07-01', -1)).toBe('2026-06-30');
-    expect(addDaysIso('2025-12-31', 1)).toBe('2026-01-01');
-    expect(addDaysIso('2026-07-27', -7)).toBe('2026-07-20');
-  });
-});
-
-describe('fillBuckets', () => {
-  it('zero-fills missing days and sorts by bucket', () => {
+describe('seriesOf', () => {
+  it('zero-fills every key of the axis, in axis order', () => {
     const rows = [
       { bucket: '2026-07-04', visitors: 5 },
       { bucket: '2026-07-01', visitors: 2 },
     ];
-    const points = fillBuckets(rows, ['visitors']);
-    expect(points.map((p) => p.bucket)).toEqual([
-      '2026-07-01',
-      '2026-07-02',
-      '2026-07-03',
-      '2026-07-04',
-    ]);
-    expect(points.map((p) => p.values.visitors)).toEqual([2, 0, 0, 5]);
+    const axis = ['2026-07-01', '2026-07-02', '2026-07-03', '2026-07-04'];
+    const points = seriesOf(rows, ['visitors'], axis);
+    expect(points.map((point) => point.bucket)).toEqual(axis);
+    expect(points.map((point) => point.values.visitors)).toEqual([2, 0, 0, 5]);
   });
 
-  it('zero-fills hour gaps within a single day', () => {
+  it('fills hour keys the same way — one enumerator, no bucket sniffing', () => {
     const rows = [
       { bucket: '2026-07-27 09:00', pageviews: 3 },
       { bucket: '2026-07-27 12:00', pageviews: 7 },
     ];
-    const points = fillBuckets(rows, ['pageviews']);
-    expect(points.map((p) => p.bucket)).toEqual([
+    const axis = [
       '2026-07-27 09:00',
       '2026-07-27 10:00',
       '2026-07-27 11:00',
       '2026-07-27 12:00',
-    ]);
-    expect(points.map((p) => p.values.pageviews)).toEqual([3, 0, 0, 7]);
-  });
-
-  it('passes other bucket shapes through in sorted order', () => {
-    const rows = [
-      { bucket: '2026-07', visitors: 9 },
-      { bucket: '2026-05', visitors: 4 },
+      '2026-07-27 13:00',
     ];
-    expect(fillBuckets(rows, ['visitors']).map((p) => p.bucket)).toEqual(['2026-05', '2026-07']);
-  });
-
-  it('drops rows without a bucket and handles empty input', () => {
-    expect(fillBuckets([], ['visitors'])).toEqual([]);
-    expect(fillBuckets([{ visitors: 3, bucket: null }], ['visitors'])).toEqual([]);
-  });
-
-  it('pads a day series out to the requested window — quiet edges must not shrink the chart', () => {
-    const rows = [{ bucket: '2026-07-03', visitors: 5 }];
-    const points = fillBuckets(rows, ['visitors'], { from: '2026-07-01', to: '2026-07-05' });
-    expect(points.map((p) => p.bucket)).toEqual([
-      '2026-07-01',
-      '2026-07-02',
-      '2026-07-03',
-      '2026-07-04',
-      '2026-07-05',
+    expect(seriesOf(rows, ['pageviews'], axis).map((point) => point.values.pageviews)).toEqual([
+      3, 0, 0, 7, 0,
     ]);
-    expect(points.map((p) => p.values.visitors)).toEqual([0, 0, 5, 0, 0]);
   });
 
-  it('never truncates data that spills past the window', () => {
+  it('fills week and month keys, which no client enumerator ever covered', () => {
+    const weeks = seriesOf(
+      [{ bucket: '2026-07-13', visitors: 4 }],
+      ['visitors'],
+      ['2026-07-06', '2026-07-13', '2026-07-20'],
+    );
+    expect(weeks.map((point) => point.values.visitors)).toEqual([0, 4, 0]);
+    const months = seriesOf(
+      [{ bucket: '2026-07', visitors: 9 }],
+      ['visitors'],
+      ['2026-05', '2026-06', '2026-07'],
+    );
+    expect(months.map((point) => point.values.visitors)).toEqual([0, 0, 9]);
+  });
+
+  it('still draws a row whose bucket is off the axis, in sorted position', () => {
+    // The axis is what the server could enumerate, never a licence to drop an
+    // answer it returned.
     const rows = [
       { bucket: '2026-06-30', visitors: 1 },
       { bucket: '2026-07-02', visitors: 2 },
     ];
-    const points = fillBuckets(rows, ['visitors'], { from: '2026-07-01', to: '2026-07-02' });
-    expect(points[0]?.bucket).toBe('2026-06-30');
-    expect(points.at(-1)?.bucket).toBe('2026-07-02');
+    const points = seriesOf(rows, ['visitors'], ['2026-07-01', '2026-07-02']);
+    expect(points.map((point) => point.bucket)).toEqual(['2026-06-30', '2026-07-01', '2026-07-02']);
+  });
+
+  it('falls back to the rows when there is no axis at all', () => {
+    const rows = [
+      { bucket: '2026-07', visitors: 9 },
+      { bucket: '2026-05', visitors: 4 },
+    ];
+    expect(seriesOf(rows, ['visitors'], []).map((point) => point.bucket)).toEqual([
+      '2026-05',
+      '2026-07',
+    ]);
+  });
+
+  it('drops rows without a bucket and handles empty input', () => {
+    expect(seriesOf([], ['visitors'], [])).toEqual([]);
+    expect(seriesOf([{ visitors: 3, bucket: null }], ['visitors'], [])).toEqual([]);
   });
 });
 
@@ -105,40 +101,5 @@ describe('sliceRanges', () => {
       [3, 4],
       [4, 5],
     ]);
-  });
-});
-
-describe('fillBuckets hour padding', () => {
-  const hour = (h: number, visitors: number) => ({
-    bucket: `2026-07-29 ${String(h).padStart(2, '0')}:00`,
-    visitors,
-  });
-
-  it('pads an hour series out to the requested window, not the last hit', () => {
-    // Hits stopped at 11:00; it is now 13:00. The quiet hours are the point.
-    const series = fillBuckets([hour(9, 4), hour(11, 2)], ['visitors'], {
-      from: '2026-07-29 00:00',
-      to: '2026-07-29 13:00',
-    });
-    expect(series).toHaveLength(14);
-    expect(series[0]).toEqual({ bucket: '2026-07-29 00:00', values: { visitors: 0 } });
-    expect(series.at(-1)).toEqual({ bucket: '2026-07-29 13:00', values: { visitors: 0 } });
-    expect(series[9]?.values.visitors).toBe(4);
-  });
-
-  it('pads a single-hour series too, rather than drawing one point', () => {
-    const series = fillBuckets([hour(2, 7)], ['visitors'], {
-      from: '2026-07-29 00:00',
-      to: '2026-07-29 04:00',
-    });
-    expect(series.map((point) => point.values.visitors)).toEqual([0, 0, 7, 0, 0]);
-  });
-
-  it('ignores a date-shaped window for an hour series', () => {
-    const series = fillBuckets([hour(9, 1), hour(10, 1)], ['visitors'], {
-      from: '2026-07-01',
-      to: '2026-07-29',
-    });
-    expect(series).toHaveLength(2);
   });
 });

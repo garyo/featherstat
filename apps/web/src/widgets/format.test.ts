@@ -1,33 +1,14 @@
-import { MetricSchema, type QueryResponse } from '@featherstat/shared';
+import { MetricSchema, type SiteWindow } from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
 import {
-  bucketedWindow,
   bucketLabel,
   bucketTitle,
   compactNumber,
   exactNumber,
   formatDuration,
   METRIC_LABELS,
-  presetWindow,
+  windowLabel,
 } from './format.ts';
-
-describe('presetWindow', () => {
-  // 23:30 UTC: Berlin is already on the 28th — the window must follow the SITE's clock.
-  const lateNight = new Date('2026-07-27T23:30:00Z');
-
-  it('resolves presets to the site-local inclusive window, like the server does', () => {
-    expect(presetWindow('today', 'UTC', lateNight)).toEqual({
-      from: '2026-07-27',
-      to: '2026-07-27',
-    });
-    expect(presetWindow('7d', 'UTC', lateNight)).toEqual({ from: '2026-07-21', to: '2026-07-27' });
-    expect(presetWindow('30d', 'Europe/Berlin', lateNight)).toEqual({
-      from: '2026-06-29',
-      to: '2026-07-28',
-    });
-    expect(presetWindow('mtd', 'UTC', lateNight)).toEqual({ from: '2026-07-01', to: '2026-07-27' });
-  });
-});
 
 describe('numbers (docs/05 § Numbers)', () => {
   it('shows small values exactly and compacts from 10K up', () => {
@@ -68,45 +49,31 @@ describe('bucket labels', () => {
   });
 });
 
-describe('bucketedWindow', () => {
-  const meta = { generatedInMs: 1, dataVersion: 1 };
-
-  it('spans the earliest to latest date across every bucketed result', () => {
-    const response: QueryResponse = {
-      results: {
-        series: { rows: [{ bucket: '2026-06-28', visitors: 1 }] },
-        spark: {
-          rows: [
-            { bucket: '2026-07-27', visitors: 2 },
-            { bucket: '2026-07-01', visitors: 3 },
-          ],
-        },
-        totals: { rows: [{ visitors: 6 }] },
-        broken: { error: { code: 'unsupported', message: 'nope' } },
-      },
-      meta,
-    };
-    expect(bucketedWindow(response)).toEqual({ from: '2026-06-28', to: '2026-07-27' });
+describe('windowLabel', () => {
+  const window = (siteId: number, from: string, to: string): SiteWindow => ({
+    siteId,
+    timezone: 'UTC',
+    from,
+    to,
   });
 
-  it('reads the date out of hour buckets', () => {
-    const response: QueryResponse = {
-      results: {
-        series: {
-          rows: [
-            { bucket: '2026-07-27 09:00', visitors: 1 },
-            { bucket: '2026-07-27 14:00', visitors: 2 },
-          ],
-        },
-      },
-      meta,
-    };
-    expect(bucketedWindow(response)).toEqual({ from: '2026-07-27', to: '2026-07-27' });
+  it('reads the label straight off the server-resolved windows', () => {
+    expect(windowLabel([window(1, '2026-06-30', '2026-07-29')])).toBe('Jun 30 \u2013 Jul 29');
   });
 
-  it('is undefined without a response or without any bucketed rows', () => {
-    expect(bucketedWindow(undefined)).toBeUndefined();
-    expect(bucketedWindow({ results: { t: { rows: [{ visitors: 1 }] } }, meta })).toBeUndefined();
+  it('names a single day once, not as a range of itself', () => {
+    expect(windowLabel([window(1, '2026-07-29', '2026-07-29')])).toBe('Jul 29');
+  });
+
+  it("spans every site's window, because a midnight puts them on different days", () => {
+    expect(
+      windowLabel([window(1, '2026-06-30', '2026-07-29'), window(2, '2026-07-01', '2026-07-30')]),
+    ).toBe('Jun 30 \u2013 Jul 30');
+  });
+
+  it('is undefined before the first response, so the caller words its own placeholder', () => {
+    expect(windowLabel(undefined)).toBeUndefined();
+    expect(windowLabel([])).toBeUndefined();
   });
 });
 

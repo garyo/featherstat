@@ -1,5 +1,4 @@
-import type { Filter, QueryRequest, Range } from '@featherstat/shared';
-import { localToday } from '../widgets/site-stats.ts';
+import { elapsedThrough, type Filter, type QueryRequest, type Range } from '@featherstat/shared';
 import { parseFilters, sameFilters, serializeFilter } from './filters.ts';
 
 /**
@@ -69,7 +68,7 @@ export const RANGE_LABELS: Record<RangePreset, string> = {
 export function localDayKey(zones: readonly string[], now: Date): string {
   return [...new Set(zones)]
     .sort()
-    .map((zone) => localToday(zone, now))
+    .map((zone) => elapsedThrough('day', zone, now.getTime()))
     .join('|');
 }
 

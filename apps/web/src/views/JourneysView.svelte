@@ -3,10 +3,10 @@ import type { Filter, QueryRequest } from '@featherstat/shared';
 import type { QueryClient } from '../lib/api.ts';
 import FilterRow from '../lib/components/FilterRow.svelte';
 import { createRevalidator, type LiveStream } from '../lib/live.ts';
-import { RANGE_LABELS, type RangePreset } from '../lib/state.ts';
+import { localDayKey, RANGE_LABELS, type RangePreset } from '../lib/state.ts';
 import FlowsTable from '../widgets/FlowsTable.svelte';
 import type { EdgeRef } from '../widgets/flows.ts';
-import { bucketLabel, presetWindow } from '../widgets/format.ts';
+import { windowLabel } from '../widgets/format.ts';
 import Sankey from '../widgets/Sankey.svelte';
 import { sliceOf, type WidgetData } from '../widgets/types.ts';
 import { createBatchRunner } from './batch.svelte.ts';
@@ -22,15 +22,27 @@ interface Props {
   client: QueryClient;
   live: LiveStream;
   site: number;
-  /** The site's IANA timezone (site directory) — resolves the window label. */
+  /** The site's IANA timezone (site directory) — its midnight re-runs the batch. */
   timezone: string | undefined;
+  /** The shell's clock; the site's own rollover is part of this view's state. */
+  now?: number;
   range: RangePreset;
   filters: Filter[];
   onselectrange: (range: RangePreset) => void;
   onfilters: (filters: Filter[]) => void;
 }
 
-let { client, live, site, timezone, range, filters, onselectrange, onfilters }: Props = $props();
+let {
+  client,
+  live,
+  site,
+  timezone,
+  range,
+  filters,
+  onselectrange,
+  onfilters,
+  now = Date.now(),
+}: Props = $props();
 
 /** Toolbar depths: `depth` columns = entry + depth-1 transition hops. */
 const DEPTHS = [3, 4, 5] as const;
@@ -54,6 +66,10 @@ const request = $derived.by<QueryRequest>(() => ({
 
 // One batch per view state; re-issued when the URL-driven state (or depth) changes …
 $effect(() => {
+  // The rollover is part of "view state" here exactly as on the dashboard:
+  // `today`/`mtd` resolve server-side, so their answer changes at this site's
+  // own midnight and a view left open overnight must ask again.
+  void dayKey;
   runner.run(request);
 });
 // … and when debounced version ticks say this site's data moved (docs/05 R22).
@@ -63,6 +79,8 @@ $effect(() =>
     key: () => request,
   }),
 );
+
+const dayKey = $derived(localDayKey(timezone === undefined ? [] : [timezone], new Date(now)));
 
 /** A clicked sankey edge narrows the table below — client-side (flows.ts). */
 let selected = $state<EdgeRef | undefined>();
@@ -110,17 +128,15 @@ const failed = $derived(runner.error !== undefined && runner.response !== undefi
 const heldRange = $derived(
   runner.held !== undefined && 'preset' in runner.held.range ? runner.held.range.preset : range,
 );
-const window = $derived(timezone !== undefined ? presetWindow(heldRange, timezone) : undefined);
+/** The server's own resolved window for the response on screen — the same
+ * source the dashboard's label reads, so the two views cannot disagree. */
 const note = $derived.by(() => {
   if (failed) {
     return runner.stale
       ? `Couldn't load ${RANGE_LABELS[range].toLowerCase()} — showing ${RANGE_LABELS[heldRange].toLowerCase()}`
       : 'Live update failed — showing the last good result';
   }
-  if (window === undefined) return undefined;
-  return window.from === window.to
-    ? bucketLabel(window.from)
-    : `${bucketLabel(window.from)} – ${bucketLabel(window.to)}`;
+  return windowLabel(runner.response?.meta.windows);
 });
 </script>
 

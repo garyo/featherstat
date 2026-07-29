@@ -1,9 +1,10 @@
 <script lang="ts">
+import { resultAxes, sharedKeys } from './axis.ts';
 import { bucketLabel, bucketTitle, exactNumber, METRIC_LABELS } from './format.ts';
-import { fillBuckets, num } from './series.ts';
+import { num, seriesOf } from './series.ts';
 import { sliceOf, type WidgetProps } from './types.ts';
 
-let { spec, data, window }: WidgetProps = $props();
+let { spec, data, windows, now }: WidgetProps = $props();
 
 const HEIGHT = 250;
 const MARGIN = { l: 42, r: 14, t: 10, b: 26 };
@@ -19,9 +20,14 @@ const metrics = $derived(
     ? [...new Set(spec.query.metrics)].slice(0, MAX_SERIES)
     : [],
 );
-const points = $derived(
-  slice.kind === 'ready' ? fillBuckets(slice.result.rows, metrics, window) : [],
+// The x axis is the server's, moved to the reader's clock — one shared axis even
+// when the batch spans timezones (widgets/axis.ts).
+const axis = $derived(
+  slice.kind === 'ready'
+    ? sharedKeys(resultAxes(slice.result, windows ?? [], now ?? Date.now()))
+    : [],
 );
+const points = $derived(slice.kind === 'ready' ? seriesOf(slice.result.rows, metrics, axis) : []);
 
 let width = $state(0);
 let svgEl: SVGSVGElement | undefined = $state();

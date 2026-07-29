@@ -43,7 +43,6 @@ interface Props {
   request: (queries: Query[]) => QueryRequest;
   response: QueryResponse | undefined;
   error: string | undefined;
-  window?: { from: string; to: string };
   rangeLabel?: string;
   active?: Record<number, number>;
   recent?: readonly RealtimeHit[];
@@ -62,7 +61,6 @@ let {
   request,
   response,
   error,
-  window,
   rangeLabel,
   active,
   recent,
@@ -83,6 +81,11 @@ let draft = $state<Dashboard>(structuredClone($state.snapshot(initial)));
 const saved = collectBatch(initial);
 // svelte-ignore state_referenced_locally
 const savedSpecs = new Map(initial.grid.map((spec) => [spec.id, JSON.stringify(spec)]));
+
+// The view batch's own windows. A preview re-runs the SAME range and scope
+// (`request`), so its axes are these — a preview cannot show a window the
+// dashboard behind it does not.
+const windows = $derived(response?.meta.windows);
 
 /** Batch-of-one previews by widget id — they override the saved batch's answers. */
 let previews = $state<Record<string, WidgetData>>({});
@@ -201,7 +204,7 @@ function handleImport(dashboard: Dashboard): void {
 <EditorGrid
   grid={draft.grid}
   {dataFor}
-  {window}
+  {windows}
   {rangeLabel}
   {active}
   {recent}

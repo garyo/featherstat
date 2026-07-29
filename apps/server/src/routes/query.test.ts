@@ -47,6 +47,48 @@ describe('POST /api/query', () => {
     expect(body.meta.dataVersion).toBe(1);
   });
 
+  /**
+   * The window and the axis are pure functions of what the ETag already hashes,
+   * so the body a client replays on a 304 states the same window as the 200 that
+   * seeded it — which is what lets the browser stop deriving windows without
+   * making a revalidation show a stale one. The clock-dependent part is `clip`,
+   * and the reader's own clock overrides it (apps/web widgets/axis.ts).
+   */
+  it('states the window and axis it resolved, and holds them across a 304', async () => {
+    const body = { ...BODY, queries: [{ ...BODY.queries[0], bucket: 'day' }] };
+    const first = await post(body);
+    const seeded = (await first.json()) as QueryResponse;
+    expect(seeded.meta.windows).toEqual([
+      { siteId: 1, timezone: 'America/New_York', from: '2023-11-14', to: '2023-11-14' },
+    ]);
+
+    const etag = first.headers.get('etag') as string;
+    const revalidated = await post(body, { 'if-none-match': etag });
+    expect(revalidated.status).toBe(304);
+    // A 304 has no body, so what the client keeps is the seeded one — the same
+    // window, and an axis it can still move to its own clock.
+    const again = await post(body);
+    const fresh = (await again.json()) as QueryResponse;
+    expect(fresh.meta.windows).toEqual(seeded.meta.windows);
+    expect(fresh.results.kpis).toMatchObject({
+      bucket: 'day',
+      axis: [{ siteId: 1, keys: ['2023-11-14'], clip: '2023-11-14' }],
+    });
+  });
+
+  it("changes the ETag when a site's timezone changes under an explicit range", async () => {
+    // The resolved window is unchanged (from/to are literal), but the axis and
+    // the clip are not: they are read in the site's zone.
+    const first = await post(BODY);
+    const etag = first.headers.get('etag') as string;
+    withWriteTransaction(db, () => {
+      db.prepare("UPDATE sites SET timezone = 'Asia/Tokyo' WHERE id = 1").run();
+    });
+    const res = await post(BODY, { 'if-none-match': etag });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('etag')).not.toBe(etag);
+  });
+
   it('revalidates with 304 and executes no queries', async () => {
     const first = await post(BODY);
     const etag = first.headers.get('etag');

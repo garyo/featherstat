@@ -1,10 +1,12 @@
 import {
   isQueryError,
+  type MetricQuery,
   type QueryRequest,
   type QueryResponse,
   type QueryResult,
   type Range,
   type ResultRow,
+  type SiteWindow,
 } from '@featherstat/shared';
 import {
   type Db,
@@ -17,7 +19,7 @@ import {
 } from '../db/index.ts';
 import { type CompiledQuery, compileMetricQuery, metricEmpty } from './compiler.ts';
 import { type CompiledDwell, compileDwellQuery } from './dwell.ts';
-import { compareWindow, type DateWindow, resolveWindow } from './ranges.ts';
+import { bucketAxis, compareWindow, resolveWindow } from './ranges.ts';
 import { type CompiledSequence, compileSequenceQuery } from './sequences.ts';
 
 /**
@@ -28,13 +30,10 @@ import { type CompiledSequence, compileSequenceQuery } from './sequences.ts';
 /** Requests for a site id that does not exist are a client error, not an empty result. */
 export class UnknownSiteError extends Error {}
 
-export interface SiteWindow extends DateWindow {
-  siteId: number;
-}
-
 /**
  * Per-site inclusive local-date windows for a request scope. Presets resolve per
- * site timezone, so these are an input to the answer — the ETag must cover them.
+ * site timezone, so these are an input to the answer — the ETag must cover them,
+ * and `meta.windows` states them so no client re-derives them (docs/04 § 3).
  */
 export function resolveSiteWindows(
   db: Db,
@@ -44,6 +43,7 @@ export function resolveSiteWindows(
 ): SiteWindow[] {
   return resolveSites(db, site).map((s) => ({
     siteId: s.id,
+    timezone: s.timezone,
     ...resolveWindow(range, s.timezone, now),
   }));
 }
@@ -66,7 +66,7 @@ export function executeQueryRequest(
     const compareWindows =
       compare === undefined
         ? undefined
-        : windows.map((window) => ({ siteId: window.siteId, ...compareWindow(window, compare) }));
+        : windows.map((window) => ({ ...window, ...compareWindow(window, compare) }));
 
     const results: QueryResponse['results'] = {};
     for (const query of request.queries) {
@@ -96,11 +96,39 @@ export function executeQueryRequest(
       }
       const entry: QueryResult = { rows: runCompiled(db, compiled, windows) };
       if (compareWindows !== undefined) entry.compare = runCompiled(db, compiled, compareWindows);
+      describeAxis(entry, query, windows, now);
       entry.ms = elapsed(queryStarted);
       results[query.id] = entry;
     }
-    return { results, meta: { generatedInMs: elapsed(started), dataVersion: dataVersion(db) } };
+    return {
+      results,
+      meta: { generatedInMs: elapsed(started), dataVersion: dataVersion(db), windows },
+    };
   });
+}
+
+/**
+ * States the time axis a bucketed result was computed on, so clients zip their
+ * sparse rows against it instead of enumerating buckets themselves (docs/04 § 3).
+ *
+ * The axis is per site because the window is: `site: "all"` fans out across
+ * timezones. It is emitted only when `bucket` is the query's one grouping besides
+ * `site` — for `path × day` (deliberately unlimited, so it can be thousands of
+ * paths) an axis would invite a dense fill of the whole cross product.
+ */
+function describeAxis(
+  entry: QueryResult,
+  query: MetricQuery,
+  windows: readonly SiteWindow[],
+  now: number,
+): void {
+  const bucket = query.bucket;
+  if (bucket === undefined) return;
+  entry.bucket = bucket;
+  const dims = [query.dim, query.dim2].filter((dim) => dim !== undefined && dim !== 'site');
+  if (dims.length > 0) return;
+  const axis = windows.map((window) => bucketAxis(window, bucket, now));
+  if (axis.every((site) => site !== undefined)) entry.axis = axis;
 }
 
 function resolveSites(db: Db, scope: QueryRequest['site']): Site[] {

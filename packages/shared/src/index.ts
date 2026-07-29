@@ -17,6 +17,14 @@ export const MAX_QUERIES_PER_BATCH = 32;
 export const MAX_WIDGETS_PER_DASHBOARD = 24;
 /** Metrics one query may name (docs/04 § 3) — also the ceiling a layout upgrade must respect. */
 export const MAX_METRICS_PER_QUERY = 8;
+/**
+ * Bucket keys a single result's axis may enumerate (docs/04 § 3). Every preset
+ * stays far under it — 90 days of days, a day of hours — but an explicit
+ * `from`/`to` range at `hour` granularity does not, and the axis rides in the
+ * response body of a public share link. Past this the axis is omitted and the
+ * rows' own order is the axis.
+ */
+export const MAX_AXIS_KEYS = 1_000;
 
 // Realtime SSE wire contract (docs/04 § 4)
 /** "Active" = distinct visitors seen inside this window. */
@@ -251,12 +259,69 @@ export type QueryRequest = z.infer<typeof QueryRequestSchema>;
  * Flows rows (sequence queries) carry their step signature as a string array. */
 export type ResultRow = Record<string, string | number | null | string[]>;
 
+/**
+ * One site's resolved query window: the inclusive site-local date bounds a
+ * `range` resolved to, and the timezone it resolved in (docs/04 § 3).
+ *
+ * A response carries one per site in scope, never one per response: `site: "all"`
+ * fans out across sites whose timezones differ, so around a local midnight there
+ * is no single window that describes the batch. The same array is hashed into the
+ * ETag, which is why a `today` preset expires at site-local midnight.
+ */
+export interface SiteWindow {
+  siteId: number;
+  timezone: string;
+  from: string;
+  to: string;
+}
+
+/**
+ * One site's time axis for a bucketed result — the ordered bucket keys sparse
+ * rows are zipped against, so no client ever enumerates buckets.
+ */
+export interface SiteAxis {
+  siteId: number;
+  /**
+   * Every bucket key this site's window contains, oldest first. A pure function
+   * of the window and the granularity — never of the clock — so a cached body
+   * replayed on a 304 can never have gone stale.
+   */
+  keys: string[];
+  /**
+   * Where real data stops inside the window: the newest key whose bucket had
+   * BEGUN on the server's clock when the response was generated. Keys after it
+   * are future time — `today` resolves to a whole local day, so its hour axis
+   * runs to 23:00 while only the hours through `clip` can hold anything.
+   *
+   * Absent when the whole window is still in the future (an explicit
+   * `from`/`to` range ahead of now). A reader whose clock has moved on since the
+   * fetch may show MORE than this, never less (see the web app's `visibleKeys`).
+   */
+  clip?: string;
+}
+
 export interface QueryResult {
   rows: ResultRow[];
   /** Present when the request asked for a comparison range. */
   compare?: ResultRow[];
   /** Server-side execution time for this one query. */
   ms?: number;
+  /** The granularity this result was grouped at; absent when it isn't bucketed. */
+  bucket?: Bucket;
+  /**
+   * The enumerated time axis, one entry per site in `meta.windows`.
+   *
+   * Rows stay SPARSE — this is the key list to zip them against, not a promise
+   * that every key has a row. Emitted only when `bucket` is the result's one
+   * grouping besides `site` (which the axis is already keyed by): a genuine 2-D
+   * result like `path × day` is deliberately unlimited, so an axis there would
+   * invite a dense fill of tens of thousands of manufactured rows — down a code
+   * path a client-authored layout reaches through a public share link.
+   *
+   * Also absent when the window would enumerate more than `MAX_AXIS_KEYS`; the
+   * rows' own order is then the axis.
+   */
+  axis?: SiteAxis[];
 }
 
 /**
@@ -275,7 +340,12 @@ export function isQueryError(entry: object): entry is QueryErrorResult {
 
 export interface QueryResponse {
   results: Record<string, QueryResult | QueryErrorResult>;
-  meta: { generatedInMs: number; dataVersion: number };
+  meta: {
+    generatedInMs: number;
+    dataVersion: number;
+    /** What the server resolved this request's `range` to, per site in scope. */
+    windows: SiteWindow[];
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -583,4 +653,5 @@ export interface VersionTick {
 
 export * from './alias.ts';
 export * from './layout.ts';
+export * from './time.ts';
 export * from './widgets.ts';

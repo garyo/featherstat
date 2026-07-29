@@ -491,6 +491,96 @@ describe('error entries', () => {
   });
 });
 
+/**
+ * The response describes itself (docs/04 § 3): it states the window it resolved
+ * and the axis it enumerated, so no client re-derives either. `site: 'all'` is
+ * the case that forces `windows` to be an ARRAY — site 1 is in New York and
+ * site 2 in UTC, so around a UTC midnight there is no single window for the batch.
+ */
+describe('windows and axes', () => {
+  /** 02:00 UTC on the 28th: New York is still on the 27th. */
+  const MIDNIGHT_GAP = Date.UTC(2026, 6, 28, 2);
+
+  it('states the window it resolved, with the zone it resolved in', () => {
+    const response = run({ queries: [{ id: 'q', metrics: ['visitors'] }] });
+    expect(response.meta.windows).toEqual([
+      { siteId: 1, timezone: 'America/New_York', from: DAY, to: DAY },
+    ]);
+  });
+
+  it("carries one window per site under 'all', because their timezones differ", () => {
+    const response = executeQueryRequest(
+      db,
+      {
+        site: 'all',
+        range: { preset: 'today' },
+        queries: [{ id: 'series', metrics: ['visitors'], bucket: 'day', dim: 'site' }],
+      },
+      { now: MIDNIGHT_GAP },
+    );
+    expect(response.meta.windows).toEqual([
+      { siteId: 1, timezone: 'America/New_York', from: '2026-07-27', to: '2026-07-27' },
+      { siteId: 2, timezone: 'UTC', from: '2026-07-28', to: '2026-07-28' },
+    ]);
+    // And one axis per site — collapsing these would put every card on one
+    // site's clock and zero the others for the hours around a midnight.
+    expect(resultOf(response, 'series').axis).toEqual([
+      { siteId: 1, keys: ['2026-07-27'], clip: '2026-07-27' },
+      { siteId: 2, keys: ['2026-07-28'], clip: '2026-07-28' },
+    ]);
+  });
+
+  it('enumerates the axis a bucketed result was computed on, and names its granularity', () => {
+    const response = run({
+      range: { from: '2026-07-25', to: '2026-07-28' },
+      queries: [{ id: 'series', metrics: ['visits'], bucket: 'day' }],
+    });
+    const entry = resultOf(response, 'series');
+    expect(entry.bucket).toBe('day');
+    expect(entry.axis).toEqual([
+      {
+        siteId: 1,
+        keys: ['2026-07-25', '2026-07-26', '2026-07-27', '2026-07-28'],
+        clip: '2026-07-28',
+      },
+    ]);
+    // Rows stay SPARSE: four keys on the axis, one row. The client zips.
+    expect(entry.rows).toEqual([{ bucket: '2026-07-27', visits: 4 }]);
+  });
+
+  it('runs a `today` hour axis to the end of the local day and clips at the hour in progress', () => {
+    const response = executeQueryRequest(
+      db,
+      {
+        site: 2,
+        range: { preset: 'today' },
+        queries: [{ id: 'hours', metrics: ['pageviews'], bucket: 'hour' }],
+      },
+      { now: MIDNIGHT_GAP },
+    );
+    const [axis] = resultOf(response, 'hours').axis ?? [];
+    expect(axis?.keys).toHaveLength(24);
+    expect(axis?.clip).toBe('2026-07-28 02:00');
+  });
+
+  it('leaves an unbucketed result without a bucket or an axis', () => {
+    const entry = resultOf(run({ queries: [{ id: 'q', metrics: ['visitors'] }] }), 'q');
+    expect(entry.bucket).toBeUndefined();
+    expect(entry.axis).toBeUndefined();
+  });
+
+  it('withholds the axis for a genuine 2-D result: rows stay sparse, never a cross product', () => {
+    // `pages~<id>` is deliberately unlimited (packages/shared widgets.ts), so an
+    // axis here would invite a dense fill of path × day.
+    const entry = resultOf(
+      run({ queries: [{ id: 'pages', metrics: ['pageviews'], dim: 'path', bucket: 'day' }] }),
+      'pages',
+    );
+    expect(entry.bucket).toBe('day');
+    expect(entry.axis).toBeUndefined();
+  });
+});
+
 describe('meta', () => {
   it('reports the data version and timings', () => {
     const response = run({ queries: [{ id: 'q', metrics: ['visitors'] }] });

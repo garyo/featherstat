@@ -1,18 +1,15 @@
 import type { ResultRow, SiteInfo } from '@featherstat/shared';
-import type { RangePreset } from '../lib/state.ts';
-import { currentHourBucket, presetWindow } from './format.ts';
-import { addDaysIso, num } from './series.ts';
+import type { ViewAxis } from './axis.ts';
+import { num } from './series.ts';
 
 /**
  * Shapes the all-sites cards from one `visitors × day × site` result. Each
- * card's "today" is that site's OWN local today (from its IANA timezone in the
- * site directory) — the shared batch spans timezones, and reading every site
- * at the globally newest bucket zeroes whole cards for hours around midnight.
- * The delta compares the same weekday last week (mockup: "deltas vs the same
- * day last week"), which the daily series already contains — no second query.
+ * card's window is that site's OWN, taken from the per-site axis the server
+ * enumerated for the result — the shared batch spans timezones, and reading
+ * every site at the globally newest bucket zeroes whole cards for hours around
+ * midnight. The delta compares the previous period (server `compare`), which
+ * rides the same result — no second query.
  */
-
-export const SPARK_DAYS = 14;
 
 /** Card order (docs/05): traffic (default, site-id tiebreak), fixed by id, or name. */
 export type SiteSort = 'traffic' | 'id' | 'name';
@@ -22,23 +19,9 @@ export function siteSortOf(raw: unknown): SiteSort {
   return raw === 'id' || raw === 'name' ? raw : 'traffic';
 }
 
-/**
- * A site's own current date, from its IANA timezone — en-CA formats as
- * YYYY-MM-DD. Cached per zone: Intl.DateTimeFormat construction is expensive.
- */
-const dateFormats = new Map<string, Intl.DateTimeFormat>();
-export function localToday(timezone: string, now: Date = new Date()): string {
-  let format = dateFormats.get(timezone);
-  if (format === undefined) {
-    format = new Intl.DateTimeFormat('en-CA', { timeZone: timezone });
-    dateFormats.set(timezone, format);
-  }
-  return format.format(now);
-}
-
 export interface SiteStat {
   site: number;
-  /** Enumerated bucket keys of this site's requested window (dates; hours under `today`). */
+  /** This site's own axis keys (dates; hours under `today`), as the server enumerated them. */
   buckets: string[];
   /** Visitors over the selected range. */
   total: number;
@@ -49,28 +32,11 @@ export interface SiteStat {
   silent: boolean;
 }
 
-/** The card grid's bucket clock: one key per bucket of the site's own window. */
-export function windowBuckets(preset: RangePreset, timezone: string, now: Date): string[] {
-  const { from, to } = presetWindow(preset, timezone, now);
-  if (preset === 'today') {
-    // Up to and including the hour in progress — never the whole calendar day.
-    const last = Number(currentHourBucket(timezone, now).slice(11, 13));
-    return Array.from(
-      { length: last + 1 },
-      (_, hour) => `${to} ${String(hour).padStart(2, '0')}:00`,
-    );
-  }
-  const buckets: string[] = [];
-  for (let day = from; day <= to; day = addDaysIso(day, 1)) buckets.push(day);
-  return buckets;
-}
-
 export function siteStats(
-  preset: RangePreset,
+  axes: readonly ViewAxis[],
   rows: readonly ResultRow[],
   compareRows: readonly ResultRow[] | undefined,
   sites?: readonly SiteInfo[],
-  now: Date = new Date(),
   sort: SiteSort = 'traffic',
 ): SiteStat[] {
   const bySite = new Map<number, Map<string, number>>();
@@ -92,13 +58,16 @@ export function siteStats(
   }
 
   const ids = sites?.map((site) => site.id) ?? [...bySite.keys()];
-  const tzOf = new Map(sites?.map((site) => [site.id, site.timezone]) ?? []);
+  const axisOf = new Map(axes.map((axis) => [axis.siteId, axis.keys]));
   const stats: SiteStat[] = [];
   for (const site of ids) {
     const values = bySite.get(site);
-    const buckets = windowBuckets(preset, tzOf.get(site) ?? 'UTC', now);
+    const buckets = axisOf.get(site) ?? [];
     const spark = buckets.map((bucket) => values?.get(bucket) ?? 0);
-    const total = spark.reduce((sum, value) => sum + value, 0);
+    // Summed over the ROWS, not the spark: SQL already bounded them to this
+    // site's window, so the figure stands even when the axis is withheld.
+    let total = 0;
+    for (const value of values?.values() ?? []) total += value;
     const prev = prevTotals.get(site) ?? 0;
     stats.push({
       site,

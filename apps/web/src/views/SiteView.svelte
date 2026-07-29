@@ -9,7 +9,7 @@ import { createEditorMode } from '../lib/editor-mode.svelte.ts';
 import { sameFilter } from '../lib/filters.ts';
 import { createRevalidator, type LiveStream } from '../lib/live.ts';
 import { localDayKey, RANGE_LABELS, RANGE_QUALIFIER, type RangePreset } from '../lib/state.ts';
-import { bucketedWindow, bucketLabel, currentHourBucket, presetWindow } from '../widgets/format.ts';
+import { windowLabel } from '../widgets/format.ts';
 import { createBatchRunner } from './batch.svelte.ts';
 import { collectBatch, hourlyWhenToday, withoutBlockedMetrics } from './batch.ts';
 import DashboardGrid from './DashboardGrid.svelte';
@@ -25,7 +25,7 @@ interface Props {
   client: QueryClient;
   live: LiveStream;
   site: number;
-  /** The site's IANA timezone (site directory) — resolves the requested window. */
+  /** The site's IANA timezone (site directory) — its midnight re-runs the batch. */
   timezone: string | undefined;
   range: RangePreset;
   filters: Filter[];
@@ -131,22 +131,13 @@ const failed = $derived(runner.error !== undefined && runner.response !== undefi
 const heldRange = $derived(
   runner.held !== undefined && 'preset' in runner.held.range ? runner.held.range.preset : range,
 );
-/** The REQUESTED window (site-local), not the data extent — quiet edge days
- * must not shrink the label or the charts. Data extent is the fallback while
- * the directory is still loading. */
-const window = $derived(
-  timezone !== undefined ? presetWindow(heldRange, timezone) : bucketedWindow(runner.response),
-);
 /**
- * What the CHARTS pad to. Same window, hour-shaped under `today`, so a series
- * runs to the hour in progress rather than stopping at the last hit. The label
- * above keeps the date form.
+ * The window the SERVER resolved for the response on screen (`meta.windows`) —
+ * so the label can never describe a different range from the data beside it, and
+ * a page left open past this site's midnight moves both at once (the batch
+ * re-runs on `dayKey`). The browser resolves no presets.
  */
-const seriesWindow = $derived.by(() => {
-  if (window === undefined) return undefined;
-  if (heldRange !== 'today' || timezone === undefined) return window;
-  return { from: `${window.from} 00:00`, to: currentHourBucket(timezone, new Date(now)) };
-});
+const span = $derived(windowLabel(runner.response?.meta.windows));
 const note = $derived.by(() => {
   if (failed) {
     // A user-initiated change that never landed reads differently from a live
@@ -155,11 +146,7 @@ const note = $derived.by(() => {
       ? `Couldn't load ${RANGE_LABELS[range].toLowerCase()} — showing ${RANGE_LABELS[heldRange].toLowerCase()}`
       : 'Live update failed — showing the last good result';
   }
-  if (window === undefined) return 'Compared with the previous period';
-  const span =
-    window.from === window.to
-      ? bucketLabel(window.from)
-      : `${bucketLabel(window.from)} – ${bucketLabel(window.to)}`;
+  if (span === undefined) return 'Compared with the previous period';
   return `${span} · ${COMPARE_NOTE[heldRange]}`;
 });
 </script>
@@ -172,7 +159,6 @@ const note = $derived.by(() => {
     request={requestFor}
     response={runner.response}
     error={runner.error}
-    window={seriesWindow}
     rangeLabel={RANGE_QUALIFIER[heldRange]}
     {recent}
     {now}
@@ -210,7 +196,6 @@ const note = $derived.by(() => {
     response={runner.response}
     error={runner.error}
     refetching={runner.refetching}
-    window={seriesWindow}
     rangeLabel={RANGE_QUALIFIER[heldRange]}
     {recent}
     {now}

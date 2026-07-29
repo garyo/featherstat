@@ -1,7 +1,5 @@
-import { isQueryError, type Metric, type QueryResponse } from '@featherstat/shared';
-import type { RangePreset } from '../lib/state.ts';
-import { addDaysIso } from './series.ts';
-import { localToday } from './site-stats.ts';
+import type { Metric, SiteWindow } from '@featherstat/shared';
+import { windowSpan } from './axis.ts';
 
 /** Display names for the metric vocabulary — exhaustive, so a new metric cannot ship unlabeled. */
 export const METRIC_LABELS: Record<Metric, string> = {
@@ -74,72 +72,20 @@ function utcFormat(date: string, options: Intl.DateTimeFormatOptions): string {
 }
 
 /**
- * The REQUESTED site-local window of a range preset — mirrors the server's
- * `resolveWindow` (docs/04 § 3): presets resolve in the site's timezone, ending
- * on its local today. This is what the filter row labels and the charts pad to;
- * the data extent (`bucketedWindow`) would shrink both on quiet edge days.
+ * The range a response covers, as the filter row states it (`Jul 1 – Jul 29`).
+ *
+ * Read straight off the server's resolved windows, so a view, a share page and
+ * an editor preview cannot disagree about what is on screen — and so the label
+ * can never describe a different window from the data beside it, which is what
+ * a client-side preset resolver did after local midnight. Across a `site: "all"`
+ * batch the span covers every site's window, since around a midnight they differ.
  */
-/**
- * The site-local hour bucket happening right now, e.g. `2026-07-29 13:00`.
- * `today` runs midnight → THIS hour: padding past it invents future zeros (a
- * sparkline that flatlines at noon and a −100% trend), stopping short of it
- * hides the quiet hours since the last hit.
- */
-export function currentHourBucket(timezone: string, now: Date = new Date()): string {
-  const parts = new Intl.DateTimeFormat('en-GB', {
-    timeZone: timezone,
-    hour: '2-digit',
-    hour12: false,
-  }).formatToParts(now);
-  // Some locales render midnight as `24`; the bucket keys never do.
-  const hour = (parts.find((part) => part.type === 'hour')?.value ?? '00').replace('24', '00');
-  return `${localToday(timezone, now)} ${hour}:00`;
-}
-
-export function presetWindow(
-  preset: RangePreset,
-  timezone: string,
-  now: Date = new Date(),
-): { from: string; to: string } {
-  const to = localToday(timezone, now);
-  switch (preset) {
-    case 'today':
-      return { from: to, to };
-    case '7d':
-      return { from: addDaysIso(to, -6), to };
-    case '30d':
-      return { from: addDaysIso(to, -29), to };
-    case '90d':
-      return { from: addDaysIso(to, -89), to };
-    case 'mtd':
-      return { from: `${to.slice(0, 8)}01`, to };
-  }
-}
-
-/**
- * The site-local date window a batch's bucketed results span — the fallback
- * label source when the site's timezone (and so the requested window) is not
- * at hand. This is the data extent, so a range whose first or last days are
- * empty reads slightly narrow.
- */
-export function bucketedWindow(
-  response: QueryResponse | undefined,
-): { from: string; to: string } | undefined {
-  if (response === undefined) return undefined;
-  let from: string | undefined;
-  let to: string | undefined;
-  for (const result of Object.values(response.results)) {
-    if (isQueryError(result)) continue;
-    for (const row of result.rows) {
-      const bucket = row.bucket;
-      if (typeof bucket !== 'string') continue;
-      const date = bucket.slice(0, 10); // hour buckets carry their date up front
-      if (!DATE_RE.test(date)) continue;
-      if (from === undefined || date < from) from = date;
-      if (to === undefined || date > to) to = date;
-    }
-  }
-  return from === undefined || to === undefined ? undefined : { from, to };
+export function windowLabel(windows: readonly SiteWindow[] | undefined): string | undefined {
+  const span = windowSpan(windows);
+  if (span === undefined) return undefined;
+  return span.from === span.to
+    ? bucketLabel(span.from)
+    : `${bucketLabel(span.from)} – ${bucketLabel(span.to)}`;
 }
 
 /**

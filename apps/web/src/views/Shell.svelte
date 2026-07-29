@@ -183,6 +183,7 @@ const logout = (): void => {
       site={journeysSite}
       timezone={directory.byId.get(journeysSite)?.timezone}
       range={view.current.range}
+      {now}
       filters={view.current.filters}
       onselectrange={selectRange}
       onfilters={setFilters}

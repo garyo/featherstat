@@ -118,7 +118,7 @@ describe('widgetData', () => {
         kpis: { rows: [{ visitors: 5 }] },
         'kpis~spark': { rows: [] },
       },
-      meta: { generatedInMs: 1, dataVersion: 1 },
+      meta: { generatedInMs: 1, dataVersion: 1, windows: [] },
     };
     const data = widgetData(kpis, slots, response, undefined);
     expect(data.phase).toBe('ready');
@@ -128,7 +128,10 @@ describe('widgetData', () => {
 
   it('yields empty results for a widget the batch never carried', () => {
     const stranger = { ...kpis, id: 'not-there' };
-    const response: QueryResponse = { results: {}, meta: { generatedInMs: 1, dataVersion: 1 } };
+    const response: QueryResponse = {
+      results: {},
+      meta: { generatedInMs: 1, dataVersion: 1, windows: [] },
+    };
     expect(widgetData(stranger, slots, response, undefined)).toEqual({
       phase: 'ready',
       results: {},

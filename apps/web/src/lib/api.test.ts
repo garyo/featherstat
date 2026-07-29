@@ -1,5 +1,11 @@
-import type { QueryRequest, QueryResponse } from '@featherstat/shared';
+import {
+  isQueryError,
+  type QueryRequest,
+  type QueryResponse,
+  type SiteWindow,
+} from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
+import { resultAxes } from '../widgets/axis.ts';
 import { canonicalJson, createQueryClient, QueryError } from './api.ts';
 
 const request: QueryRequest = {
@@ -8,9 +14,16 @@ const request: QueryRequest = {
   queries: [{ id: 'kpis', metrics: ['visitors', 'pageviews'] }],
 };
 
+const WINDOW: SiteWindow = {
+  siteId: 4,
+  timezone: 'America/New_York',
+  from: '2026-06-30',
+  to: '2026-07-29',
+};
+
 const payload: QueryResponse = {
   results: { kpis: { rows: [{ visitors: 1841, pageviews: 3902 }] } },
-  meta: { generatedInMs: 3.2, dataVersion: 91 },
+  meta: { generatedInMs: 3.2, dataVersion: 91, windows: [WINDOW] },
 };
 
 interface Call {
@@ -83,8 +96,55 @@ describe('query client', () => {
     expect(calls[2]?.headers['if-none-match']).toBe('"v2"');
   });
 
+  /**
+   * The 304 path hands back a body that was generated minutes (or hours) ago.
+   * `meta.windows` and `result.axis` are pure functions of the window the ETag
+   * itself hashes, so they cannot have gone stale — and the one thing that CAN
+   * have moved, the clock, is applied by the reader (widgets/axis.ts), so an
+   * idle `today` chart still grows on a revalidation that executed no queries.
+   */
+  it('replays the window and axis on a 304, and the reader’s clock still extends it', async () => {
+    const today: SiteWindow = {
+      siteId: 4,
+      timezone: 'UTC',
+      from: '2026-07-29',
+      to: '2026-07-29',
+    };
+    const hours = Array.from(
+      { length: 24 },
+      (_, h) => `2026-07-29 ${String(h).padStart(2, '0')}:00`,
+    );
+    const hourly: QueryResponse = {
+      results: {
+        series: {
+          rows: [{ bucket: '2026-07-29 09:00', visitors: 3 }],
+          bucket: 'hour',
+          axis: [{ siteId: 4, keys: hours, clip: '2026-07-29 10:00' }],
+        },
+      },
+      meta: { generatedInMs: 1, dataVersion: 91, windows: [today] },
+    };
+    const { fetch } = fakeFetch([ok('"h1"', hourly), notModified()]);
+    const client = createQueryClient({ fetch });
+
+    await client.query(request);
+    const replayed = await client.query(request);
+    expect(replayed.meta.windows).toEqual([today]);
+
+    const result = replayed.results.series;
+    if (result === undefined || isQueryError(result)) throw new Error('no series result');
+    const lastKeyAt = (iso: string): string | undefined =>
+      resultAxes(result, replayed.meta.windows, Date.parse(iso))[0]?.keys.at(-1);
+
+    expect(lastKeyAt('2026-07-29T10:20:00Z')).toBe('2026-07-29 10:00');
+    expect(lastKeyAt('2026-07-29T11:05:00Z')).toBe('2026-07-29 11:00');
+  });
+
   it('picks up the new body when the ETag moved on', async () => {
-    const fresh: QueryResponse = { results: {}, meta: { generatedInMs: 1, dataVersion: 92 } };
+    const fresh: QueryResponse = {
+      results: {},
+      meta: { generatedInMs: 1, dataVersion: 92, windows: [WINDOW] },
+    };
     const { fetch, calls } = fakeFetch([ok('"v1"'), ok('"v2"', fresh), notModified()]);
     const client = createQueryClient({ fetch });
 

@@ -24,8 +24,6 @@ interface Props {
   /** Batch-level failure — widgets surface it when there is nothing older to show. */
   error: string | undefined;
   refetching: boolean;
-  /** The requested site-local window, for charts to pad their series out to. */
-  window?: { from: string; to: string };
   /** Range qualifier for widget titles ("last 30 days"). */
   rangeLabel?: string;
   range?: RangePreset;
@@ -46,7 +44,6 @@ let {
   response,
   error,
   refetching,
-  window,
   rangeLabel,
   range,
   recent,
@@ -61,6 +58,9 @@ let {
 }: Props = $props();
 
 const slots = $derived(collectBatch(dashboard).slots);
+// Straight off the response, so the axes a widget draws always belong to the
+// answer beside them — the view has nothing to pass and nothing to get wrong.
+const windows = $derived(response?.meta.windows);
 
 // "Show query" chrome (docs/05: the self-documenting API). The button is view
 // chrome; the modal itself lives in the code-split editor chunk and loads on
@@ -78,7 +78,7 @@ async function showQuery(spec: WidgetSpec): Promise<void> {
   grid={dashboard.grid}
   dataFor={(spec) => widgetData(spec, slots, response, error)}
   {refetching}
-  {window}
+  {windows}
   {rangeLabel}
   {range}
   {recent}

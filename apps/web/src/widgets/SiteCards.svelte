@@ -1,4 +1,5 @@
 <script lang="ts">
+import { resultAxes } from './axis.ts';
 import { exactNumber } from './format.ts';
 import Sparkline from './Sparkline.svelte';
 import { siteSortOf, siteStats } from './site-stats.ts';
@@ -11,20 +12,25 @@ let {
   active,
   sites,
   onselectsite,
+  windows,
   range = '30d',
   rangeLabel,
   now,
 }: WidgetProps = $props();
 
 const slice = $derived(sliceOf(data, 'main'));
+// Each card rides its OWN site's axis: the batch spans timezones, and one shared
+// clock zeroes whole cards for the hours around a midnight.
+const axes = $derived(
+  slice.kind === 'ready' ? resultAxes(slice.result, windows ?? [], now ?? Date.now()) : [],
+);
 const stats = $derived(
   slice.kind === 'ready'
     ? siteStats(
-        range,
+        axes,
         slice.result.rows,
         slice.result.compare,
         sites === undefined ? undefined : [...sites.values()],
-        new Date(now ?? Date.now()),
         siteSortOf(spec.options.sort),
       )
     : [],

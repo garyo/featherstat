@@ -1,14 +1,9 @@
 import { createHash } from 'node:crypto';
-import { QueryRequestSchema } from '@featherstat/shared';
+import { QueryRequestSchema, type SiteWindow } from '@featherstat/shared';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { type Db, dataVersion, schemaVersion } from '../db/index.ts';
-import {
-  executeQueryRequest,
-  resolveSiteWindows,
-  type SiteWindow,
-  UnknownSiteError,
-} from '../query/executor.ts';
+import { executeQueryRequest, resolveSiteWindows, UnknownSiteError } from '../query/executor.ts';
 
 /**
  * POST /api/query — the batched query endpoint (docs/04 § 3). This is not a
@@ -70,7 +65,7 @@ function etag(
   canonicalBody: string,
   windows: readonly SiteWindow[],
 ): string {
-  const resolved = windows.map((w) => `${w.siteId}:${w.from}:${w.to}`).join(',');
+  const resolved = windows.map((w) => `${w.siteId}:${w.timezone}:${w.from}:${w.to}`).join(',');
   const hash = createHash('sha256')
     .update(`${version}|${schema}|${canonicalBody}|${resolved}`)
     .digest('base64url');

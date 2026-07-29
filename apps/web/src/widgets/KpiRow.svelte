@@ -1,10 +1,11 @@
 <script lang="ts">
+import { resultAxes, sharedKeys } from './axis.ts';
 import { tileLabel, tileModels, tileNames } from './kpi.ts';
 import Sparkline from './Sparkline.svelte';
-import { fillBuckets } from './series.ts';
+import { seriesOf } from './series.ts';
 import { sliceOf, type WidgetProps } from './types.ts';
 
-let { spec, data, window }: WidgetProps = $props();
+let { spec, data, windows, now }: WidgetProps = $props();
 
 const names = $derived(tileNames(spec.options));
 const main = $derived(sliceOf(data, 'main'));
@@ -16,7 +17,14 @@ const metrics = $derived(
 const tiles = $derived.by(() => {
   if (main.kind !== 'ready') return undefined;
   // A per-query error on the companion series only costs the sparklines.
-  const series = spark.kind === 'ready' ? fillBuckets(spark.result.rows, metrics, window) : [];
+  const series =
+    spark.kind === 'ready'
+      ? seriesOf(
+          spark.result.rows,
+          metrics,
+          sharedKeys(resultAxes(spark.result, windows ?? [], now ?? Date.now())),
+        )
+      : [];
   return tileModels(names, main.result.rows[0], main.result.compare?.[0], series);
 });
 </script>

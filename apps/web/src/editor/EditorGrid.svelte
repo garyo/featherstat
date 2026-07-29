@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { RealtimeHit, SiteInfo, WidgetSpec } from '@featherstat/shared';
+import type { RealtimeHit, SiteInfo, SiteWindow, WidgetSpec } from '@featherstat/shared';
 import type { SiteScope } from '../lib/state.ts';
 import type { WidgetData } from '../widgets/types.ts';
 import WidgetGrid from '../widgets/WidgetGrid.svelte';
@@ -17,7 +17,7 @@ import { allowedWidths } from './model.ts';
 interface Props {
   grid: readonly WidgetSpec[];
   dataFor: (spec: WidgetSpec) => WidgetData;
-  window?: { from: string; to: string };
+  windows?: readonly SiteWindow[];
   rangeLabel?: string;
   active?: Record<number, number>;
   recent?: readonly RealtimeHit[];
@@ -34,7 +34,7 @@ interface Props {
 let {
   grid,
   dataFor,
-  window,
+  windows,
   rangeLabel,
   active,
   recent,
@@ -88,7 +88,7 @@ function endDrag(): void {
 <WidgetGrid
   {grid}
   {dataFor}
-  {window}
+  {windows}
   {rangeLabel}
   {active}
   {recent}

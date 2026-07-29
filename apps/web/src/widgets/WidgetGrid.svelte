@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { Filter, RealtimeHit, SiteInfo, WidgetSpec } from '@featherstat/shared';
+import type { Filter, RealtimeHit, SiteInfo, SiteWindow, WidgetSpec } from '@featherstat/shared';
 import type { Snippet } from 'svelte';
 import type { RangePreset, SiteScope } from '../lib/state.ts';
 import { REGISTRY, spanClass } from './registry.ts';
@@ -38,8 +38,8 @@ interface Props {
   refetching?: boolean;
   /** The grid element, for a decorator that measures its cards (drag-reorder). */
   element?: HTMLElement | undefined;
-  /** The requested site-local window, for charts to pad their series out to. */
-  window?: { from: string; to: string };
+  /** The server-resolved windows (`meta.windows`) charts read their axis against. */
+  windows?: readonly SiteWindow[];
   /** Range qualifier for widget titles ("last 30 days"). */
   rangeLabel?: string;
   range?: RangePreset;
@@ -59,7 +59,7 @@ let {
   card,
   refetching = false,
   element = $bindable(),
-  window,
+  windows,
   rangeLabel,
   range,
   recent,
@@ -86,7 +86,7 @@ let {
         <Widget
           {spec}
           data={dataFor(spec)}
-          {window}
+          {windows}
           {rangeLabel}
           {range}
           {recent}
