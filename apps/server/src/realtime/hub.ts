@@ -1,5 +1,6 @@
 import {
   ACTIVE_WINDOW_MS,
+  MAX_ENGAGEMENT_ENTRIES,
   PING_CLAMP_MS,
   type RealtimeEngagement,
   type RealtimeHit,
@@ -50,7 +51,7 @@ export interface RealtimeHubOptions {
 export class RealtimeHub {
   private readonly ring: HitRing;
   private readonly active: ActiveVisitors;
-  private readonly engagement = new VisitorEngagement(TALLY_WINDOW_MS);
+  private readonly engagement = new VisitorEngagement(TALLY_WINDOW_MS, MAX_ENGAGEMENT_ENTRIES);
   private readonly aliaser = new VisitorAliaser();
   private readonly versions = new Map<number, number>();
   private readonly listeners = new Set<RealtimeListener>();
@@ -68,9 +69,10 @@ export class RealtimeHub {
   record(event: EventRow): void {
     const visitor = this.aliaser.alias(event.visitor_id, event.ts);
     this.active.touch(event.site_id, event.visitor_id, event.ts);
-    this.engagement.touch(event.site_id, event.visitor_id, event.ts, visitor);
+    // Touch first: the figure the row carries includes the gap this hit closes.
+    const engagedMs = this.engagement.touch(event.site_id, event.visitor_id, event.ts, visitor);
     if (event.type === 'ping') return;
-    this.emit({ kind: 'hit', entry: this.ring.push(toRealtimeHit(event, visitor)) });
+    this.emit({ kind: 'hit', entry: this.ring.push(toRealtimeHit(event, visitor, engagedMs)) });
   }
 
   /** One tick per site whose data changed in a batch — dashboards revalidate on it. */
@@ -157,9 +159,11 @@ export class RealtimeHub {
    * "gets what's left" semantics (docs/04 § 4).
    */
   seedRecent(db: Db, limit = SEED_RECENT_LIMIT): void {
-    const rows = stmt<EventRow>(db, SQL_RECENT_EVENTS).all(limit);
+    const rows = stmt<SeededEventRow>(db, SQL_RECENT_EVENTS).all(limit);
     for (const row of rows.reverse()) {
-      this.ring.push(toRealtimeHit(row, this.aliaser.alias(row.visitor_id, row.ts)));
+      this.ring.push(
+        toRealtimeHit(row, this.aliaser.alias(row.visitor_id, row.ts), row.engaged_ms ?? undefined),
+      );
     }
   }
 
@@ -178,10 +182,18 @@ export function createRealtimeHub(db: Db, options: RealtimeHubOptions = {}): Rea
 
 const SEED_RECENT_LIMIT = 50;
 
-const SQL_RECENT_EVENTS = `SELECT * FROM events
-WHERE type != 'ping'
-ORDER BY id DESC
+/**
+ * The visit's length rides along from `sessions`: a restored row carries its
+ * visit's total rather than the moment (the moment is not reconstructable), and
+ * for the last row of a finished visit those are the same number.
+ */
+const SQL_RECENT_EVENTS = `SELECT e.*, s.engaged_ms FROM events e
+LEFT JOIN sessions s ON s.id = e.session_id
+WHERE e.type != 'ping'
+ORDER BY e.id DESC
 LIMIT ?`;
+
+type SeededEventRow = EventRow & { engaged_ms: number | null };
 
 interface RecentSessionRow {
   site_id: number;
@@ -204,12 +216,14 @@ FROM sessions WHERE last_seen_at >= ? GROUP BY site_id, visitor_id`;
  * than spreading the row — is what keeps the IP-derived visitor id, and anything
  * else added to `events` later, off the wire. Undefined members vanish in JSON.
  */
-function toRealtimeHit(event: EventRow, visitor: RealtimeVisitor): RealtimeHit {
+function toRealtimeHit(event: EventRow, visitor: RealtimeVisitor, engagedMs?: number): RealtimeHit {
   return {
     siteId: event.site_id,
     ts: event.ts,
     type: event.type,
     visitor,
+    // 0 is "no time on the clock yet" — a row says nothing rather than `0s`.
+    engagedMs: engagedMs !== undefined && engagedMs > 0 ? engagedMs : undefined,
     path: event.path ?? undefined,
     eventCategory: event.event_category ?? undefined,
     eventAction: event.event_action ?? undefined,
@@ -343,9 +357,13 @@ class VisitorEngagement {
   private readonly byVisitor = new Map<string, RealtimeEngagement>();
   private lastPruneAt = 0;
 
-  constructor(readonly windowMs: number) {}
+  constructor(
+    readonly windowMs: number,
+    readonly maxEntries: number,
+  ) {}
 
-  touch(siteId: number, visitorId: Uint8Array, ts: number, visitor: RealtimeVisitor): void {
+  /** Returns the visit's length including this event — what the hit's row keeps. */
+  touch(siteId: number, visitorId: Uint8Array, ts: number, visitor: RealtimeVisitor): number {
     // Opportunistic eviction, exactly as in ActiveVisitors: without it an
     // unwatched server would retain every (site, visitor, day) forever.
     if (ts - this.lastPruneAt >= this.windowMs) {
@@ -355,7 +373,7 @@ class VisitorEngagement {
     const entry = this.byVisitor.get(visitorKey(siteId, visitorId));
     if (entry === undefined || ts - entry.lastTs > SESSION_TIMEOUT_MS) {
       this.seed(siteId, visitorId, 0, ts, visitor);
-      return;
+      return 0;
     }
     entry.engagedMs += Math.min(Math.max(ts - entry.lastTs, 0), PING_CLAMP_MS);
     entry.lastTs = ts;
@@ -363,6 +381,7 @@ class VisitorEngagement {
     // otherwise the entry keeps a name no row in the feed still wears.
     entry.name = visitor.name;
     entry.color = visitor.color;
+    return entry.engagedMs;
   }
 
   /** Boot seeding: a stored session's engaged time and last-seen resume the figure. */
@@ -380,6 +399,16 @@ class VisitorEngagement {
       engagedMs,
       lastTs: ts,
     });
+    this.enforceCap();
+  }
+
+  /** Over cap, the oldest visit drops — exact at insertion, not eventually. */
+  private enforceCap(): void {
+    if (this.byVisitor.size <= this.maxEntries) return;
+    const oldestFirst = [...this.byVisitor].sort((a, b) => a[1].lastTs - b[1].lastTs);
+    for (const [key] of oldestFirst.slice(0, this.byVisitor.size - this.maxEntries)) {
+      this.byVisitor.delete(key);
+    }
   }
 
   /** Copies, so a serialized frame can never be mutated by later ingest. */

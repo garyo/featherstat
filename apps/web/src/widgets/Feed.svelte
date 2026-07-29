@@ -2,6 +2,7 @@
 import { inScope, relativeAgo } from '../lib/realtime.ts';
 import { countryName, flagEmoji } from '../widgets/geo.ts';
 import { dotColor } from './alias-colors.ts';
+import { displayDuration } from './format.ts';
 import { type WidgetProps } from './types.ts';
 
 /**
@@ -11,7 +12,10 @@ import { type WidgetProps } from './types.ts';
  * Realtime view remains the full-fat sibling (tally, hover-highlight,
  * engagement); this one is glanceable rows only.
  */
-let { spec, recent, scope = 'all', sites }: WidgetProps = $props();
+let { spec, recent, scope = 'all', sites, onopenrealtime }: WidgetProps = $props();
+
+/** Alias under the cursor — every row of that visitor lights up, as on the Realtime page. */
+let hover = $state<string | undefined>(undefined);
 
 const limit = $derived(feedLimit(spec.options.limit));
 const shown = $derived((recent ?? []).filter((hit) => inScope(hit, scope)).slice(0, limit));
@@ -47,7 +51,11 @@ function whatOf(hit: (typeof shown)[number]): string {
 const siteNameOf = (id: number): string => sites?.get(id)?.name ?? `Site ${id}`;
 </script>
 
-<h2>{spec.title ?? 'Realtime'}</h2>
+{#if onopenrealtime === undefined}
+  <h2>{spec.title ?? 'Realtime'}</h2>
+{:else}
+  <h2><button class="h2link" type="button" onclick={onopenrealtime}>{spec.title ?? 'Realtime'}</button></h2>
+{/if}
 {#if recent === undefined}
   <p class="widget-note">Live feed — available in the app, not in shared views.</p>
 {:else if shown.length === 0}
@@ -55,10 +63,18 @@ const siteNameOf = (id: number): string => sites?.get(id)?.name ?? `Site ${id}`;
 {:else}
   <div class="feed" role="list">
     {#each shown as hit, i (i)}
-      <div class="feed-row" role="listitem">
+      {@const spent = displayDuration(hit.engagedMs)}
+      <div
+        class="feed-row"
+        role="listitem"
+        class:hl={hover === hit.visitor.name}
+        onmouseenter={() => (hover = hit.visitor.name)}
+        onmouseleave={() => (hover = undefined)}
+      >
         <span class="ago">{relativeAgo(hit.ts, now)}</span>
         <span class="vdot" style="background: {dotColor(hit.visitor.color)}"></span>
         <span class="vname">{hit.visitor.name}</span>
+        {#if spent !== undefined}<span class="vtime">{spent}</span>{/if}
         {#if hit.country !== undefined}
           {@const flag = flagEmoji(hit.country)}
           {#if flag !== undefined}<span class="flag" title={countryName(hit.country)}>{flag}</span

@@ -33,6 +33,8 @@ export interface WidgetProps {
   recent?: readonly RealtimeHit[];
   /** The view's scope — the feed widget filters by it and badges at 'all'. */
   scope?: SiteScope;
+  /** Opens the full Realtime view; absent in the editor preview and shared views. */
+  onopenrealtime?: () => void;
   /** The site directory (`/api/sites`); site-cards names its cards from it. */
   sites?: ReadonlyMap<number, SiteInfo>;
   onselectsite?: (site: number) => void;

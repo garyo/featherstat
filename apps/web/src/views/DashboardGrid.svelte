@@ -26,6 +26,7 @@ interface Props {
   range?: RangePreset;
   recent?: readonly RealtimeHit[];
   scope?: SiteScope;
+  onopenrealtime?: () => void;
   active?: Record<number, number>;
   sites?: ReadonlyMap<number, SiteInfo>;
   /** Per-widget admin chrome ("show query"); off on the read-only share page. */
@@ -44,6 +45,7 @@ let {
   range,
   recent,
   scope,
+  onopenrealtime,
   active,
   sites,
   chrome = true,
@@ -91,6 +93,7 @@ async function showQuery(spec: WidgetSpec): Promise<void> {
           {range}
           {recent}
           {scope}
+          {onopenrealtime}
           {active}
           {sites}
           {onselectsite}

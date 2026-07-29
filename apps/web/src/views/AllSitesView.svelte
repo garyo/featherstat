@@ -16,6 +16,8 @@ import DashboardGrid from './DashboardGrid.svelte';
 interface Props {
   /** SSE live feed from the shell — the feed widget reads it. */
   recent?: readonly RealtimeHit[];
+  /** Opens the Realtime view — the feed card's heading links there. */
+  onopenrealtime?: () => void;
   admin: AdminClient;
   client: QueryClient;
   live: LiveStream;
@@ -41,6 +43,7 @@ let {
   range,
   onselectrange,
   recent,
+  onopenrealtime,
 }: Props = $props();
 
 // The clients are app-lifetime singletons; capturing their initial values is the point.
@@ -152,6 +155,7 @@ const note = $derived(
     rangeLabel={RANGE_QUALIFIER[range]}
     {recent}
     scope="all"
+    {onopenrealtime}
     {onselectsite}
   />
 {/if}

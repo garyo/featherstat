@@ -1,5 +1,5 @@
 import { type RealtimeEngagement, type RealtimeHit, TALLY_WINDOW_MS } from '@featherstat/shared';
-import { formatDuration } from '../widgets/format.ts';
+import { displayDuration } from '../widgets/format.ts';
 import type { SiteScope } from './state.ts';
 
 /**
@@ -128,7 +128,8 @@ export function visitorTally(
  */
 export function visitorMeta(row: VisitorCount, place?: string, siteName?: string): string {
   const parts = [`${row.count} ${row.count === 1 ? 'hit' : 'hits'}`];
-  if (row.engagedMs !== undefined) parts.push(formatDuration(row.engagedMs));
+  const spent = displayDuration(row.engagedMs);
+  if (spent !== undefined) parts.push(spent);
   if (place !== undefined) parts.push(place);
   if (siteName !== undefined) parts.push(siteName);
   return parts.join(' · ');

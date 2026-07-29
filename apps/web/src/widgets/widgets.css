@@ -647,3 +647,29 @@
   font-size: 12px;
   white-space: nowrap;
 }
+
+.feed-row .vtime {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* A card heading that navigates: heading weight, link affordance, no chrome. */
+.h2link {
+  appearance: none;
+  border: 0;
+  padding: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.h2link:hover {
+  text-decoration: underline;
+}
+
+.h2link:focus-visible {
+  outline: 2px solid var(--s1);
+  outline-offset: 2px;
+}

@@ -183,6 +183,7 @@ const logout = (): void => {
       byId={directory.byId}
       range={view.current.range}
       {recent}
+      onopenrealtime={() => selectView('realtime')}
       onselectrange={selectRange}
       onselectsite={selectSite}
     />
@@ -193,6 +194,7 @@ const logout = (): void => {
       {live}
       {site}
       {recent}
+      onopenrealtime={() => selectView('realtime')}
       timezone={directory.byId.get(site)?.timezone}
       range={view.current.range}
       filters={view.current.filters}

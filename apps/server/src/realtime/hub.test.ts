@@ -1,6 +1,7 @@
 import {
   ACTIVE_WINDOW_MS,
   DAY_MS,
+  MAX_ENGAGEMENT_ENTRIES,
   PING_CLAMP_MS,
   SESSION_TIMEOUT_MS,
   TALLY_WINDOW_MS,
@@ -426,5 +427,39 @@ describe('RealtimeHub feed seeding', () => {
     const hub = new RealtimeHub();
     hub.seedRecent(db, 3);
     expect(hub.recent(10).map((hit) => hit.path)).toEqual(['/3', '/4', '/5']);
+  });
+});
+
+describe('RealtimeHub hit-carried engagement', () => {
+  it('gives each row the visit length as of that hit, and nothing at its start', () => {
+    const hub = new RealtimeHub();
+    hub.record(event({ ts: T0, visitor_id: VISITOR, path: '/first' }));
+    hub.record(event({ ts: T0 + 15_000, type: 'ping', visitor_id: VISITOR }));
+    hub.record(event({ ts: T0 + 30_000, visitor_id: VISITOR, path: '/second' }));
+
+    const rows = hub.recent(10);
+    // The opening hit has no elapsed time behind it: no figure at all, not 0s.
+    expect(rows[0]?.engagedMs).toBeUndefined();
+    // The ping's 15 s is behind the second row even though the ping is not a row.
+    expect(rows[1]?.engagedMs).toBe(30_000);
+  });
+
+  it('restores a seeded row′s figure from its stored session', () => {
+    withWriteTransaction(db, () => {
+      upsertSessions(db, [
+        session({ id: Uint8Array.of(9), visitor_id: VISITOR, engaged_ms: 42_000 }),
+      ]);
+      insertEvents(db, [event({ ts: T0, session_id: Uint8Array.of(9), path: '/restored' })]);
+    });
+    const hub = createRealtimeHub(db);
+    expect(hub.recent(10)[0]).toMatchObject({ path: '/restored', engagedMs: 42_000 });
+  });
+
+  it('caps the live map at MAX_ENGAGEMENT_ENTRIES, keeping the newest', () => {
+    const hub = new RealtimeHub();
+    for (let i = 0; i <= MAX_ENGAGEMENT_ENTRIES + 20; i++) {
+      hub.record(event({ ts: T0 + i, visitor_id: binId(1_000 + i) }));
+    }
+    expect(hub.trackedEngagement()).toBe(MAX_ENGAGEMENT_ENTRIES);
   });
 });

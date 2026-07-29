@@ -27,6 +27,11 @@ export const HEARTBEAT_MS = 25_000;
 export const SNAPSHOT_HITS = 50;
 /** Window the realtime view's per-visitor tally covers — and how long the hub retains a visitor's engaged time. */
 export const TALLY_WINDOW_MS = 30 * 60_000;
+/**
+ * Bound on the live engagement map (and so on the frame that ships it): a busy
+ * half hour must not grow either without limit. Newest visitors win.
+ */
+export const MAX_ENGAGEMENT_ENTRIES = 200;
 
 // ---------------------------------------------------------------------------
 // Sites (docs/03)
@@ -497,6 +502,13 @@ export const RealtimeSitesSchema = z.union([
 ]);
 
 export interface RealtimeHit {
+  /**
+   * How long this visit had been going when this hit landed — the feed's own
+   * copy, so a row keeps its figure for as long as the ring keeps the row and
+   * no lookup is needed. The live tally answers the other question ("how long
+   * is it NOW"); a row is a moment, and reads as one.
+   */
+  engagedMs?: number;
   siteId: number;
   ts: number;
   type: HitType;

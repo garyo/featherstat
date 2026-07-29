@@ -123,3 +123,12 @@ export function bucketedWindow(
   }
   return from === undefined || to === undefined ? undefined : { from, to };
 }
+
+/**
+ * A duration worth printing. Under a second there is nothing to say and `0s`
+ * reads as a bug, so the segment is dropped instead — the same rule the visitor
+ * tally has always applied to its own figure.
+ */
+export function displayDuration(ms: number | undefined): string | undefined {
+  return ms === undefined || ms < 1_000 ? undefined : formatDuration(ms);
+}

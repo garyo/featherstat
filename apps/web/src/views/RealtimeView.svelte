@@ -12,6 +12,7 @@ import {
 } from '../lib/realtime.ts';
 import type { SiteScope } from '../lib/state.ts';
 import { dotColor } from '../widgets/alias-colors.ts';
+import { displayDuration } from '../widgets/format.ts';
 import { countryName, flagEmoji } from '../widgets/geo.ts';
 
 /**
@@ -132,6 +133,7 @@ function whatOf(hit: RealtimeHit): string {
     {:else}
       <div class="feed" role="list">
         {#each shown as hit, i (i)}
+          {@const spent = displayDuration(hit.engagedMs)}
           <div
             class="feed-row"
             role="listitem"
@@ -142,6 +144,7 @@ function whatOf(hit: RealtimeHit): string {
             <span class="ago">{relativeAgo(hit.ts, now)}</span>
             <span class="vdot" style="background: {dotColor(hit.visitor.color)}"></span>
             <span class="vname">{hit.visitor.name}</span>
+            {#if spent !== undefined}<span class="vtime">{spent}</span>{/if}
             {#if hit.country !== undefined}
               {@const flag = flagEmoji(hit.country)}
               {#if flag !== undefined}<span class="flag" title={countryName(hit.country)}
