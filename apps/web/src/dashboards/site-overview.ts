@@ -19,7 +19,14 @@ export const siteOverview: Dashboard = DashboardSchema.parse({
       h: 1,
       query: {
         id: 'kpis',
-        metrics: ['visitors', 'pageviews', 'visits', 'engaged_ms', 'bounce_rate'],
+        metrics: [
+          'visitors',
+          'pageviews',
+          'visits',
+          'engaged_ms',
+          'engaged_sessions',
+          'bounce_rate',
+        ],
       },
       options: { tiles: ['visitors', 'pageviews', 'avg_engagement', 'bounce_rate'] },
     },

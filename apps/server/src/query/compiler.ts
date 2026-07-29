@@ -94,9 +94,29 @@ interface MetricSpec {
 }
 
 const METRICS: Record<Metric, MetricSpec> = {
-  // docs/03: `visitors` = distinct visitor ids over the stored hits in the
-  // window, so it always aggregates events, never session starts.
-  visitors: { preferred: 'events', events: { sql: 'COUNT(DISTINCT e.visitor_id)' }, empty: 0 },
+  /**
+   * docs/03: distinct visitor ids over the window's stored hits — always
+   * events, never session starts. Heartbeats are excluded: a ping is a
+   * continuation signal, not a visit, and a session that beats past local
+   * midnight would otherwise book a visitor into a day they never acted in.
+   * That produced the impossible reading `pageviews < visitors`.
+   */
+  visitors: {
+    preferred: 'events',
+    events: { sql: "COUNT(DISTINCT CASE WHEN e.type != 'ping' THEN e.visitor_id END)" },
+    empty: 0,
+  },
+  /**
+   * Visits with time on the clock. A single-hit visit is unmeasurable, not
+   * zero-length: nothing followed it, so no gap exists to accrue. Averaging
+   * engaged time over ALL visits therefore reports the measurement gap as
+   * brevity — the same dishonesty the dwell card refuses (docs/03, docs/04).
+   */
+  engaged_sessions: {
+    preferred: 'sessions',
+    sessions: { sql: 'SUM(CASE WHEN s.engaged_ms > 0 THEN 1 ELSE 0 END)' },
+    empty: 0,
+  },
   visits: {
     preferred: 'sessions',
     sessions: { sql: 'COUNT(*)' },

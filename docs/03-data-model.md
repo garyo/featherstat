@@ -149,8 +149,14 @@ Per incoming hit:
 Restart recovery: on boot, sessions with `last_seen_at` within 30 min are
 loaded back into the map. Crash-loss window ≈ one batch interval.
 
-Derived metrics: `visits` = sessions; `visitors` = distinct `visitor_id`;
-`engagement time` = `engaged_ms`; **time on page** = every event of the session
+Derived metrics: `visits` = sessions; `visitors` = distinct `visitor_id`
+**over non-ping rows** (a heartbeat is a continuation signal, not a visit: a
+session beating past local midnight must not book its visitor into a day it
+never acted in — that reads as `pageviews < visitors`, which is impossible);
+`engagement time` = `engaged_ms`, averaged over `engaged_sessions` (visits with
+time on the clock) rather than all visits — a single-hit visit is unmeasurable,
+not zero-length, and dividing by it reports the measurement gap as brevity, the
+same dishonesty the time-on-page card refuses; **time on page** = every event of the session
 — pings included — credits `min(gap to the next event, 20 s)` to the *current*
 page, i.e. the most recent pageview at or before it. That is the same clamped
 accrual `engaged_ms` uses, attributed per page instead of per session, and it is

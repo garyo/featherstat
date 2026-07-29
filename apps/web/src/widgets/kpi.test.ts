@@ -6,6 +6,7 @@ const TOTALS = {
   visitors: 1200,
   pageviews: 3000,
   visits: 100,
+  engaged_sessions: 100,
   engaged_ms: 10_600_000,
   bounce_rate: 0.31,
 };
@@ -13,6 +14,7 @@ const COMPARE = {
   visitors: 1000,
   pageviews: 3300,
   visits: 100,
+  engaged_sessions: 100,
   engaged_ms: 9_900_000,
   bounce_rate: 0.33,
 };
@@ -41,7 +43,7 @@ describe('tileModels', () => {
     expect(pageviews?.delta).toEqual({ text: '▾ −9.1%', tone: 'down' });
   });
 
-  it('derives avg engagement from engaged_ms / visits with a duration delta', () => {
+  it('derives avg engagement from engaged_ms / MEASURED visits, with a duration delta', () => {
     const tile = byName.get('avg_engagement');
     expect(tile?.value).toBe('1m 46s'); // 10 600 000 ms / 100 visits
     expect(tile?.delta).toEqual({ text: '▴ +7s', tone: 'up' });
@@ -70,13 +72,15 @@ describe('tileModels', () => {
       day(`2026-07-${String(i + 1).padStart(2, '0')}`, {
         visitors: 1,
         visits: 2,
+        // One of the two visits was measurable — the spark averages over that.
+        engaged_sessions: 1,
         engaged_ms: 4000,
       }),
     );
     const [visitors] = tileModels(['visitors'], TOTALS, undefined, series);
     expect(visitors?.spark).toEqual(Array.from({ length: 12 }, () => 2));
     const [engagement] = tileModels(['avg_engagement'], TOTALS, undefined, series);
-    expect(engagement?.spark).toEqual(Array.from({ length: 12 }, () => 2000));
+    expect(engagement?.spark).toEqual(Array.from({ length: 12 }, () => 4000));
   });
 
   it('weights the bounce spark by visits, not by day', () => {

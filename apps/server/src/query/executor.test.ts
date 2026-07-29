@@ -510,3 +510,26 @@ describe('meta', () => {
     empty.close();
   });
 });
+
+describe('metrics that heartbeats must not distort', () => {
+  it('excludes ping-only visitors from `visitors`, so pageviews cannot trail it', () => {
+    // The corpus day carries pings from visits that beat past local midnight;
+    // counting their visitors here is what made pageviews < visitors.
+    const [row] = resultOf(
+      run({ queries: [{ id: 'k', metrics: ['visitors', 'pageviews'] }] }),
+      'k',
+    ).rows;
+    expect(Number(row?.visitors)).toBeLessThanOrEqual(Number(row?.pageviews));
+  });
+
+  it('counts only measurable visits in `engaged_sessions`', () => {
+    const [row] = resultOf(
+      run({ queries: [{ id: 'k', metrics: ['visits', 'engaged_sessions', 'engaged_ms'] }] }),
+      'k',
+    ).rows;
+    // Averaging engaged time over ALL visits would report the measurement gap
+    // as brevity; the measurable subset is the honest denominator.
+    expect(Number(row?.engaged_sessions)).toBeLessThanOrEqual(Number(row?.visits));
+    if (Number(row?.engaged_ms) > 0) expect(Number(row?.engaged_sessions)).toBeGreaterThan(0);
+  });
+});

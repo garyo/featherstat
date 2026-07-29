@@ -11,6 +11,7 @@ export const METRIC_LABELS: Record<Metric, string> = {
   events: 'Events',
   outlinks: 'Outbound links',
   downloads: 'Downloads',
+  engaged_sessions: 'measured visits',
   engaged_ms: 'Engaged time',
   bounce_rate: 'Bounce rate',
   views_per_visit: 'Views / visit',

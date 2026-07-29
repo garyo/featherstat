@@ -63,8 +63,11 @@ const avgEngagement: TileDef = {
     // engaged_ms may be absent entirely (trimmed under an event-level filter,
     // docs/04 § 3) — that is "no answer", never "0s".
     if (typeof row.engaged_ms !== 'number') return null;
-    const visits = num(row.visits);
-    return visits > 0 ? row.engaged_ms / visits : null;
+    // Over MEASURED visits, not all of them: a single-hit visit has no gap to
+    // accrue, and counting it as 0s reports the measurement gap as brevity
+    // (the same rule the time-on-page card follows).
+    const measured = num(row.engaged_sessions);
+    return measured > 0 ? row.engaged_ms / measured : null;
   },
   format: formatDuration,
   delta: (cur, prev) => {
@@ -73,8 +76,8 @@ const avgEngagement: TileDef = {
     return { text: `${sign(diff)}${formatDuration(Math.abs(diff))}`, dir: Math.sign(diff) };
   },
   reduce: (slice) => {
-    const visits = sum(slice, 'visits');
-    return visits > 0 ? sum(slice, 'engaged_ms') / visits : 0;
+    const measured = sum(slice, 'engaged_sessions');
+    return measured > 0 ? sum(slice, 'engaged_ms') / measured : 0;
   },
 };
 

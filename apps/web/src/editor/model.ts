@@ -109,8 +109,15 @@ export function buildWidget(draft: WidgetDraft, id: string): WidgetSpec {
   switch (draft.viz) {
     case 'kpi-row': {
       // Engagement tiles divide by visits — the query must carry them.
-      const needsVisits = metrics.includes('engaged_ms') || metrics.includes('bounce_rate');
-      const all = needsVisits && !metrics.includes('visits') ? [...metrics, 'visits'] : metrics;
+      // Engagement tiles divide by their own denominators — bounce by visits,
+      // avg engagement by the MEASURED visits — so the query must carry them.
+      const all = [...metrics];
+      if (metrics.includes('engaged_ms') || metrics.includes('bounce_rate')) {
+        if (!all.includes('visits')) all.push('visits');
+      }
+      if (metrics.includes('engaged_ms') && !all.includes('engaged_sessions')) {
+        all.push('engaged_sessions');
+      }
       const tiles = metrics
         .map((metric) => METRIC_TILES[metric])
         .filter((tile): tile is string => tile !== undefined);

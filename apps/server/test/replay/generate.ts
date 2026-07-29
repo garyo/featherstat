@@ -45,7 +45,7 @@ export interface ReplayHit {
 export interface DayTotals {
   siteId: number;
   localDate: string;
-  /** Distinct `visitor_id` values across every stored row of that local day. */
+  /** Distinct `visitor_id` values across that local day's non-ping rows. */
   visitors: number;
   /** Sessions whose *first* hit fell on that local day. */
   sessions: number;
@@ -619,7 +619,9 @@ function account(hits: readonly ReplayHit[]): { totals: DayTotals[]; storedHits:
     // The visitor hash mixes in the site and a salt that rotates at 00:00 UTC, so
     // one person is a different visitor on either side of a UTC midnight (docs/03).
     const identity = `${hit.siteId}|${Math.floor(ctx.receivedAt / DAY_MS)}|${fingerprint(hit, ctx)}`;
-    bucket.visitors.add(identity);
+    // A heartbeat is not a visit: a session beating past local midnight must not
+    // book its visitor into a day they never acted in (docs/03).
+    if (hit.type !== 'ping') bucket.visitors.add(identity);
 
     let session = open.get(identity);
     if (session === undefined || ctx.receivedAt - session.lastSeenAt > SESSION_TIMEOUT_MS) {

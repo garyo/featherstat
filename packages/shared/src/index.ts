@@ -108,6 +108,7 @@ export const MetricSchema = z.enum([
   'outlinks',
   'downloads',
   'engaged_ms',
+  'engaged_sessions',
   'bounce_rate',
   'views_per_visit',
   'event_value_sum',
@@ -166,6 +167,7 @@ export const EVENT_ONLY_DIMENSIONS = [
 /** Metrics only the sessions table can answer — unavailable under `EVENT_ONLY_DIMENSIONS`. */
 export const SESSION_ONLY_METRICS = [
   'engaged_ms',
+  'engaged_sessions',
   'bounce_rate',
   'views_per_visit',
 ] as const satisfies readonly Metric[];

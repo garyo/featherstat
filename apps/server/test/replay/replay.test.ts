@@ -73,7 +73,9 @@ function totalsFromDb(target: Db): DayTotals[] {
   const events = target
     .prepare(
       `SELECT site_id, local_date,
-         COUNT(DISTINCT visitor_id) AS visitors,
+         -- Heartbeats are not visits (docs/03): a session beating past local
+         -- midnight must not book its visitor into a day it never acted in.
+         COUNT(DISTINCT CASE WHEN type != 'ping' THEN visitor_id END) AS visitors,
          SUM(type = 'pageview') AS pageviews
        FROM events GROUP BY site_id, local_date`,
     )
