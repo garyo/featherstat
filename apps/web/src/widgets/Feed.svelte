@@ -47,6 +47,7 @@ function whatOf(hit: (typeof shown)[number]): string {
 const siteNameOf = (id: number): string => sites?.get(id)?.name ?? `Site ${id}`;
 </script>
 
+<h2>{spec.title ?? 'Realtime'}</h2>
 {#if recent === undefined}
   <p class="widget-note">Live feed — available in the app, not in shared views.</p>
 {:else if shown.length === 0}

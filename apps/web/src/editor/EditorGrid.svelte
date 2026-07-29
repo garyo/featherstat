@@ -1,5 +1,6 @@
 <script lang="ts">
-import type { SiteInfo, WidgetSpec } from '@featherstat/shared';
+import type { RealtimeHit, SiteInfo, WidgetSpec } from '@featherstat/shared';
+import type { SiteScope } from '../lib/state.ts';
 import { REGISTRY, spanClass } from '../widgets/registry.ts';
 import type { WidgetData } from '../widgets/types.ts';
 import { dropIndex, type Rect } from './drag.ts';
@@ -18,6 +19,8 @@ interface Props {
   window?: { from: string; to: string };
   rangeLabel?: string;
   active?: Record<number, number>;
+  recent?: readonly RealtimeHit[];
+  scope?: SiteScope;
   sites?: ReadonlyMap<number, SiteInfo>;
   onreorder: (from: number, to: number) => void;
   onresize: (id: string, w: number) => void;
@@ -32,6 +35,8 @@ let {
   window,
   rangeLabel,
   active,
+  recent,
+  scope,
   sites,
   onreorder,
   onresize,
@@ -126,7 +131,7 @@ function endDrag(): void {
         <p class="widget-note">The “{spec.viz}” widget isn’t available yet.</p>
       {:else}
         {@const Widget = entry.component}
-        <Widget {spec} data={dataFor(spec)} {window} {rangeLabel} {active} {sites} />
+        <Widget {spec} data={dataFor(spec)} {window} {rangeLabel} {active} {recent} {scope} {sites} />
       {/if}
     </div>
   {/each}

@@ -6,11 +6,13 @@ import {
   type Query,
   type QueryRequest,
   type QueryResponse,
+  type RealtimeHit,
   type SiteInfo,
   type WidgetSpec,
   widgetQueries,
 } from '@featherstat/shared';
 import type { QueryClient } from '../lib/api.ts';
+import type { SiteScope } from '../lib/state.ts';
 import { widgetData } from '../views/batch.ts';
 import type { WidgetData } from '../widgets/types.ts';
 import AddWidget from './AddWidget.svelte';
@@ -44,6 +46,8 @@ interface Props {
   window?: { from: string; to: string };
   rangeLabel?: string;
   active?: Record<number, number>;
+  recent?: readonly RealtimeHit[];
+  scope?: SiteScope;
   sites?: ReadonlyMap<number, SiteInfo>;
   saving: boolean;
   saveError: string | undefined;
@@ -60,6 +64,8 @@ let {
   window,
   rangeLabel,
   active,
+  recent,
+  scope,
   sites,
   saving,
   saveError,
@@ -196,6 +202,8 @@ function handleImport(dashboard: Dashboard): void {
   {window}
   {rangeLabel}
   {active}
+  {recent}
+  {scope}
   {sites}
   onreorder={(from, to) => (draft.grid = reorder(draft.grid, from, to))}
   onresize={(id, w) => (draft.grid = resizeWidget(draft.grid, id, w))}

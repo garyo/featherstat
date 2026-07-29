@@ -154,6 +154,8 @@ const note = $derived.by(() => {
     error={runner.error}
     {window}
     rangeLabel={RANGE_QUALIFIER[heldRange]}
+    {recent}
+    scope={site}
     saving={store.saving}
     saveError={store.error}
     onsave={(next) => void mode.save(next)}

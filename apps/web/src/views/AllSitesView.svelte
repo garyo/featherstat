@@ -112,6 +112,8 @@ const note = $derived(
     response={runner.response}
     error={runner.error}
     {active}
+    {recent}
+    scope="all"
     sites={byId}
     saving={store.saving}
     saveError={store.error}
