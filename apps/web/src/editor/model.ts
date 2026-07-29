@@ -153,6 +153,14 @@ export function buildWidget(draft: WidgetDraft, id: string): WidgetSpec {
         h: 3,
         query: { id, metrics: ['visitors'], bucket: 'day', dim: 'site' },
       });
+    case 'feed':
+      // No query at all: the live feed rides the SSE stream the view holds.
+      return parseSpec({
+        ...base,
+        viz: draft.viz,
+        w: 6,
+        options: draft.limit === undefined ? {} : { limit: draft.limit },
+      });
     case 'dwell':
       // Its own query kind, not metric × dimension: the shape IS the answer,
       // and the schema's default ranking depth is the only knob (docs/04 § 3).

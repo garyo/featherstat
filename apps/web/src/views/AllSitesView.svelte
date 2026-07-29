@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { Query, QueryRequest, SiteInfo } from '@featherstat/shared';
+import type { Query, QueryRequest, RealtimeHit, SiteInfo } from '@featherstat/shared';
 import { allSites } from '../dashboards/all-sites.ts';
 import type { AdminClient } from '../lib/admin.ts';
 import type { QueryClient } from '../lib/api.ts';
@@ -14,6 +14,8 @@ import { collectBatch, hourlyWhenToday } from './batch.ts';
 import DashboardGrid from './DashboardGrid.svelte';
 
 interface Props {
+  /** SSE live feed from the shell — the feed widget reads it. */
+  recent?: readonly RealtimeHit[];
   admin: AdminClient;
   client: QueryClient;
   live: LiveStream;
@@ -28,8 +30,18 @@ interface Props {
   onselectrange: (range: RangePreset) => void;
 }
 
-let { admin, client, live, active, sites, byId, onselectsite, range, onselectrange }: Props =
-  $props();
+let {
+  admin,
+  client,
+  live,
+  active,
+  sites,
+  byId,
+  onselectsite,
+  range,
+  onselectrange,
+  recent,
+}: Props = $props();
 
 // The clients are app-lifetime singletons; capturing their initial values is the point.
 // svelte-ignore state_referenced_locally
@@ -136,6 +148,8 @@ const note = $derived(
     sites={byId}
     {range}
     rangeLabel={RANGE_QUALIFIER[range]}
+    {recent}
+    scope="all"
     {onselectsite}
   />
 {/if}

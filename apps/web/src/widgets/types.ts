@@ -3,10 +3,11 @@ import {
   isQueryError,
   type QueryErrorResult,
   type QueryResult,
+  type RealtimeHit,
   type SiteInfo,
   type WidgetSpec,
 } from '@featherstat/shared';
-import type { RangePreset } from '../lib/state.ts';
+import type { RangePreset, SiteScope } from '../lib/state.ts';
 
 /** A widget's share of the view batch, keyed by the slots `widgetQueries` declared. */
 export interface WidgetData {
@@ -28,6 +29,10 @@ export interface WidgetProps {
   range?: RangePreset;
   /** Live active-visitor counts by site id (SSE `snapshot`/`active`); site-cards reads it. */
   active?: Record<number, number>;
+  /** The SSE live feed the view already holds; the `feed` widget reads it. */
+  recent?: readonly RealtimeHit[];
+  /** The view's scope — the feed widget filters by it and badges at 'all'. */
+  scope?: SiteScope;
   /** The site directory (`/api/sites`); site-cards names its cards from it. */
   sites?: ReadonlyMap<number, SiteInfo>;
   onselectsite?: (site: number) => void;

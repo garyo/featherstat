@@ -1,8 +1,15 @@
 <script lang="ts">
-import type { Dashboard, Filter, QueryResponse, SiteInfo, WidgetSpec } from '@featherstat/shared';
+import type {
+  Dashboard,
+  Filter,
+  QueryResponse,
+  RealtimeHit,
+  SiteInfo,
+  WidgetSpec,
+} from '@featherstat/shared';
 import type { ShowQuery } from '../editor/editor.ts';
 import { loadEditor } from '../lib/editor-mode.svelte.ts';
-import type { RangePreset } from '../lib/state.ts';
+import type { RangePreset, SiteScope } from '../lib/state.ts';
 import { REGISTRY, spanClass } from '../widgets/registry.ts';
 import { collectBatch, widgetData } from './batch.ts';
 
@@ -17,6 +24,8 @@ interface Props {
   /** Range qualifier for widget titles ("last 30 days"). */
   rangeLabel?: string;
   range?: RangePreset;
+  recent?: readonly RealtimeHit[];
+  scope?: SiteScope;
   active?: Record<number, number>;
   sites?: ReadonlyMap<number, SiteInfo>;
   /** Per-widget admin chrome ("show query"); off on the read-only share page. */
@@ -33,6 +42,8 @@ let {
   window,
   rangeLabel,
   range,
+  recent,
+  scope,
   active,
   sites,
   chrome = true,
@@ -78,6 +89,8 @@ async function showQuery(spec: WidgetSpec): Promise<void> {
           {window}
           {rangeLabel}
           {range}
+          {recent}
+          {scope}
           {active}
           {sites}
           {onselectsite}

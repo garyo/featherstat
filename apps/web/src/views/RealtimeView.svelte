@@ -11,6 +11,7 @@ import {
   visitorTally,
 } from '../lib/realtime.ts';
 import type { SiteScope } from '../lib/state.ts';
+import { dotColor } from '../widgets/alias-colors.ts';
 import { countryName, flagEmoji } from '../widgets/geo.ts';
 
 /**
@@ -42,7 +43,6 @@ let { active, recent, visitorTimes, site, sites }: Props = $props();
  * deliberate — visitor identity is carried by the NAME, the dot only aids
  * scanning — so the dataviz never-cycle rule for data series does not apply.
  */
-const ALIAS_COLORS = ['var(--s1)', 'var(--s2)', 'var(--s3)'];
 
 const siteNameOf = (id: number): string =>
   sites?.find((entry) => entry.id === id)?.name ?? `Site ${id}`;
@@ -68,10 +68,6 @@ const scoped = $derived(recent.filter((hit) => inScope(hit, site)));
 const shown = $derived(scoped.slice(0, FEED_SHOW));
 const tally = $derived(countryTally(scoped, now));
 const visitors = $derived(visitorTally(scoped, now, engagementByName(visitorTimes, site)));
-
-function dotColor(color: number): string {
-  return ALIAS_COLORS[color % ALIAS_COLORS.length] ?? 'var(--s1)';
-}
 
 function placeOf(row: VisitorCount): string | undefined {
   // Same shape the feed rows use, so one visitor never reads two ways.
@@ -186,12 +182,6 @@ function whatOf(hit: RealtimeHit): string {
 </div>
 
 <style>
-  .fsite {
-    margin-left: auto;
-    color: var(--muted);
-    font-size: 12px;
-    white-space: nowrap;
-  }
   .tally-label {
     margin: 0 0 4px;
     color: var(--muted);

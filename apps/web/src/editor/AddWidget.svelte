@@ -40,9 +40,11 @@ let dim = $state<Dimension | ''>('path');
 let limit = $state(8);
 
 /** Free-form vizzes take the picked breakdown; the rest pin their own query shape. */
-const freeForm = $derived(viz === 'bar-list' || viz === 'table' || viz === 'map' || viz === 'feed');
+const freeForm = $derived(viz === 'bar-list' || viz === 'table' || viz === 'map');
+/** Feed has no query, but its row count is a real knob. */
+const pickLimit = $derived(freeForm || viz === 'feed');
 /** Vizzes whose pinned query answers no metric pick — site cards, and dwell's own kind. */
-const METRICLESS = new Set<VizType>(['site-cards', 'dwell']);
+const METRICLESS = new Set<VizType>(['site-cards', 'dwell', 'feed']);
 const pickMetrics = $derived(!METRICLESS.has(viz));
 
 function toggleMetric(metric: Metric): void {
@@ -52,7 +54,7 @@ function toggleMetric(metric: Metric): void {
 function add(): void {
   onadd(
     buildWidget(
-      { viz, title, metrics, dim: freeForm ? dim : '', limit: freeForm ? limit : undefined },
+      { viz, title, metrics, dim: freeForm ? dim : '', limit: pickLimit ? limit : undefined },
       id,
     ),
   );
@@ -98,6 +100,8 @@ function add(): void {
           {/each}
         </select>
       </label>
+    {/if}
+    {#if pickLimit}
       <label class="field">
         Limit
         <input type="number" bind:value={limit} min="1" max="1000" />

@@ -182,6 +182,7 @@ const logout = (): void => {
       sites={directory.sites}
       byId={directory.byId}
       range={view.current.range}
+      {recent}
       onselectrange={selectRange}
       onselectsite={selectSite}
     />
@@ -191,6 +192,7 @@ const logout = (): void => {
       {client}
       {live}
       {site}
+      {recent}
       timezone={directory.byId.get(site)?.timezone}
       range={view.current.range}
       filters={view.current.filters}
