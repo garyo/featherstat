@@ -10,9 +10,14 @@ import type {
 import type { ShowQuery } from '../editor/editor.ts';
 import { loadEditor } from '../lib/editor-mode.svelte.ts';
 import type { RangePreset, SiteScope } from '../lib/state.ts';
-import { REGISTRY, spanClass } from '../widgets/registry.ts';
+import WidgetGrid from '../widgets/WidgetGrid.svelte';
 import { collectBatch, widgetData } from './batch.ts';
 
+/**
+ * The view path's dashboard: it routes the one batch's answers to the widgets
+ * and decorates `WidgetGrid` (which owns the rendering) with the per-widget
+ * "show query" chrome.
+ */
 interface Props {
   dashboard: Dashboard;
   response: QueryResponse | undefined;
@@ -69,10 +74,24 @@ async function showQuery(spec: WidgetSpec): Promise<void> {
 }
 </script>
 
-<div class="grid" class:refetching>
-  {#each dashboard.grid as spec (spec.id)}
-    {@const entry = REGISTRY[spec.viz]}
-    <div class={entry?.frame === 'wide' ? 'wide' : `card ${spanClass(spec.w)}`}>
+<WidgetGrid
+  grid={dashboard.grid}
+  dataFor={(spec) => widgetData(spec, slots, response, error)}
+  {refetching}
+  {window}
+  {rangeLabel}
+  {range}
+  {recent}
+  {scope}
+  {now}
+  {onopenrealtime}
+  {active}
+  {sites}
+  {onselectsite}
+  {onfilter}
+>
+  {#snippet card({ spec, frame, widget })}
+    <div class={frame}>
       {#if chrome}
         <button
           class="q-btn"
@@ -82,30 +101,10 @@ async function showQuery(spec: WidgetSpec): Promise<void> {
           onclick={() => void showQuery(spec)}>&lbrace;&rbrace;</button
         >
       {/if}
-      {#if entry === undefined}
-        <h2>{spec.title ?? spec.viz}</h2>
-        <p class="widget-note">The “{spec.viz}” widget isn’t available yet.</p>
-      {:else}
-        {@const Widget = entry.component}
-        <Widget
-          {spec}
-          data={widgetData(spec, slots, response, error)}
-          {window}
-          {rangeLabel}
-          {range}
-          {recent}
-          {scope}
-          {now}
-          {onopenrealtime}
-          {active}
-          {sites}
-          {onselectsite}
-          {onfilter}
-        />
-      {/if}
+      {@render widget()}
     </div>
-  {/each}
-</div>
+  {/snippet}
+</WidgetGrid>
 
 {#if ShowQueryModal !== undefined && shownQuery !== undefined}
   <ShowQueryModal
@@ -116,20 +115,6 @@ async function showQuery(spec: WidgetSpec): Promise<void> {
 {/if}
 
 <style>
-  /* The refetch hold (docs/05): previous render stays, dimmed — never a skeleton. */
-  .grid {
-    transition: opacity 0.15s linear;
-  }
-
-  .grid.refetching {
-    opacity: 0.6;
-  }
-
-  .wide {
-    grid-column: 1 / -1;
-    min-width: 0;
-  }
-
   /* Anchor the per-widget chrome without disturbing the card grammar. */
   .card,
   .wide {

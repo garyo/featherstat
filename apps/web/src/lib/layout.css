@@ -227,6 +227,13 @@ select.site-switch {
   min-width: 0;
 }
 
+/* A widget that frames itself (kpi-row, site-cards) takes the whole row —
+ * grid vocabulary, so the view grid and the editor's decorated one share it. */
+.grid .wide {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
 /* Spans belong to the 12-column grid, not to the card: the same card flows
  * differently in the all-sites view (docs/05 § Responsive — 12 desktop, 6
  * tablet, 1 mobile). */
