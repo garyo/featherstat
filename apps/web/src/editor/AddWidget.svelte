@@ -43,8 +43,16 @@ let limit = $state(8);
 const freeForm = $derived(viz === 'bar-list' || viz === 'table' || viz === 'map');
 /** Feed has no query, but its row count is a real knob. */
 const pickLimit = $derived(freeForm || viz === 'feed');
+/** The realtime family reads the stream: no query, no knobs beyond a title. */
 /** Vizzes whose pinned query answers no metric pick — site cards, and dwell's own kind. */
-const METRICLESS = new Set<VizType>(['site-cards', 'dwell', 'feed']);
+const METRICLESS = new Set<VizType>([
+  'site-cards',
+  'dwell',
+  'feed',
+  'active-now',
+  'visitor-tally',
+  'realtime-countries',
+]);
 const pickMetrics = $derived(!METRICLESS.has(viz));
 
 function toggleMetric(metric: Metric): void {

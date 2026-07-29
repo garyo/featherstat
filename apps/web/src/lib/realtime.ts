@@ -1,4 +1,5 @@
 import { type RealtimeEngagement, type RealtimeHit, TALLY_WINDOW_MS } from '@featherstat/shared';
+import type { BarRow } from '../widgets/bar-rows.ts';
 import { displayDuration } from '../widgets/format.ts';
 import { countryName } from '../widgets/geo.ts';
 import type { SiteScope } from './state.ts';
@@ -167,4 +168,52 @@ export function actionLabel(hit: RealtimeHit): string {
   if (hit.type !== 'event') return hit.path ?? '/';
   const action = hit.eventAction ?? 'event';
   return hit.eventCategory !== undefined ? `${hit.eventCategory} · ${action}` : action;
+}
+
+/** One step of a visitor's trail: what they did, when, and how deep in they were. */
+export interface TrailStep {
+  ts: number;
+  label: string;
+  isEvent: boolean;
+  engagedMs?: number;
+}
+
+/**
+ * A visitor's recent path through the site, oldest first — the ring already
+ * holds it, so expanding a tally row costs no query (docs/05: the realtime
+ * surface answers from the stream alone). Capped so one busy visitor cannot
+ * unroll the whole card.
+ */
+export function visitorTrail(
+  hits: readonly RealtimeHit[],
+  name: string,
+  site: SiteScope,
+  limit = TRAIL_STEPS,
+): TrailStep[] {
+  const steps: TrailStep[] = [];
+  for (const hit of hits) {
+    if (hit.visitor.name !== name || !inScope(hit, site)) continue;
+    steps.push({
+      ts: hit.ts,
+      label: actionLabel(hit),
+      isEvent: hit.type === 'event',
+      engagedMs: hit.engagedMs,
+    });
+    if (steps.length >= limit) break;
+  }
+  return steps.reverse();
+}
+
+export const TRAIL_STEPS = 12;
+
+/** The country tally as bar rows — the shared bar renderer takes it from here. */
+export function countryRows(counts: readonly CountryCount[]): BarRow[] {
+  return counts.map((row) => ({
+    name: row.country,
+    value: row.count,
+    extra: 0,
+    pct: row.pct,
+    // Realtime is stream-shaped, not query-shaped: there is nothing to filter into.
+    filterValue: undefined,
+  }));
 }

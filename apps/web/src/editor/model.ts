@@ -153,6 +153,9 @@ export function buildWidget(draft: WidgetDraft, id: string): WidgetSpec {
         h: 3,
         query: { id, metrics: ['visitors'], bucket: 'day', dim: 'site' },
       });
+    case 'active-now':
+    case 'visitor-tally':
+    case 'realtime-countries':
     case 'feed':
       // No query at all: the live feed rides the SSE stream the view holds.
       return parseSpec({

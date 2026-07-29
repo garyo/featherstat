@@ -1,14 +1,17 @@
 import type { VizType } from '@featherstat/shared';
 import type { Component } from 'svelte';
+import ActiveNow from './ActiveNow.svelte';
 import BarList from './BarList.svelte';
 import Devices from './Devices.svelte';
 import Dwell from './Dwell.svelte';
 import Feed from './Feed.svelte';
 import Heatmap from './Heatmap.svelte';
 import KpiRow from './KpiRow.svelte';
+import RealtimeCountries from './RealtimeCountries.svelte';
 import SiteCards from './SiteCards.svelte';
 import Timeseries from './Timeseries.svelte';
 import type { WidgetProps } from './types.ts';
+import VisitorTally from './VisitorTally.svelte';
 import './widgets.css';
 
 /**
@@ -33,6 +36,9 @@ export const REGISTRY: Partial<Record<VizType, RegistryEntry>> = {
   timeseries: { component: Timeseries, frame: 'card' },
   'bar-list': { component: BarList, frame: 'card' },
   feed: { component: Feed, frame: 'card' },
+  'active-now': { component: ActiveNow, frame: 'card' },
+  'visitor-tally': { component: VisitorTally, frame: 'card' },
+  'realtime-countries': { component: RealtimeCountries, frame: 'card' },
   heatmap: { component: Heatmap, frame: 'card' },
   devices: { component: Devices, frame: 'card' },
   dwell: { component: Dwell, frame: 'card' },

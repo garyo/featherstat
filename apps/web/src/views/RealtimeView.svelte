@@ -1,47 +1,32 @@
 <script lang="ts">
 import type { RealtimeEngagement, RealtimeHit, SiteInfo } from '@featherstat/shared';
-import {
-  countryTally,
-  engagementByName,
-  FEED_SHOW,
-  inScope,
-  relativeAgo,
-  type VisitorCount,
-  visitorMeta,
-  visitorTally,
-} from '../lib/realtime.ts';
+import { FEED_SHOW, inScope } from '../lib/realtime.ts';
 import type { SiteScope } from '../lib/state.ts';
-import { dotColor } from '../widgets/alias-colors.ts';
-import FeedRows from '../widgets/FeedRows.svelte';
-import { countryName, flagEmoji } from '../widgets/geo.ts';
+import ActiveNow from '../widgets/ActiveNow.svelte';
+import Feed from '../widgets/Feed.svelte';
+import RealtimeCountries from '../widgets/RealtimeCountries.svelte';
+import VisitorTally from '../widgets/VisitorTally.svelte';
 
 /**
- * The Realtime view (docs/05): active-now hero, live feed, 30-minute country
- * tally — pure SSE, zero `/api/query` traffic. The world map ships in M2 with
- * the map-outline data (see the docs/05 amendment). The rolling hit list is
- * kept at the app level (like the active counts), so opening this tab late
- * still shows everything the stream has delivered.
- *
- * SECURITY: paths, cities and event names are visitor-controlled strings —
- * text interpolation ONLY (registry.ts boundary note applies here too).
+ * The Realtime view (docs/05): active-now hero, who is here (with each
+ * visitor's trail), the live feed, and the 30-minute country tally — pure SSE,
+ * zero `/api/query` traffic. It COMPOSES the registered realtime widgets
+ * rather than rendering their innards (CLAUDE.md invariant 7), so the same
+ * pieces drop onto any dashboard; what lives here is the page's own
+ * arrangement and the highlight the tally and feed share.
  */
 interface Props {
-  /** Active-now by site id, maintained at the app level from the SSE stream. */
   active: Record<number, number>;
-  /** App-level rolling feed, newest first, all sites. */
   recent: readonly RealtimeHit[];
-  /** Engaged time per visitor, recounted by the server every 10 s. */
   visitorTimes: readonly RealtimeEngagement[];
   site: SiteScope;
-  /** Site directory for the per-row badges shown when the scope is 'all'. */
   sites: SiteInfo[] | undefined;
 }
 
 let { active, recent, visitorTimes, site, sites }: Props = $props();
 
-/** FeedRows looks sites up by id; this view is handed the directory as a list. */
+/** The widgets look sites up by id; this view is handed the directory as a list. */
 const siteMap = $derived(new Map((sites ?? []).map((entry) => [entry.id, entry])));
-const siteNameOf = (id: number): string => siteMap.get(id)?.name ?? `Site ${id}`;
 
 /** Alias under the cursor — its every row lights up, feed and tally alike. */
 let hover = $state<string | undefined>(undefined);
@@ -49,28 +34,23 @@ let hover = $state<string | undefined>(undefined);
 /** Clock for the `ago` labels and the tally window — ticks while the view is up. */
 let now = $state(Date.now());
 $effect(() => {
-  const tick = setInterval(() => {
+  const timer = setInterval(() => {
     now = Date.now();
-  }, 5_000);
-  return () => clearInterval(tick);
+  }, 10_000);
+  return () => clearInterval(timer);
 });
 
-const activeNow = $derived(
-  site === 'all'
-    ? Object.values(active).reduce((sum, count) => sum + count, 0)
-    : (active[site] ?? 0),
-);
-const scoped = $derived(recent.filter((hit) => inScope(hit, site)));
-const shown = $derived(scoped.slice(0, FEED_SHOW));
-const tally = $derived(countryTally(scoped, now));
-const visitors = $derived(visitorTally(scoped, now, engagementByName(visitorTimes, site)));
-
-function placeOf(row: VisitorCount): string | undefined {
-  // Same shape the feed rows use, so one visitor never reads two ways.
-  if (row.city !== undefined && row.country !== undefined) return `${row.city}, ${row.country}`;
-  if (row.city !== undefined) return row.city;
-  return row.country !== undefined ? countryName(row.country) : undefined;
-}
+const shown = $derived((recent ?? []).filter((hit) => inScope(hit, site)).slice(0, FEED_SHOW));
+/** Spec stand-ins: on this page the arrangement is the page's, not a document's. */
+const cardSpec = (id: string, title?: string) =>
+  ({
+    id,
+    viz: 'feed',
+    w: 6,
+    h: 2,
+    options: {},
+    ...(title === undefined ? {} : { title }),
+  }) as never;
 </script>
 
 <div class="filters">
@@ -80,67 +60,36 @@ function placeOf(row: VisitorCount): string | undefined {
 <div class="grid">
   <div class="card c6">
     <h2>Right now</h2>
-    <div class="active-now">
-      {#if activeNow > 0}<span class="pulse"></span>{:else}<span class="idle"></span>{/if}
-      <span class="n">{activeNow}</span>
-      <span class="active-label">active now</span>
-    </div>
-    {#if visitors.length > 0}
-      <!-- Wider window than the hero on purpose: "who was here lately", not "who is
-           here this instant" — and labeled so the two never read as one number. -->
-      <p class="tally-label">Visitors · last 30 min</p>
-      <div class="visitor-tally" role="list">
-        {#each visitors as row (row.name)}
-          {@const place = placeOf(row)}
-          <div
-            class="visitor-row"
-            role="listitem"
-            class:hl={hover === row.name}
-            onmouseenter={() => (hover = row.name)}
-            onmouseleave={() => (hover = undefined)}
-          >
-            <span class="vdot" style="background: {dotColor(row.color)}"></span>
-            <span class="vname">{row.name}</span>
-            <span class="vmeta"
-              >· {visitorMeta(row, place, site === 'all' ? siteNameOf(row.siteId) : undefined)}</span
-            >
-          </div>
-        {/each}
-      </div>
-    {/if}
+    <ActiveNow spec={cardSpec('active')} {active} scope={site} />
+    <VisitorTally
+      spec={cardSpec('tally')}
+      {recent}
+      {visitorTimes}
+      scope={site}
+      sites={siteMap}
+      {now}
+      {hover}
+      onhover={(name) => (hover = name)}
+    />
     {#if shown.length === 0}
       <p class="widget-note">Waiting for the first hit…</p>
     {:else}
-      <FeedRows hits={shown} {now} scope={site} sites={siteMap} {hover} onhover={(name) => (hover = name)} />
+      <Feed
+        spec={cardSpec('feed')}
+        {recent}
+        scope={site}
+        sites={siteMap}
+        {hover}
+        onhover={(name) => (hover = name)}
+        headless
+      />
     {/if}
   </div>
 
   <div class="card c6">
-    <h2>Countries · last 30 min</h2>
-    {#if tally.length === 0}
-      <p class="widget-note">No located visitors in the last 30 minutes.</p>
-    {:else}
-      <div class="bar-list">
-        {#each tally as row (row.country)}
-          {@const flag = flagEmoji(row.country)}
-          <div class="bar-row">
-            <span class="bar" style="width: {row.pct}%"></span>
-            <span class="name">
-              {#if flag !== undefined}<span class="flag">{flag}</span>{/if}
-              {countryName(row.country)}
-            </span>
-            <span class="num">{row.count}</span>
-          </div>
-        {/each}
-      </div>
-    {/if}
+    <RealtimeCountries spec={cardSpec('countries')} {recent} scope={site} {now} />
   </div>
 </div>
 
 <style>
-  .tally-label {
-    margin: 0 0 4px;
-    color: var(--muted);
-    font-size: 12px;
-  }
 </style>

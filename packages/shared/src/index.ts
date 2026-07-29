@@ -465,6 +465,9 @@ export const VizTypeSchema = z.enum([
   'dwell',
   'map',
   'feed',
+  'active-now',
+  'visitor-tally',
+  'realtime-countries',
   'site-cards',
 ]);
 export type VizType = z.infer<typeof VizTypeSchema>;

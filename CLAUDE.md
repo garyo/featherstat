@@ -54,13 +54,24 @@ bun run --cwd apps/web dev      # dashboard on :5173, proxies /api to :8080
    (`apps/server/test/fixtures/matomo/`) and the perf thresholds only gain
    cases / get stricter. Never delete a fixture or loosen a threshold to make
    a change pass — surface the conflict instead.
-7. **One rendering per thing rendered.** A view must not hand-roll markup a
-   widget already provides (or could): extract the shared piece into
-   `apps/web/src/widgets/` and have both render it. The realtime feed forked
-   this way — inline in its view first, copied into the widget later — and
-   every fix after that had to be made twice. `feed-rows.test.ts` and
-   `bar-rows.ts` are the shape to follow: rows in one component, pure labels
-   in a tested module.
+7. **Everything rendered is a widget.** Anything that draws data belongs in
+   `apps/web/src/widgets/`, registered in `registry.ts` and named in the
+   shared `VizType` enum — so it is reusable on any dashboard, replaceable,
+   and editable. A view supplies arrangement and shared interaction state
+   (the Realtime page owns its layout and the highlight its tally and feed
+   share); it never renders a widget's innards. A widget declares a query or
+   declares none — the realtime family reads the SSE stream and asks the
+   batch for nothing.
+
+   Corollary — **one rendering per thing rendered**: never copy markup into a
+   second file; extract it (`FeedRows.svelte`, `BarRows.svelte`) and let both
+   callers render it. The realtime feed forked exactly this way, and every fix
+   after that had to be made twice; `feed-rows.test.ts` now fails if a second
+   file grows those rows.
+
+   Known exception, deliberate: the Journeys sankey and flows table are still
+   view-local (their edge-click and depth controls are coupled). Registering
+   them is open work, not licence for the next one.
 8. **Query vocabulary, never SQL from clients.** The compiler whitelists
    metrics/dimensions/ops; everything is parameterized.
 

@@ -10,19 +10,30 @@ import type { WidgetProps } from './types.ts';
  * FeedRows, the same component the Realtime view renders: this widget is a
  * frame around it, never a second copy of it.
  */
-let { spec, recent, scope = 'all', sites, onopenrealtime }: WidgetProps = $props();
+let {
+  spec,
+  recent,
+  scope = 'all',
+  sites,
+  onopenrealtime,
+  headless = false,
+  hover: sharedHover,
+  onhover,
+  now: sharedNow,
+}: WidgetProps = $props();
 
-/** Alias under the cursor — every row of that visitor lights up, as on the Realtime page. */
-let hover = $state<string | undefined>(undefined);
+/** Own highlight when standalone; a composing view can share one instead. */
+let localHover = $state<string | undefined>(undefined);
+const hover = $derived(onhover === undefined ? localHover : sharedHover);
 
 const limit = $derived(feedLimit(spec.options.limit));
 const shown = $derived((recent ?? []).filter((hit) => inScope(hit, scope)).slice(0, limit));
 
 /** Ago labels tick while the card is mounted. */
-let now = $state(Date.now());
+let ownNow = $state(Date.now());
 $effect(() => {
   const timer = setInterval(() => {
-    now = Date.now();
+    ownNow = Date.now();
   }, 10_000);
   return () => clearInterval(timer);
 });
@@ -33,7 +44,9 @@ function feedLimit(raw: unknown): number {
 }
 </script>
 
-{#if onopenrealtime === undefined}
+{#if headless}
+  <!-- heading supplied by the composing view -->
+{:else if onopenrealtime === undefined}
   <h2>{spec.title ?? 'Realtime'}</h2>
 {:else}
   <h2>
@@ -45,5 +58,5 @@ function feedLimit(raw: unknown): number {
 {:else if shown.length === 0}
   <p class="widget-note">Waiting for the first hit…</p>
 {:else}
-  <FeedRows hits={shown} {now} {scope} {sites} {hover} onhover={(name) => (hover = name)} />
+  <FeedRows hits={shown} now={sharedNow ?? ownNow} {scope} {sites} {hover} onhover={(name) => (onhover === undefined ? (localHover = name) : onhover(name))} />
 {/if}
