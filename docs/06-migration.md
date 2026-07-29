@@ -57,6 +57,24 @@ https (or loopback) — the token rides in the body. Then DNS/Traefik for
 
 If the new system misbehaves: point Traefik back. Blast radius ≈ zero.
 
+### Changes made during the bake that move numbers
+
+The bake compares our figures against Matomo's daily, so any change to what a
+metric *means* has to be logged here or the comparison silently drifts.
+
+- **2026-07-29 — `visits` under an event-level dimension** now counts distinct
+  sessions over non-ping rows, matching the population `visitors` already used
+  (52249a6). **Headline visits are unaffected**: ungrouped `visits`, and any
+  `visits` answered from the `sessions` table, take the `COUNT(*)` path and did
+  not move — so the daily per-site totals being reconciled against Matomo are
+  unchanged. What moved is `visits` *within a breakdown* (by path, title, hour),
+  where the old value counted heartbeat presence. On the replay corpus: 13 of
+  121 groups by site×path, 6 of 35 by site×title, 184 of 6732 by
+  site×day×hour; 41 of those previously reported visits > 0 against visitors =
+  0 with no actions recorded at all.
+- **2026-07-29 — `engaged_sessions`** returns 0 rather than NULL for a group
+  matching no session (52249a6). Affects rendering of empty groups, not totals.
+
 ## Cutover sequence
 
 1. Deploy the new container on the GCE host (Traefik labels, new internal
