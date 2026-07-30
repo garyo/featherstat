@@ -19,20 +19,25 @@ import { beforeAll, describe, expect, it } from 'vitest';
  * - The editor budget is unchanged: its chunk shrank only because `Modal.svelte`
  *   became a shared chunk when the share dialog started using it too.
  */
-// Raised 63->64 KiB on 2026-07-28 for the realtime scope selector + site
-// badges — deliberate entry-path feature code, not leakage. Editor code must
-// still land in its dynamic chunk (asserted below); tighten if it shrinks.
-//
-// Tightened 64 KiB -> 18 KiB on 2026-07-29 (one widget environment: 17 644 ->
-// 16 545 gz). Most of that slack was never this chunk's: rollup now hoists what
-// the entry shares with the split chunks into siblings the entry statically
-// preloads (`format`, `disclose-version`, `WidgetGrid`), so `index-*.js` alone
-// stopped describing the path to a dashboard and the budget quietly stopped
-// binding. The four together are 71 117 gz today (70 892 before this change) —
-// already past what 64 KiB was meant to cap, and past it before this phase.
-// Measuring the whole preloaded set belongs with the other budget work; until
-// then this ratchet at least binds again on the chunk it does measure.
-const ENTRY_MAX_GZIP = 18_432;
+/**
+ * The budget is the WHOLE first-load module graph, not one chunk of it.
+ *
+ * It used to read `index-*.js` alone. Rollup hoists what the entry shares with
+ * the split chunks into siblings the entry statically preloads, so that file
+ * stopped describing what a browser downloads before first paint and the
+ * ratchet quietly stopped binding — it was watching 16 KB while the browser
+ * fetched 71 KB across four chunks, over the 64 KiB it meant to cap and over it
+ * before anyone noticed. A guard that stops guarding is worse than one that
+ * fails. This measures every script the entry HTML pulls in, so the number
+ * cannot drift away from the thing it names again.
+ *
+ * 80 KiB against ~71 KB today: real headroom for ordinary work, tight enough
+ * that an accidental import still trips it. Raised from 64 KiB deliberately on
+ * 2026-07-30 (Gary: "64k is still a tiny bundle... even the GCE machine we're
+ * targeting has decent network IO") — the split-chunk budgets below are what
+ * keep the editor, settings and share page off this path.
+ */
+const FIRST_LOAD_MAX_GZIP = 81_920;
 const EDITOR_MAX_GZIP = 6_656;
 const SETTINGS_MAX_GZIP = 6_656;
 /** The share page and the dialog that mints links for it — small by construction. */
@@ -71,11 +76,32 @@ beforeAll(() => {
   });
 }, 120_000);
 
+/**
+ * Every script the entry HTML fetches before first paint: the module itself
+ * plus each `modulepreload` sibling rollup hoisted out of it.
+ */
+function firstLoadScripts(): { name: string; gzip: number }[] {
+  const html = readFileSync(`${WEB_ROOT}dist/index.html`, 'utf8');
+  const paths = new Set(
+    [...html.matchAll(/(?:src|href)="\/([^"]+\.js)"/g)].map((match) => match[1] as string),
+  );
+  if (paths.size === 0) throw new Error('no scripts referenced by dist/index.html');
+  return [...paths].map((path) => ({
+    name: path,
+    gzip: gzipSync(readFileSync(`${WEB_ROOT}dist/${path}`)).length,
+  }));
+}
+
 describe('web bundles', () => {
-  it(`keeps the entry under ${ENTRY_MAX_GZIP} bytes gzipped`, () => {
-    const entry = chunk('index');
-    expect(entry.length).toBeGreaterThan(0);
-    expect(gzipSync(entry).length).toBeLessThan(ENTRY_MAX_GZIP);
+  it(`keeps the whole first load under ${FIRST_LOAD_MAX_GZIP} bytes gzipped`, () => {
+    const scripts = firstLoadScripts();
+    const total = scripts.reduce((sum, script) => sum + script.gzip, 0);
+    // Named in the failure, so a regression says WHICH chunk grew.
+    const breakdown = scripts
+      .sort((a, b) => b.gzip - a.gzip)
+      .map((script) => `${script.name} ${script.gzip}`)
+      .join(', ');
+    expect(total, `first-load JS: ${breakdown}`).toBeLessThan(FIRST_LOAD_MAX_GZIP);
   });
 
   it(`splits the editor into its own chunk under ${EDITOR_MAX_GZIP} bytes gzipped`, () => {

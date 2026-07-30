@@ -157,6 +157,15 @@ with per-widget timing surfaced in "show query" — so if someone builds a
 40-widget, 5-year dashboard, it degrades to ~100–200 ms and *tells you why*,
 instead of failing.
 
+The bundle claim above is enforced by `apps/web/src/build.test.ts`, over the
+**whole first-load module graph** — every script `dist/index.html` fetches
+before first paint, not the entry chunk alone. That distinction is load-bearing:
+rollup hoists what the entry shares with the split chunks into preloaded
+siblings, so a budget naming one file drifts away from what a browser actually
+downloads, and this one silently did. Ceiling 80 KiB gz against ~71 KB today;
+the editor, settings, share page and share dialog keep their own budgets and
+must stay off this path (asserted by marker strings that exist only in them).
+
 ## Chart design system
 
 Charts follow the dataviz method (form → color-by-job → validated palette →
