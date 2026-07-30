@@ -1,8 +1,13 @@
 # 06 — Migration from Matomo
 
-Goal: full history preserved, zero tag changes, zero data gap, and a cutover
-that is boring. Matomo stays untouched until the new system has proven itself
-on live traffic.
+Goal: zero tag changes, zero data gap, and a cutover that is boring. Matomo
+stays untouched until the new system has proven itself on live traffic.
+
+History was *also* a goal until 2026-07-30, when it was deliberately dropped —
+see "History was dropped" below. The importer still works and this document
+still describes it, because the reasoning that made dropping it right here
+(a week of history, two invariant violations, all of them in imported rows)
+does not generalize to a migration with years behind it.
 
 ## Importer
 
@@ -25,7 +30,8 @@ Import details:
   only guarantee we make anyway (03).
 - Idempotent: high-water marks per source table (in `settings`) plus
   deterministic session ids derived from `idvisit`, so re-running tops up
-  instead of duplicating. This enables the final top-up import at cutover.
+  instead of duplicating. (This once enabled a final top-up import at cutover;
+  that step is gone — see "History was dropped".)
 - `--since YYYY-MM-DD` bounds a top-up AND re-reads the window's visits
   regardless of the watermark: Matomo mutates `log_visit` rows in place while
   a visit accrues actions, and the deterministic ids let those sessions
@@ -56,6 +62,30 @@ https (or loopback) — the token rides in the body. Then DNS/Traefik for
   quirky UAs, the packzen webhook — for as long as confidence requires.
 
 If the new system misbehaves: point Traefik back. Blast radius ≈ zero.
+
+### History was dropped (2026-07-30)
+
+The imported history is gone and the importer is no longer part of the cutover.
+Gary's call, once the live invariant check found the only two violations in the
+whole database were both in imported rows: *"Better to be correct going forward
+and have strong tests than preserve a few days of questionable history."*
+
+- Removed from production: 198 sessions and 254 events dated before tee-start,
+  plus the three `import:matomo:*` watermarks. Zero visits straddled the
+  boundary, so the cut was clean. Backup kept on the host as
+  `analytics.db.pre-purge-20260730-1101`.
+- Also removed: 19 heartbeat-only visits that featherstat itself recorded
+  before `bbd4427` taught it that a ping does not start one. Phantom visits by
+  the rule now deployed, and their engagement was attributed to no page anyway.
+- What that bought: **every invariant passes against the live database**, so a
+  violation now means a real defect rather than a legacy artefact. A check that
+  always reports two known failures is a check nobody reads — the same way the
+  entry-size ratchet went unread while it measured the wrong file.
+- The scale made this easy and will not always: Matomo had been running about
+  a week, so the whole of "history" was 254 events. Do not read this as a
+  precedent for a migration with years behind it.
+- Consequence: featherstat's data begins at tee-start, 2026-07-28. The
+  importer still exists and still works; nothing in the cutover calls it.
 
 ### Changes made during the bake that move numbers
 
@@ -141,14 +171,9 @@ metric *means* has to be logged here or the comparison silently drifts.
    hostname), run the importer, eyeball dashboards against Matomo.
 2. Enable tee mode (note the date) and repoint `analytics.example.com` to
    the new server. Bake for 1–2 weeks; compare daily numbers.
-3. Cut over: final top-up import with `--until <tee-start date>` — everything
-   from tee-start onward was already ingested live, and without the fence it
-   would import a second time under different ids (nothing could dedupe it).
-   Visits straddling the tee-start boundary are counted by whichever side
-   holds their first action — a bounded, one-day-deep approximation, not
-   "exact". Then disable tee and stop the Matomo + MariaDB containers
-   (compose entries commented, data kept — same reversible pattern used when
-   Umami was retired).
+3. Cut over: **no top-up import** — see "History was dropped" below. Disable
+   tee and stop the Matomo + MariaDB containers (compose entries commented,
+   data kept — same reversible pattern used when Umami was retired).
 4. After a quiet month: `mysqldump` archived off-host, containers removed,
    `matomo.example.com` router alias retired, MariaDB's ~190 MB of swap
    reclaimed.
