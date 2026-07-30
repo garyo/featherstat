@@ -6,15 +6,13 @@ import {
   type Query,
   type QueryRequest,
   type QueryResponse,
-  type RealtimeHit,
-  type SiteInfo,
   type WidgetSpec,
   widgetQueries,
 } from '@featherstat/shared';
 import type { QueryClient } from '../lib/api.ts';
-import type { SiteScope } from '../lib/state.ts';
 import { widgetData } from '../views/batch.ts';
-import type { WidgetData } from '../widgets/types.ts';
+import { gridEnv } from '../widgets/env.ts';
+import type { ViewEnv, WidgetData } from '../widgets/types.ts';
 import AddWidget from './AddWidget.svelte';
 import EditorGrid from './EditorGrid.svelte';
 import ExportImport from './ExportImport.svelte';
@@ -43,35 +41,16 @@ interface Props {
   request: (queries: Query[]) => QueryRequest;
   response: QueryResponse | undefined;
   error: string | undefined;
-  rangeLabel?: string;
-  active?: Record<number, number>;
-  recent?: readonly RealtimeHit[];
-  now?: number;
-  scope?: SiteScope;
-  sites?: ReadonlyMap<number, SiteInfo>;
+  /** The view's own environment — the preview renders in it unchanged. */
+  env: ViewEnv;
   saving: boolean;
   saveError: string | undefined;
   onsave: (next: Dashboard) => void;
   oncancel: () => void;
 }
 
-let {
-  initial,
-  client,
-  request,
-  response,
-  error,
-  rangeLabel,
-  active,
-  recent,
-  scope,
-  now,
-  sites,
-  saving,
-  saveError,
-  onsave,
-  oncancel,
-}: Props = $props();
+let { initial, client, request, response, error, env, saving, saveError, onsave, oncancel }: Props =
+  $props();
 
 // The draft captures the dashboard at entry; the saved original keeps routing
 // the view batch's answers. Both deliberately read `initial` once.
@@ -85,7 +64,7 @@ const savedSpecs = new Map(initial.grid.map((spec) => [spec.id, JSON.stringify(s
 // The view batch's own windows. A preview re-runs the SAME range and scope
 // (`request`), so its axes are these — a preview cannot show a window the
 // dashboard behind it does not.
-const windows = $derived(response?.meta.windows);
+const widgetsEnv = $derived(gridEnv(env, response));
 
 /** Batch-of-one previews by widget id — they override the saved batch's answers. */
 let previews = $state<Record<string, WidgetData>>({});
@@ -204,13 +183,7 @@ function handleImport(dashboard: Dashboard): void {
 <EditorGrid
   grid={draft.grid}
   {dataFor}
-  {windows}
-  {rangeLabel}
-  {active}
-  {recent}
-  {scope}
-  {now}
-  {sites}
+  env={widgetsEnv}
   onreorder={(from, to) => (draft.grid = reorder(draft.grid, from, to))}
   onresize={(id, w) => (draft.grid = resizeWidget(draft.grid, id, w))}
   onremove={handleRemove}

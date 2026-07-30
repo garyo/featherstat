@@ -6,11 +6,11 @@ import Sparkline from './Sparkline.svelte';
 import { seriesOf } from './series.ts';
 import { sliceOf, type WidgetProps } from './types.ts';
 
-let { spec, data, windows, now }: WidgetProps = $props();
+let { spec, env }: WidgetProps = $props();
 
 const names = $derived(tileNames(spec.options));
-const main = $derived(sliceOf(data, 'main'));
-const spark = $derived(sliceOf(data, 'spark'));
+const main = $derived(sliceOf(env.data, 'main'));
+const spark = $derived(sliceOf(env.data, 'spark'));
 const metrics = $derived(
   spec.query !== undefined && !('kind' in spec.query) ? spec.query.metrics : [],
 );
@@ -23,7 +23,7 @@ const tiles = $derived.by(() => {
       ? seriesOf(
           spark.result.rows,
           metrics,
-          sharedKeys(resultAxes(spark.result, windows ?? [], now ?? Date.now())),
+          sharedKeys(resultAxes(spark.result, env.windows ?? [], env.now)),
         )
       : [];
   return tileModels(names, {

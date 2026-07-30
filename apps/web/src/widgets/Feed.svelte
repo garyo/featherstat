@@ -1,5 +1,5 @@
 <script lang="ts">
-import { inScope } from '../lib/realtime.ts';
+import { scopedHits } from '../lib/realtime.ts';
 import FeedRows from './FeedRows.svelte';
 import type { WidgetProps } from './types.ts';
 
@@ -10,33 +10,29 @@ import type { WidgetProps } from './types.ts';
  * FeedRows, the same component the Realtime view renders: this widget is a
  * frame around it, never a second copy of it.
  */
-let {
-  spec,
-  recent,
-  scope = 'all',
-  sites,
-  onopenrealtime,
-  headless = false,
-  hover: sharedHover,
-  onhover,
-  now: sharedNow,
-}: WidgetProps = $props();
+let { spec, env }: WidgetProps = $props();
 
-/** Own highlight when standalone; a composing view can share one instead. */
+/** Own highlight when standalone; a composing page can share one instead. */
 let localHover = $state<string | undefined>(undefined);
-const hover = $derived(onhover === undefined ? localHover : sharedHover);
+const hover = $derived(env.highlight === null ? localHover : env.highlight.name);
 
 const limit = $derived(feedLimit(spec.options.limit));
-const shown = $derived((recent ?? []).filter((hit) => inScope(hit, scope)).slice(0, limit));
+const shown = $derived(scopedHits(env.realtime, env.scope).slice(0, limit));
 
-/** Ago labels tick while the card is mounted. */
-let ownNow = $state(Date.now());
+/** `8s`, `4m` need a finer clock than the page's: this card owns its own tick,
+ * which is why the environment's coarser `now` stays for the charts. */
+let now = $state(Date.now());
 $effect(() => {
   const timer = setInterval(() => {
-    ownNow = Date.now();
+    now = Date.now();
   }, 10_000);
   return () => clearInterval(timer);
 });
+
+function setHover(name: string | undefined): void {
+  if (env.highlight === null) localHover = name;
+  else env.highlight.onhover(name);
+}
 
 function feedLimit(raw: unknown): number {
   const value = typeof raw === 'number' ? Math.floor(raw) : 10;
@@ -44,19 +40,19 @@ function feedLimit(raw: unknown): number {
 }
 </script>
 
-{#if headless}
+{#if env.headless}
   <!-- heading supplied by the composing view -->
-{:else if onopenrealtime === undefined}
+{:else if env.onopenrealtime === null}
   <h2>{spec.title ?? 'Realtime'}</h2>
 {:else}
   <h2>
-    <button class="h2link" type="button" onclick={onopenrealtime}>{spec.title ?? 'Realtime'}</button>
+    <button class="h2link" type="button" onclick={env.onopenrealtime}
+      >{spec.title ?? 'Realtime'}</button
+    >
   </h2>
 {/if}
-{#if recent === undefined}
-  <p class="widget-note">Live feed — available in the app, not in shared views.</p>
-{:else if shown.length === 0}
+{#if shown.length === 0}
   <p class="widget-note">Waiting for the first hit…</p>
 {:else}
-  <FeedRows hits={shown} now={sharedNow ?? ownNow} {scope} {sites} {hover} onhover={(name) => (onhover === undefined ? (localHover = name) : onhover(name))} />
+  <FeedRows hits={shown} {now} scope={env.scope} sites={env.sites} {hover} onhover={setHover} />
 {/if}

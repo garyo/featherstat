@@ -2,6 +2,7 @@ import { type RealtimeEngagement, type RealtimeHit, TALLY_WINDOW_MS } from '@fea
 import type { BarRow } from '../widgets/bar-rows.ts';
 import { displayDuration } from '../widgets/format.ts';
 import { countryName } from '../widgets/geo.ts';
+import type { RealtimeEnv } from '../widgets/types.ts';
 import type { SiteScope } from './state.ts';
 
 /**
@@ -20,6 +21,27 @@ export const VISITOR_ROWS = 8;
 /** Anything the stream scopes by site: a hit, an engagement row. */
 export function inScope(entry: { siteId: number }, site: SiteScope): boolean {
   return site === 'all' || entry.siteId === site;
+}
+
+/**
+ * The feed rows a scope shows. Every realtime widget starts here, so a page
+ * without the stream (a share link) yields nothing to render rather than each
+ * widget re-deciding what `no stream` looks like.
+ */
+export function scopedHits(realtime: RealtimeEnv | null, site: SiteScope): readonly RealtimeHit[] {
+  return realtime === null ? [] : realtime.recent.filter((hit) => inScope(hit, site));
+}
+
+/**
+ * The active-now hero: the server's distinct-visitor count for this scope,
+ * summed across sites at 'all'. It reads the stream's counts and never the feed
+ * — hits carry no visitor id (CLAUDE.md invariant 3).
+ */
+export function activeCount(realtime: RealtimeEnv | null, site: SiteScope): number {
+  if (realtime === null) return 0;
+  return site === 'all'
+    ? Object.values(realtime.active).reduce((sum, n) => sum + n, 0)
+    : (realtime.active[site] ?? 0);
 }
 
 /** Newest first, capped — snapshot `recent` arrives oldest first. */
@@ -138,6 +160,25 @@ export function visitorTally(
   const rows = [...byName.values()];
   rows.sort((a, b) => b.count - a.count || (a.name < b.name ? -1 : 1));
   return rows.slice(0, VISITOR_ROWS);
+}
+
+/**
+ * Who is here, as the tally shows them: the scope's hits grouped by visitor with
+ * the server's engaged time folded in. One call, so a page cannot show the
+ * visitors and lose their durations — which is what a dashboard did for as long
+ * as the feed and the engagement rows were separate props.
+ */
+export function visitorRows(
+  realtime: RealtimeEnv | null,
+  site: SiteScope,
+  now: number,
+): VisitorCount[] {
+  if (realtime === null) return [];
+  return visitorTally(
+    scopedHits(realtime, site),
+    now,
+    engagementByName(realtime.visitorTimes, site),
+  );
 }
 
 /**

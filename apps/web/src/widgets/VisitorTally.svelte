@@ -1,11 +1,10 @@
 <script lang="ts">
 import {
-  engagementByName,
-  inScope,
   relativeAgo,
+  scopedHits,
   type VisitorCount,
   visitorMeta,
-  visitorTally,
+  visitorRows,
   visitorTrail,
 } from '../lib/realtime.ts';
 import { dotColor } from './alias-colors.ts';
@@ -17,22 +16,14 @@ import type { WidgetProps } from './types.ts';
  * trail comes from the feed ring the view already holds, so expanding costs no
  * query and exposes nothing the stream did not already carry.
  */
-let {
-  recent,
-  visitorTimes,
-  scope = 'all',
-  sites,
-  now = Date.now(),
-  hover,
-  onhover,
-}: WidgetProps = $props();
+let { env }: WidgetProps = $props();
 
 let opened = $state<string | undefined>(undefined);
 
-const scoped = $derived((recent ?? []).filter((hit) => inScope(hit, scope)));
-const engagement = $derived(engagementByName(visitorTimes ?? [], scope));
-const visitors = $derived(visitorTally(scoped, now, engagement));
-const siteNameOf = (id: number): string => sites?.get(id)?.name ?? `Site ${id}`;
+const scoped = $derived(scopedHits(env.realtime, env.scope));
+const visitors = $derived(visitorRows(env.realtime, env.scope, env.now));
+const hover = $derived(env.highlight?.name);
+const siteNameOf = (id: number): string => env.sites?.get(id)?.name ?? `Site ${id}`;
 
 function placeOf(row: VisitorCount): string | undefined {
   if (row.city !== undefined && row.country !== undefined) return `${row.city}, ${row.country}`;
@@ -56,8 +47,8 @@ const toggle = (name: string): void => {
           type="button"
           aria-expanded={isOpen}
           onclick={() => toggle(row.name)}
-          onmouseenter={() => onhover?.(row.name)}
-          onmouseleave={() => onhover?.(undefined)}
+          onmouseenter={() => env.highlight?.onhover(row.name)}
+          onmouseleave={() => env.highlight?.onhover(undefined)}
         >
           <span class="caret" class:open={isOpen}>▸</span>
           <span class="vdot" style="background: {dotColor(row.color)}"></span>
@@ -66,17 +57,17 @@ const toggle = (name: string): void => {
             >· {visitorMeta(
               row,
               placeOf(row),
-              scope === 'all' ? siteNameOf(row.siteId) : undefined,
+              env.scope === 'all' ? siteNameOf(row.siteId) : undefined,
             )}</span
           >
         </button>
       </div>
       {#if isOpen}
-        {@const trail = visitorTrail(scoped, row, now)}
+        {@const trail = visitorTrail(scoped, row, env.now)}
         <ol class="trail">
           {#each trail as step, i (i)}
             <li>
-              <span class="ago">{relativeAgo(step.ts, now)}</span>
+              <span class="ago">{relativeAgo(step.ts, env.now)}</span>
               {#if step.isEvent}<span class="evt-dot"></span>{/if}<span class="step"
                 >{step.label}</span
               >

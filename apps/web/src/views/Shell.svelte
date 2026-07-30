@@ -10,6 +10,7 @@ import { createSiteDirectory } from '../lib/sites.svelte.ts';
 import { createViewState } from '../lib/state.svelte.ts';
 import { type RangePreset, resolveNav, type SiteScope, type ViewName } from '../lib/state.ts';
 import { toggleTheme } from '../lib/theme.ts';
+import type { AppEnv } from '../widgets/types.ts';
 import AllSitesView from './AllSitesView.svelte';
 import JourneysView from './JourneysView.svelte';
 import RealtimeView from './RealtimeView.svelte';
@@ -150,6 +151,22 @@ const setFilters = (filters: Filter[]): void => view.update({ filters });
 const logout = (): void => {
   void auth.logout();
 };
+
+/**
+ * What this app can offer any widget on any page (widgets/types.ts): the one
+ * stream, the one directory, the one clock, and the navigation only a session
+ * can perform. Assembled ONCE — as separate props, every view remembered a
+ * different subset, which is how a site dashboard came to show the live feed
+ * beside an `active-now` hero stuck at 0.
+ */
+const app = $derived<AppEnv>({
+  now,
+  realtime: { active, recent, visitorTimes },
+  // Null until the directory answers, so a card can tell "loading" from "none".
+  sites: directory.sites === undefined ? null : directory.byId,
+  onopenrealtime: () => selectView('realtime'),
+  onselectsite: selectSite,
+});
 </script>
 
 <main class="shell">
@@ -173,7 +190,7 @@ const logout = (): void => {
       />
     {/if}
   {:else if current === 'realtime'}
-    <RealtimeView {active} {recent} {visitorTimes} {site} sites={directory.sites} />
+    <RealtimeView {app} {site} />
   {:else if current === 'journeys'}
     <!-- A hand-edited ?view=journeys&site=all falls back to the switcher's site. -->
     {@const journeysSite = typeof site === 'number' ? site : siteTab}
@@ -189,29 +206,14 @@ const logout = (): void => {
       onfilters={setFilters}
     />
   {:else if site === 'all'}
-    <AllSitesView
-      {admin}
-      {client}
-      {live}
-      {active}
-      sites={directory.sites}
-      byId={directory.byId}
-      range={view.current.range}
-      {recent}
-      {now}
-      onopenrealtime={() => selectView('realtime')}
-      onselectrange={selectRange}
-      onselectsite={selectSite}
-    />
+    <AllSitesView {admin} {client} {live} {app} range={view.current.range} onselectrange={selectRange} />
   {:else}
     <SiteView
       {admin}
       {client}
       {live}
+      {app}
       {site}
-      {recent}
-      {now}
-      onopenrealtime={() => selectView('realtime')}
       timezone={directory.byId.get(site)?.timezone}
       range={view.current.range}
       filters={view.current.filters}

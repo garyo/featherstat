@@ -7,26 +7,16 @@ import { siteSortOf, siteStats } from './site-stats.ts';
 import { topPages } from './top-pages.ts';
 import { sliceOf, type WidgetProps } from './types.ts';
 
-let {
-  spec,
-  data,
-  active,
-  sites,
-  onselectsite,
-  windows,
-  range = '30d',
-  rangeLabel,
-  now,
-}: WidgetProps = $props();
+let { spec, env }: WidgetProps = $props();
 
-const slice = $derived(sliceOf(data, 'main'));
+const slice = $derived(sliceOf(env.data, 'main'));
 // The headline number is the server's range count, not a sum of the buckets
 // below it: `visitors` is a distinct count, so the two are different numbers.
-const totals = $derived(sliceOf(data, 'totals'));
+const totals = $derived(sliceOf(env.data, 'totals'));
 // Each card rides its OWN site's axis: the batch spans timezones, and one shared
 // clock zeroes whole cards for the hours around a midnight.
 const axes = $derived(
-  slice.kind === 'ready' ? resultAxes(slice.result, windows ?? [], now ?? Date.now()) : [],
+  slice.kind === 'ready' ? resultAxes(slice.result, env.windows ?? [], env.now) : [],
 );
 // Both results are the card grid: either one still loading or failing is the
 // widget's state, not a grid of half-answers.
@@ -38,21 +28,21 @@ const stats = $derived(
         totals: totals.result.rows,
         compare: totals.result.compare,
         buckets: slice.result.rows,
-        sites: sites === undefined ? undefined : [...sites.values()],
+        sites: env.sites === null ? undefined : [...env.sites.values()],
         sort: siteSortOf(spec.options.sort),
       })
     : [],
 );
-const periodLabel = $derived((rangeLabel ?? range).toLowerCase());
+const periodLabel = $derived((env.rangeLabel ?? 'this period').toLowerCase());
 
 /** R20: this site's top pages over the card's own window (per-site clock). */
 function pagesFor(site: number, buckets: readonly string[]): ReturnType<typeof topPages> {
-  const pages = sliceOf(data, `pages~${site}`);
+  const pages = sliceOf(env.data, `pages~${site}`);
   return pages.kind === 'ready' ? topPages(pages.result.rows, buckets, pages.result.measures) : [];
 }
 
 function select(site: number): void {
-  onselectsite?.(site);
+  env.onselectsite?.(site);
 }
 
 function onKeydown(event: KeyboardEvent, site: number): void {
@@ -72,7 +62,7 @@ function onKeydown(event: KeyboardEvent, site: number): void {
     <p class="widget-note">No traffic in this period.</p>
   {:else}
     {#each stats as stat (stat.site)}
-      {@const now = active?.[stat.site] ?? 0}
+      {@const live = env.realtime?.active[stat.site] ?? 0}
       {@const pages = pagesFor(stat.site, stat.buckets)}
       <div
         class="site-card"
@@ -82,9 +72,9 @@ function onKeydown(event: KeyboardEvent, site: number): void {
         onkeydown={(event) => onKeydown(event, stat.site)}
       >
         <div class="top">
-          <span class="domain">{sites?.get(stat.site)?.name ?? `Site ${stat.site}`}</span>
+          <span class="domain">{env.sites?.get(stat.site)?.name ?? `Site ${stat.site}`}</span>
           <span class="active">
-            {#if now > 0}<span class="pulse"></span> {now} now{:else}<span class="idle"></span>
+            {#if live > 0}<span class="pulse"></span> {live} now{:else}<span class="idle"></span>
               quiet{/if}
           </span>
         </div>

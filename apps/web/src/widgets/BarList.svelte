@@ -4,9 +4,9 @@ import { barRows } from './bar-rows.ts';
 import { METRIC_LABELS } from './format.ts';
 import { sliceOf, type WidgetProps } from './types.ts';
 
-let { spec, data, onfilter }: WidgetProps = $props();
+let { spec, env }: WidgetProps = $props();
 
-const slice = $derived(sliceOf(data, 'main'));
+const slice = $derived(sliceOf(env.data, 'main'));
 const query = $derived(
   spec.query !== undefined && !('kind' in spec.query) ? spec.query : undefined,
 );
@@ -45,6 +45,6 @@ const rows = $derived.by(() => {
   {:else if rows.length === 0}
     <p class="widget-note">No data in this range.</p>
   {:else}
-    <BarRows {rows} {unit} {extraUnit} {flags} {dim} {onfilter} />
+    <BarRows {rows} {unit} {extraUnit} {flags} {dim} onfilter={env.onfilter} />
   {/if}
 </div>

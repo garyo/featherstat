@@ -12,9 +12,9 @@ import { sliceOf, type WidgetProps } from './types.ts';
  * Rows are deliberately NOT click-to-filter: the query is session-scoped and
  * cannot honestly take a `path` filter, so a click would break the card.
  */
-let { spec, data }: WidgetProps = $props();
+let { spec, env }: WidgetProps = $props();
 
-const slice = $derived(sliceOf(data, 'main'));
+const slice = $derived(sliceOf(env.data, 'main'));
 const rows = $derived(slice.kind === 'ready' ? dwellRows(slice.result.rows) : []);
 </script>
 

@@ -1,18 +1,19 @@
 <script lang="ts">
-import type { Filter, RealtimeHit, SiteInfo, SiteWindow, WidgetSpec } from '@featherstat/shared';
+import type { WidgetSpec } from '@featherstat/shared';
 import type { Snippet } from 'svelte';
-import type { RangePreset, SiteScope } from '../lib/state.ts';
+import { CAPABILITY_NOTE, missingCapability } from './env.ts';
 import { REGISTRY, spanClass } from './registry.ts';
-import type { WidgetData } from './types.ts';
+import type { GridEnv, WidgetData } from './types.ts';
 
 /**
  * The one place a widget spec becomes a rendered component (CLAUDE.md
  * invariant 7 — one rendering per thing rendered): the layout loop, the
  * registry lookup, the card's frame in the 12-column grammar, the placeholder
- * for a viz nothing implements yet, and the props every widget is handed. A new
- * widget capability is one edit HERE and both paths gain it — the view path and
- * the editor's preview forked once, and each capability added after that had to
- * be added twice (and twice wasn't).
+ * for a viz nothing implements yet or nothing here can feed, and the
+ * environment every widget renders from. A new widget capability is one field
+ * on `WidgetEnv` and both paths gain it — the view path and the editor's
+ * preview forked once, and each capability added after that had to be added
+ * twice (and twice wasn't).
  *
  * Callers decorate instead of copying: the grid frames nothing itself, it hands
  * each card back as a `widget` snippet and the caller wraps it — the view with
@@ -35,42 +36,14 @@ interface Props {
   dataFor: (spec: WidgetSpec) => WidgetData;
   /** The card frame, per widget — this is the decoration seam. */
   card: Snippet<[Card]>;
+  /** Everything the widgets render from besides their spec. */
+  env: GridEnv;
   refetching?: boolean;
   /** The grid element, for a decorator that measures its cards (drag-reorder). */
   element?: HTMLElement | undefined;
-  /** The server-resolved windows (`meta.windows`) charts read their axis against. */
-  windows?: readonly SiteWindow[];
-  /** Range qualifier for widget titles ("last 30 days"). */
-  rangeLabel?: string;
-  range?: RangePreset;
-  recent?: readonly RealtimeHit[];
-  scope?: SiteScope;
-  now?: number;
-  onopenrealtime?: () => void;
-  active?: Record<number, number>;
-  sites?: ReadonlyMap<number, SiteInfo>;
-  onselectsite?: (site: number) => void;
-  onfilter?: (filter: Filter) => void;
 }
 
-let {
-  grid,
-  dataFor,
-  card,
-  refetching = false,
-  element = $bindable(),
-  windows,
-  rangeLabel,
-  range,
-  recent,
-  scope,
-  now,
-  onopenrealtime,
-  active,
-  sites,
-  onselectsite,
-  onfilter,
-}: Props = $props();
+let { grid, dataFor, card, env, refetching = false, element = $bindable() }: Props = $props();
 </script>
 
 <div class="grid" class:refetching bind:this={element}>
@@ -78,26 +51,19 @@ let {
     {@const entry = REGISTRY[spec.viz]}
     {@const frame = entry?.frame === 'wide' ? 'wide' : `card ${spanClass(spec.w)}`}
     {#snippet widget()}
+      <!-- A grid never composes a heading or shares a highlight: those belong to
+           a page that arranges widgets by hand (the Realtime view). -->
+      {@const widgetEnv = { ...env, data: dataFor(spec), headless: false, highlight: null }}
+      {@const missing = missingCapability(spec.viz, widgetEnv)}
       {#if entry === undefined}
         <h2>{spec.title ?? spec.viz}</h2>
         <p class="widget-note">The “{spec.viz}” widget isn’t available yet.</p>
+      {:else if missing !== undefined}
+        <h2>{spec.title ?? spec.viz}</h2>
+        <p class="widget-note">{CAPABILITY_NOTE[missing]}</p>
       {:else}
         {@const Widget = entry.component}
-        <Widget
-          {spec}
-          data={dataFor(spec)}
-          {windows}
-          {rangeLabel}
-          {range}
-          {recent}
-          {scope}
-          {now}
-          {onopenrealtime}
-          {active}
-          {sites}
-          {onselectsite}
-          {onfilter}
-        />
+        <Widget {spec} env={widgetEnv} />
       {/if}
     {/snippet}
     {@render card({ spec, index, frame, widget })}

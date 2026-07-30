@@ -21,15 +21,16 @@ interface Props {
   flags?: boolean;
   /** The dimension rows filter on; omitted, rows are informational only. */
   dim?: Dimension;
-  onfilter?: (filter: Filter) => void;
+  /** Click-to-filter, or null where a row has nothing to filter into. */
+  onfilter: ((filter: Filter) => void) | null;
 }
 
 let { rows, unit, extraUnit = 'value', flags = false, dim, onfilter }: Props = $props();
 
-const filterable = $derived(dim !== undefined && onfilter !== undefined);
+const filterable = $derived(dim !== undefined && onfilter !== null);
 
 function activate(row: BarRow): void {
-  if (dim === undefined || onfilter === undefined || row.filterValue === undefined) return;
+  if (dim === undefined || onfilter === null || row.filterValue === undefined) return;
   onfilter(
     row.filterValue === null ? { dim, op: 'is_null' } : { dim, op: 'eq', value: row.filterValue },
   );

@@ -4,7 +4,7 @@ import { bucketLabel, bucketTitle, exactNumber, METRIC_LABELS } from './format.t
 import { num, seriesOf } from './series.ts';
 import { sliceOf, type WidgetProps } from './types.ts';
 
-let { spec, data, windows, now }: WidgetProps = $props();
+let { spec, env }: WidgetProps = $props();
 
 const HEIGHT = 250;
 const MARGIN = { l: 42, r: 14, t: 10, b: 26 };
@@ -13,7 +13,7 @@ const MAX_SERIES = 2;
 /** Categorical slots in fixed order, assigned by position, never cycled. */
 const SERIES_COLORS = ['var(--s1)', 'var(--s2)'];
 
-const slice = $derived(sliceOf(data, 'main'));
+const slice = $derived(sliceOf(env.data, 'main'));
 // Deduped: the schema permits repeats, and duplicate {#each} keys throw at runtime.
 const metrics = $derived(
   spec.query !== undefined && !('kind' in spec.query)
@@ -23,9 +23,7 @@ const metrics = $derived(
 // The x axis is the server's, moved to the reader's clock — one shared axis even
 // when the batch spans timezones (widgets/axis.ts).
 const axis = $derived(
-  slice.kind === 'ready'
-    ? sharedKeys(resultAxes(slice.result, windows ?? [], now ?? Date.now()))
-    : [],
+  slice.kind === 'ready' ? sharedKeys(resultAxes(slice.result, env.windows ?? [], env.now)) : [],
 );
 const points = $derived(slice.kind === 'ready' ? seriesOf(slice.result.rows, metrics, axis) : []);
 

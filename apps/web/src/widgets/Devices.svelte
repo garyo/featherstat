@@ -10,7 +10,7 @@ import { sliceOf, type WidgetProps } from './types.ts';
  * 2px surface gaps, inline labels only where they fit) over a browsers
  * bar-list below a divider. One widget, two queries in the same batch.
  */
-let { spec, data, onfilter }: WidgetProps = $props();
+let { spec, env }: WidgetProps = $props();
 
 /** Categorical slots in fixed order, assigned by rank, never cycled (docs/05). */
 const SLOT_COLORS = ['var(--s1)', 'var(--s2)', 'var(--s3)'];
@@ -20,8 +20,8 @@ const LABEL_INKS = ['#fff', '#0b0b0b', '#fff'];
  * a clipped label is worse than none — the legend still carries the name. */
 const MIN_LABEL_SHARE = 22;
 
-const main = $derived(sliceOf(data, 'main'));
-const browsers = $derived(sliceOf(data, 'browsers'));
+const main = $derived(sliceOf(env.data, 'main'));
+const browsers = $derived(sliceOf(env.data, 'browsers'));
 const metric = $derived(
   spec.query !== undefined && !('kind' in spec.query) ? spec.query.metrics[0] : undefined,
 );
@@ -37,8 +37,8 @@ const browserRows = $derived(
 );
 
 function activate(segment: DeviceSegment): void {
-  if (onfilter === undefined || segment.filterValue === undefined) return;
-  onfilter({ dim: 'device_type', op: 'eq', value: segment.filterValue });
+  if (env.onfilter === null || segment.filterValue === undefined) return;
+  env.onfilter({ dim: 'device_type', op: 'eq', value: segment.filterValue });
 }
 
 function onKeydown(event: KeyboardEvent, segment: DeviceSegment): void {
@@ -73,7 +73,7 @@ function showTip(segment: DeviceSegment, clientX?: number): void {
   <div class="stack-wrap">
     <div class="stack" bind:this={stackEl}>
       {#each segments as segment (segment.name)}
-        {@const clickable = onfilter !== undefined && segment.filterValue !== undefined}
+        {@const clickable = env.onfilter !== null && segment.filterValue !== undefined}
         <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_static_element_interactions --
              every mark keyboard-reachable (docs/05); named segments click-to-filter -->
         <div
@@ -122,6 +122,6 @@ function showTip(segment: DeviceSegment, clientX?: number): void {
   {:else if browserRows.length === 0}
     <p class="widget-note">No browser data.</p>
   {:else}
-    <BarRows rows={browserRows} {unit} dim="browser" {onfilter} />
+    <BarRows rows={browserRows} {unit} dim="browser" onfilter={env.onfilter} />
   {/if}
 {/if}

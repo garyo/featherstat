@@ -1,15 +1,9 @@
 <script lang="ts">
-import type {
-  Dashboard,
-  Filter,
-  QueryResponse,
-  RealtimeHit,
-  SiteInfo,
-  WidgetSpec,
-} from '@featherstat/shared';
+import type { Dashboard, QueryResponse, WidgetSpec } from '@featherstat/shared';
 import type { ShowQuery } from '../editor/editor.ts';
 import { loadEditor } from '../lib/editor-mode.svelte.ts';
-import type { RangePreset, SiteScope } from '../lib/state.ts';
+import { gridEnv } from '../widgets/env.ts';
+import type { ViewEnv } from '../widgets/types.ts';
 import WidgetGrid from '../widgets/WidgetGrid.svelte';
 import { collectBatch, widgetData } from './batch.ts';
 
@@ -24,43 +18,19 @@ interface Props {
   /** Batch-level failure — widgets surface it when there is nothing older to show. */
   error: string | undefined;
   refetching: boolean;
-  /** Range qualifier for widget titles ("last 30 days"). */
-  rangeLabel?: string;
-  range?: RangePreset;
-  recent?: readonly RealtimeHit[];
-  scope?: SiteScope;
-  now?: number;
-  onopenrealtime?: () => void;
-  active?: Record<number, number>;
-  sites?: ReadonlyMap<number, SiteInfo>;
+  /** What the widgets render from; the windows come from the response above. */
+  env: ViewEnv;
   /** Per-widget admin chrome ("show query"); off on the read-only share page. */
   chrome?: boolean;
-  onselectsite?: (site: number) => void;
-  onfilter?: (filter: Filter) => void;
 }
 
-let {
-  dashboard,
-  response,
-  error,
-  refetching,
-  rangeLabel,
-  range,
-  recent,
-  scope,
-  now,
-  onopenrealtime,
-  active,
-  sites,
-  chrome = true,
-  onselectsite,
-  onfilter,
-}: Props = $props();
+let { dashboard, response, error, refetching, env, chrome = true }: Props = $props();
 
 const slots = $derived(collectBatch(dashboard).slots);
-// Straight off the response, so the axes a widget draws always belong to the
-// answer beside them — the view has nothing to pass and nothing to get wrong.
-const windows = $derived(response?.meta.windows);
+// The windows come straight off the response, so the axes a widget draws always
+// belong to the answer beside them — the view has nothing to pass and nothing
+// to get wrong.
+const widgetsEnv = $derived(gridEnv(env, response));
 
 // "Show query" chrome (docs/05: the self-documenting API). The button is view
 // chrome; the modal itself lives in the code-split editor chunk and loads on
@@ -78,17 +48,7 @@ async function showQuery(spec: WidgetSpec): Promise<void> {
   grid={dashboard.grid}
   dataFor={(spec) => widgetData(spec, slots, response, error)}
   {refetching}
-  {windows}
-  {rangeLabel}
-  {range}
-  {recent}
-  {scope}
-  {now}
-  {onopenrealtime}
-  {active}
-  {sites}
-  {onselectsite}
-  {onfilter}
+  env={widgetsEnv}
 >
   {#snippet card({ spec, frame, widget })}
     <div class={frame}>

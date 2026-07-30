@@ -11,6 +11,7 @@
  */
 
 import type { Dashboard, QueryResponse } from '@featherstat/shared';
+import type { RangePreset } from './state.ts';
 
 /** `GET /share/:token` body (the server's `ShareView`): the layout and its batch, one response. */
 export interface SharePayload {
@@ -33,7 +34,13 @@ export function shareLink(origin: string, token: string): string {
   return `${origin.replace(/\/+$/, '')}/s/${token}`;
 }
 
-/** Where the page reads its payload: the endpoint itself, always JSON. */
-export function shareEndpoint(token: string): string {
-  return `/share/${encodeURIComponent(token)}`;
+/**
+ * Where the page reads its payload: the endpoint itself, always JSON.
+ *
+ * The range rides along, because `?range=` is the endpoint's one client knob
+ * (routes/share.ts) and the page never sent it — so every share link answered
+ * the 30-day default however the link was written.
+ */
+export function shareEndpoint(token: string, range: RangePreset): string {
+  return `/share/${encodeURIComponent(token)}?range=${range}`;
 }

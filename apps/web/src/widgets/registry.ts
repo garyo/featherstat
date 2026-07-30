@@ -17,7 +17,10 @@ import './widgets.css';
 /**
  * viz type → renderer, instantiated from dashboard JSON (docs/05: a registry is
  * how the view is built even without editability). Unregistered viz types render
- * as a placeholder card, never break the dashboard.
+ * as a placeholder card, never break the dashboard — as does a viz whose
+ * environment cannot feed it (`env.ts` NEEDS, which is where each viz declares
+ * what it reads; it lives beside this table rather than in it because this
+ * module imports every component and so cannot be read by a test).
  *
  * SECURITY BOUNDARY: everything a widget prints — paths, page titles, referrer
  * domains, event names — is visitor-controlled text straight from tracked

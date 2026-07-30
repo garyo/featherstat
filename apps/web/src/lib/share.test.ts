@@ -33,6 +33,8 @@ describe('link building', () => {
   });
 
   it('points the fetch at the JSON endpoint', () => {
-    expect(shareEndpoint(TOKEN)).toBe(`/share/${TOKEN}`);
+    expect(shareEndpoint(TOKEN, '30d')).toBe(`/share/${TOKEN}?range=30d`);
+    // The endpoint's one client knob, which the page used to drop on the floor.
+    expect(shareEndpoint(TOKEN, '7d')).toBe(`/share/${TOKEN}?range=7d`);
   });
 });

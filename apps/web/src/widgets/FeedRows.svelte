@@ -21,7 +21,8 @@ interface Props {
   now: number;
   /** Site badges appear only when the view is mixing sites. */
   scope: SiteScope;
-  sites?: ReadonlyMap<number, SiteInfo>;
+  /** The site directory, or null on a page that has none. */
+  sites: ReadonlyMap<number, SiteInfo> | null;
   hover?: string | undefined;
   onhover?: (name: string | undefined) => void;
 }

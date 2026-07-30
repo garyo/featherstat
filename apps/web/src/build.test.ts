@@ -22,7 +22,17 @@ import { beforeAll, describe, expect, it } from 'vitest';
 // Raised 63->64 KiB on 2026-07-28 for the realtime scope selector + site
 // badges — deliberate entry-path feature code, not leakage. Editor code must
 // still land in its dynamic chunk (asserted below); tighten if it shrinks.
-const ENTRY_MAX_GZIP = 65_536;
+//
+// Tightened 64 KiB -> 18 KiB on 2026-07-29 (one widget environment: 17 644 ->
+// 16 545 gz). Most of that slack was never this chunk's: rollup now hoists what
+// the entry shares with the split chunks into siblings the entry statically
+// preloads (`format`, `disclose-version`, `WidgetGrid`), so `index-*.js` alone
+// stopped describing the path to a dashboard and the budget quietly stopped
+// binding. The four together are 71 117 gz today (70 892 before this change) —
+// already past what 64 KiB was meant to cap, and past it before this phase.
+// Measuring the whole preloaded set belongs with the other budget work; until
+// then this ratchet at least binds again on the chunk it does measure.
+const ENTRY_MAX_GZIP = 18_432;
 const EDITOR_MAX_GZIP = 6_656;
 const SETTINGS_MAX_GZIP = 6_656;
 /** The share page and the dialog that mints links for it — small by construction. */

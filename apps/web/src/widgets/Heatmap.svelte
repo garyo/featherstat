@@ -8,9 +8,9 @@ import { sliceOf, type WidgetProps } from './types.ts';
  * steps, zero cells receding to the surface, a per-cell tooltip with the exact
  * value. Pure CSS grid — no chart engine.
  */
-let { spec, data, rangeLabel }: WidgetProps = $props();
+let { spec, env }: WidgetProps = $props();
 
-const slice = $derived(sliceOf(data, 'main'));
+const slice = $derived(sliceOf(env.data, 'main'));
 const metric = $derived(
   spec.query !== undefined && !('kind' in spec.query) ? spec.query.metrics[0] : undefined,
 );
@@ -35,7 +35,7 @@ function showTip(cell: HeatmapCell, event: PointerEvent): void {
 }
 </script>
 
-<h2>{spec.title ?? 'Traffic by hour'}{rangeLabel !== undefined ? ` · ${rangeLabel}` : ''}</h2>
+<h2>{spec.title ?? 'Traffic by hour'}{env.rangeLabel === null ? '' : ` · ${env.rangeLabel}`}</h2>
 {#if slice.kind === 'loading'}
   <p class="widget-note">Loading…</p>
 {:else if slice.kind === 'error'}

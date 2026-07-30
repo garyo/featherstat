@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { Filter, Query, QueryRequest, RealtimeHit } from '@featherstat/shared';
+import type { Filter, Query, QueryRequest } from '@featherstat/shared';
 import { siteOverview } from '../dashboards/site-overview.ts';
 import type { AdminClient } from '../lib/admin.ts';
 import type { QueryClient } from '../lib/api.ts';
@@ -8,19 +8,17 @@ import { createDashboardStore } from '../lib/dashboards.svelte.ts';
 import { createEditorMode } from '../lib/editor-mode.svelte.ts';
 import { sameFilter } from '../lib/filters.ts';
 import { createRevalidator, type LiveStream } from '../lib/live.ts';
-import { localDayKey, RANGE_LABELS, RANGE_QUALIFIER, type RangePreset } from '../lib/state.ts';
+import { localDayKey, RANGE_LABELS, type RangePreset } from '../lib/state.ts';
+import { dashboardEnv } from '../widgets/env.ts';
 import { windowLabel } from '../widgets/format.ts';
+import type { AppEnv } from '../widgets/types.ts';
 import { createBatchRunner } from './batch.svelte.ts';
 import { collectBatch, hourlyWhenToday, withoutBlockedMetrics } from './batch.ts';
 import DashboardGrid from './DashboardGrid.svelte';
 
 interface Props {
-  /** SSE live feed from the shell — the feed widget reads it. */
-  recent?: readonly RealtimeHit[];
-  /** The shell's clock; window-bounded ranges follow it (docs/05 R22). */
-  now?: number;
-  /** Opens the Realtime view — the feed card's heading links there. */
-  onopenrealtime?: () => void;
+  /** What the app can offer this page's widgets — stream, directory, clock, nav. */
+  app: AppEnv;
   admin: AdminClient;
   client: QueryClient;
   live: LiveStream;
@@ -34,20 +32,8 @@ interface Props {
   onfilters: (filters: Filter[]) => void;
 }
 
-let {
-  admin,
-  client,
-  live,
-  site,
-  timezone,
-  range,
-  filters,
-  onselectrange,
-  onfilters,
-  recent,
-  now = Date.now(),
-  onopenrealtime,
-}: Props = $props();
+let { app, admin, client, live, site, timezone, range, filters, onselectrange, onfilters }: Props =
+  $props();
 
 // The clients are app-lifetime singletons; capturing their initial values is the point.
 // svelte-ignore state_referenced_locally
@@ -96,7 +82,7 @@ $effect(() =>
   ),
 );
 
-const dayKey = $derived(localDayKey(timezone === undefined ? [] : [timezone], new Date(now)));
+const dayKey = $derived(localDayKey(timezone === undefined ? [] : [timezone], new Date(app.now)));
 // Edit mode (docs/05): the editor is a code-split chunk, loaded on entry.
 // svelte-ignore state_referenced_locally
 const mode = createEditorMode(store, () => site);
@@ -138,6 +124,14 @@ const heldRange = $derived(
  * re-runs on `dayKey`). The browser resolves no presets.
  */
 const span = $derived(windowLabel(runner.response?.meta.windows));
+/**
+ * ONE environment for this page, handed to the dashboard AND to the editor's
+ * preview — the preview used to be assembled from a shorter list of props, so
+ * it rendered without the range qualifier, click-to-filter or the realtime jump.
+ * It follows the range on SCREEN, not the pill, so a refetch cannot label held
+ * data with the range being loaded.
+ */
+const env = $derived(dashboardEnv(app, { scope: site, range: heldRange, onfilter: addFilter }));
 const note = $derived.by(() => {
   if (failed) {
     // A user-initiated change that never landed reads differently from a live
@@ -159,10 +153,7 @@ const note = $derived.by(() => {
     request={requestFor}
     response={runner.response}
     error={runner.error}
-    rangeLabel={RANGE_QUALIFIER[heldRange]}
-    {recent}
-    {now}
-    scope={site}
+    {env}
     saving={store.saving}
     saveError={store.error}
     onsave={(next) => void mode.save(next)}
@@ -196,12 +187,7 @@ const note = $derived.by(() => {
     response={runner.response}
     error={runner.error}
     refetching={runner.refetching}
-    rangeLabel={RANGE_QUALIFIER[heldRange]}
-    {recent}
-    {now}
-    scope={site}
-    {onopenrealtime}
-    onfilter={addFilter}
+    {env}
   />
 {/if}
 

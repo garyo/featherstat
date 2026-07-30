@@ -1,7 +1,6 @@
 <script lang="ts">
-import type { RealtimeHit, SiteInfo, SiteWindow, WidgetSpec } from '@featherstat/shared';
-import type { SiteScope } from '../lib/state.ts';
-import type { WidgetData } from '../widgets/types.ts';
+import type { WidgetSpec } from '@featherstat/shared';
+import type { GridEnv, WidgetData } from '../widgets/types.ts';
 import WidgetGrid from '../widgets/WidgetGrid.svelte';
 import { dropIndex, type Rect } from './drag.ts';
 import { allowedWidths } from './model.ts';
@@ -17,13 +16,9 @@ import { allowedWidths } from './model.ts';
 interface Props {
   grid: readonly WidgetSpec[];
   dataFor: (spec: WidgetSpec) => WidgetData;
-  windows?: readonly SiteWindow[];
-  rangeLabel?: string;
-  active?: Record<number, number>;
-  recent?: readonly RealtimeHit[];
-  now?: number;
-  scope?: SiteScope;
-  sites?: ReadonlyMap<number, SiteInfo>;
+  /** Passed through untouched: the preview renders in the view's own
+   * environment, which is what makes it a preview and not an approximation. */
+  env: GridEnv;
   onreorder: (from: number, to: number) => void;
   onresize: (id: string, w: number) => void;
   onremove: (id: string) => void;
@@ -31,22 +26,7 @@ interface Props {
   onquery: (id: string) => void;
 }
 
-let {
-  grid,
-  dataFor,
-  windows,
-  rangeLabel,
-  active,
-  recent,
-  scope,
-  now,
-  sites,
-  onreorder,
-  onresize,
-  onremove,
-  onsettings,
-  onquery,
-}: Props = $props();
+let { grid, dataFor, env, onreorder, onresize, onremove, onsettings, onquery }: Props = $props();
 
 let gridEl = $state<HTMLElement | undefined>(undefined);
 let dragFrom = $state(-1);
@@ -85,18 +65,7 @@ function endDrag(): void {
 }
 </script>
 
-<WidgetGrid
-  {grid}
-  {dataFor}
-  {windows}
-  {rangeLabel}
-  {active}
-  {recent}
-  {scope}
-  {now}
-  {sites}
-  bind:element={gridEl}
->
+<WidgetGrid {grid} {dataFor} {env} bind:element={gridEl}>
   {#snippet card({ spec, index, frame, widget })}
     {@const widths = allowedWidths(spec.viz)}
     <div

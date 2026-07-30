@@ -42,4 +42,21 @@ describe('widget rendering has exactly one implementation', () => {
       'widgets/registry.ts',
     ]);
   });
+
+  /**
+   * The same seam, for the case where the environment cannot feed the widget: a
+   * path that lacks a capability says so ONCE, centrally, instead of each widget
+   * inventing a guard — which is how a shared page came to claim "no visitors"
+   * when the truth was that it has no live stream.
+   */
+  it('only WidgetGrid.svelte decides a widget cannot be rendered here', () => {
+    expect(ownersOf((source) => source.includes('missingCapability('))).toEqual([
+      'widgets/WidgetGrid.svelte',
+      'widgets/env.ts',
+    ]);
+    expect(ownersOf((source) => source.includes('CAPABILITY_NOTE'))).toEqual([
+      'widgets/WidgetGrid.svelte',
+      'widgets/env.ts',
+    ]);
+  });
 });

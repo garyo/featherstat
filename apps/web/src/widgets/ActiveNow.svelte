@@ -1,14 +1,11 @@
 <script lang="ts">
+import { activeCount } from '../lib/realtime.ts';
 import type { WidgetProps } from './types.ts';
 
 /** The live hero: distinct visitors in the last five minutes, from the stream. */
-let { active, scope = 'all' }: WidgetProps = $props();
+let { env }: WidgetProps = $props();
 
-const count = $derived(
-  scope === 'all'
-    ? Object.values(active ?? {}).reduce((sum, n) => sum + n, 0)
-    : (active?.[scope] ?? 0),
-);
+const count = $derived(activeCount(env.realtime, env.scope));
 </script>
 
 <div class="active-now">
