@@ -294,13 +294,16 @@ describe('sequence queries on the replay corpus', () => {
     expect(resultOf(response, 'journeys').rows).toEqual([]);
   });
 
-  it('answers steps=4 transitions + flows on the busiest site under 100 ms', () => {
-    const request = sequenceBatch({ site: 2, ...FULL_RANGE }, 4, 50);
-    executeQueryRequest(db, request); // warm statement cache
-    let best = Number.POSITIVE_INFINITY;
-    for (let run = 0; run < 3; run += 1) {
-      best = Math.min(best, executeQueryRequest(db, request).meta.generatedInMs);
-    }
-    expect(best).toBeLessThan(100);
-  });
+  /**
+   * The "under 100 ms" claim used to live here, as a wall-clock assertion. It
+   * measured the machine's spare capacity as much as the query: vitest runs test
+   * files in parallel workers, so the number moved with whatever else the suite
+   * happened to be doing, and it went red the day another file started building
+   * a bundle. A guard that fails for a reason unrelated to what it guards is a
+   * guard people learn to re-run.
+   *
+   * It now runs in `bun run bench` as the `journeys @ 90d, busiest site` shape —
+   * serial, on the same 90-day on-disk corpus as every other read budget, at the
+   * same 100 ms (`bench-thresholds.json`; ratchets tighten, never loosen).
+   */
 });

@@ -1,36 +1,26 @@
-import { readdirSync, readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { type Hit, type HitContext, HitSchema } from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../src/index.ts';
+import {
+  type CorpusCase,
+  corpusBreaches,
+  MIN_CORPUS_CASES,
+  readCorpus,
+} from './matomo-corpus.guard.ts';
 
-interface CorpusCase {
-  name: string;
-  method: 'GET' | 'POST';
-  path?: string;
-  query?: string;
-  body?: string;
-  contentType?: string;
-  expectStatus: number;
-  expectHits: Hit[];
-}
-
-const CORPUS_DIR = fileURLToPath(new URL('./fixtures/matomo/', import.meta.url));
 /** Bytes of the 1×1 transparent tracking GIF. */
 const GIF_BYTES = 42;
 
-const files = readdirSync(CORPUS_DIR)
-  .filter((file) => file.endsWith('.json'))
-  .sort();
+const corpus = readCorpus();
 
 describe('matomo golden corpus', () => {
-  it('has fixtures', () => {
-    expect(files.length).toBeGreaterThan(0);
+  it(`keeps at least ${MIN_CORPUS_CASES} fixtures, each of which asserts something`, () => {
+    // The ratchet on the corpus itself (CLAUDE.md invariant 6). `test/guards`
+    // deletes a fixture from a copy and checks this says so.
+    expect(corpusBreaches()).toEqual([]);
   });
 
-  for (const file of files) {
-    const testCase = JSON.parse(readFileSync(CORPUS_DIR + file, 'utf8')) as CorpusCase;
-
+  for (const { file, testCase } of corpus) {
     it(`${file}: ${testCase.name}`, async () => {
       const expectHits = HitSchema.array().parse(testCase.expectHits);
       const hits: Hit[] = [];

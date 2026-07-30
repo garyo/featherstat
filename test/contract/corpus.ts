@@ -77,23 +77,31 @@ export interface Answered {
 }
 
 /**
- * The batch a view would send for this dashboard, executed. Everything about it
- * is the app's: the widgets' own declared queries, their derived companions, the
- * hourly rewrite under `today`, and the previous-period compare a dashboard asks
- * for — assembled by `packages/shared`, which is the whole point of it being
- * there (the share route builds the identical body server-side).
+ * The batch a view would send for this dashboard. Everything about it is the
+ * app's: the widgets' own declared queries, their derived companions, the hourly
+ * rewrite under `today`, and the previous-period compare a dashboard asks for —
+ * assembled by `packages/shared`, which is the whole point of it being there
+ * (the share route builds the identical body server-side).
  */
-export function answer(
+export function requestFor(
   dashboard: Dashboard,
   options: { range?: RangePreset; site?: QueryRequest['site'] } = {},
-): Answered {
+): QueryRequest {
   const range = options.range ?? DEFAULT_RANGE;
-  const request: QueryRequest = {
+  return {
     site: options.site ?? dashboard.site,
     range: { preset: range },
     compare: 'previous',
     queries: hourlyWhenToday(collectBatch(dashboard).queries, range),
   };
+}
+
+/** That batch, executed against the corpus at the pinned clock. */
+export function answer(
+  dashboard: Dashboard,
+  options: { range?: RangePreset; site?: QueryRequest['site'] } = {},
+): Answered {
+  const request = requestFor(dashboard, options);
   return { dashboard, request, response: executeQueryRequest(contractDb(), request, { now: NOW }) };
 }
 

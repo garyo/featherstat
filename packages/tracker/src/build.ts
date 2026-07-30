@@ -1,6 +1,19 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { gzipSync } from 'node:zlib';
+
+/**
+ * How the tracker is built and what it is allowed to weigh.
+ *
+ * @guard tracker-bundles
+ *
+ * The budgets are a ratchet (CLAUDE.md invariant 6): a failure means the bundle
+ * grew, not that the number was too small. `bundleBreaches` takes the directory
+ * so `test/guards/meta.test.ts` can pad a copy of a built bundle and prove the
+ * budget notices.
+ */
 
 export interface Bundle {
   /** Served filename (docs/04: `/matomo.js` + `/piwik.js`, `/tracker.js`). */
@@ -26,8 +39,8 @@ const ESBUILD_PATHS = [
   '../../apps/server/node_modules/.bin/esbuild',
 ];
 
-export function buildBundle(bundle: Bundle): string {
-  const outfile = DIST_DIR + bundle.file;
+export function buildBundle(bundle: Bundle, dir: string = DIST_DIR): string {
+  const outfile = join(dir, bundle.file);
   try {
     // Captured rather than inherited: esbuild's size summary is noise inside the test run.
     execFileSync(
@@ -50,8 +63,35 @@ export function buildBundle(bundle: Bundle): string {
   return outfile;
 }
 
-export function buildAll(): void {
-  for (const bundle of BUNDLES) buildBundle(bundle);
+export function buildAll(dir: string = DIST_DIR): void {
+  for (const bundle of BUNDLES) buildBundle(bundle, dir);
+}
+
+/**
+ * Everything the tracker budget would fail on for the bundles in `dir`: a bundle
+ * over its gzipped ceiling, or one that stopped being the module format the
+ * `<script>` tag on someone's site expects.
+ */
+export function bundleBreaches(dir: string): string[] {
+  const breaches: string[] = [];
+  for (const bundle of BUNDLES) {
+    const source = readFileSync(join(dir, bundle.file));
+    if (source.length === 0) breaches.push(`${bundle.file} is empty`);
+    const gzip = gzipSync(source).length;
+    if (gzip >= bundle.maxGzipBytes) {
+      breaches.push(`${bundle.file} ${gzip} >= ${bundle.maxGzipBytes} B gzipped`);
+    }
+    const text = String(source);
+    // The shim self-executes on a page that has no module loader; the native
+    // tracker is imported. Either one taking the other's shape breaks its callers.
+    if (bundle.format === 'iife' && /\bexport\b/.test(text)) {
+      breaches.push(`${bundle.file} must self-execute, but exports`);
+    }
+    if (bundle.format === 'esm' && !/export\{[^}]*init/.test(text)) {
+      breaches.push(`${bundle.file} must export init`);
+    }
+  }
+  return breaches;
 }
 
 function esbuildPath(): string {

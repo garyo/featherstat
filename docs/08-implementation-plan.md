@@ -113,6 +113,16 @@ toggle · site delete · share links · native ESM tracker · ntfy notifications
   bench) and demoable. Review between WPs, not mid-WP.
 - The perf gate (WP6) and golden corpus (WP4) are ratchets: numbers and
   fixtures only get added, never quietly relaxed.
+- **Every ratchet is itself gated.** A guard's failure mode is silence — the
+  web entry-size budget spent a month measuring `index-*.js` while the browser
+  fetched four chunks, passing throughout, 11% over its own ceiling. So each
+  guard exports its measurement (the `*.guard.ts` files), registers in
+  `test/guards/inventory.ts` with at least one way to violate what it guards,
+  and `test/guards/meta.test.ts` stages that violation and fails if the guard
+  does not object. A new budget constant in a test, bench or guard file fails
+  discovery until it carries a `@guard` tag and an inventory entry. The whole
+  sweep is ~1.5 s; `GUARDS=cheap` drops the two that build an artifact to
+  mutate, and the default runs everything.
 - `0.x` versioning until cutover; no API stability promises before M2.
 - Docs 01–07 are living: when implementation contradicts a design doc, the
   doc gets amended in the same PR.

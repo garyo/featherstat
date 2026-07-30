@@ -151,13 +151,64 @@ Measured against the same e2-small class of host Matomo runs on now.
 The budget is enforced, not aspirational: a tiny benchmark harness (replayed
 real traffic, see Testing) runs in CI and fails on regression.
 
+### What `bun run bench` actually gates
+
+Two halves, both ratchets, both in `apps/server/test/replay/bench-thresholds.json`:
+
+- **ingest** — throughput, mean and slowest flush, bytes per stored event.
+- **read** — the median server time of the batches the app really sends,
+  assembled by `collectBatch` from the shipped dashboards so they cannot drift
+  from what a view asks. They run against the database ingest just wrote (90
+  days × 6 sites, 137 487 events, on disk), so the read gate costs the queries
+  and nothing else.
+
+Measured 2026-07-30 on an Apple-silicon laptop, 1 warm-up + median of 3, ±10%
+run to run:
+
+| Read shape | Median | Ratchet |
+| --- | --- | --- |
+| site dashboard @ today (hourly) | 5 ms | 20 ms |
+| site dashboard @ 7d | 23 ms | 70 ms |
+| site dashboard @ 90d | **165 ms** | 490 ms |
+| hours × weekday @ 90d | 12 ms | 40 ms |
+| paths × day @ 90d, all sites | **107 ms** | 340 ms |
+| all-sites dashboard @ 90d + compare | **271 ms** | 820 ms |
+| journeys @ 90d, all sites | **250 ms** | 760 ms |
+| journeys @ 90d, busiest site (steps 4, limit 50) | **83 ms** | 100 ms |
+
+The ratchets are ~3× the measurement — the headroom the ingest thresholds
+already carry, because CI hardware is slower than the machine above. They
+tighten, never loosen (CLAUDE.md invariant 6).
+
+The last row is the exception, at 1.2×. Its 100 ms is inherited: it was a
+wall-clock assertion inside `journeys.test.ts`, where it measured the machine's
+spare capacity as much as the query — vitest runs test files in parallel, so it
+moved with whatever else the suite was doing and went red the day a sibling file
+started building a bundle. Moving it here did not loosen it; it made it serial,
+which is the only way a 1.2× margin can mean anything. If it proves flaky on CI
+hardware the answer is a faster sequence query, not a bigger number.
+
+**The five bold rows are over the < 50 ms budget in the table above, by up to
+5×.** They are not silently blessed: the bench prints `OVER DOCS/02 BUDGET` for
+every shape that exceeds it, on every run, while the ratchet keeps them from
+getting worse. The budget line is a p95 for the batch a dashboard sends, and it
+still stands as the target; today's shortfall is concentrated in long ranges and
+in `site: 'all'` fan-out — `paths × day` over 90 days is deliberately unlimited
+(R20), and journeys costs 8× more across six sites than across one (30 ms →
+250 ms), which is more than the fan-out alone explains. Closing that gap is open
+work, not a rewritten budget.
+
 ## Security posture
 
 - Tracking endpoints: public, rate-limited, size-capped, no auth (they must be
   reachable from any visitor's browser). Nothing they accept is trusted;
   everything is length-clamped and stored as data, never interpreted.
 - Dashboard + admin API: session auth; all mutations CSRF-protected;
-  cookies `HttpOnly; Secure; SameSite=Lax`.
+  cookies `HttpOnly; Secure; SameSite=Lax`. `/api/query` executes a
+  client-authored query plan on the synchronous SQLite path, so executed
+  batches carry a per-session and per-instance budget (04 § 3) — keyed on the
+  session because the gate has already named one, unlike the public routes
+  below.
 - Share links: signed tokens scoped to one dashboard, read-only, revocable.
 - All user-originated strings (URLs, titles, referrers, event names) are
   untrusted at render time: `textContent` only, never innerHTML.

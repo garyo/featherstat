@@ -1,6 +1,21 @@
 {
-  "minHitsPerSec": 5000,
-  "maxMeanFlushMs": 25,
-  "maxFlushMs": 100,
-  "maxBytesPerEvent": 400
+  "ingest": {
+    "minHitsPerSec": 5000,
+    "maxMeanFlushMs": 25,
+    "maxFlushMs": 100,
+    "maxBytesPerEvent": 400
+  },
+  "read": {
+    "dashboardBudgetMs": 50,
+    "maxMedianMs": {
+      "site dashboard @ today": 20,
+      "site dashboard @ 7d": 70,
+      "site dashboard @ 90d": 490,
+      "hours x weekday @ 90d": 40,
+      "paths x day @ 90d, all sites": 340,
+      "all-sites dashboard @ 90d + compare": 820,
+      "journeys @ 90d, all sites": 760,
+      "journeys @ 90d, busiest site": 100
+    }
+  }
 }

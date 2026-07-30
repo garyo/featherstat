@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { BUNDLES, buildBundle } from './build.ts';
+import { BUNDLES, buildBundle, bundleBreaches, DIST_DIR } from './build.ts';
 
 const built = new Map<string, Buffer>();
 
@@ -25,5 +25,10 @@ describe('tracker bundles', () => {
   it('ships the shim self-executing and the native tracker as ESM', () => {
     expect(String(built.get('matomo.js'))).not.toMatch(/\bexport\b/);
     expect(String(built.get('tracker.js'))).toMatch(/export\{[^}]*init/);
+  });
+
+  it('agrees with the reusable check `test/guards` mutates', () => {
+    // Same facts, one function, so proving that function binds proves this does.
+    expect(bundleBreaches(DIST_DIR)).toEqual([]);
   });
 });

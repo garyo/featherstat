@@ -17,6 +17,6 @@
       "@featherstat/shared": ["./packages/shared/src/index.ts"]
     }
   },
-  "include": ["apps/*/src", "apps/*/test", "packages/*/src"],
+  "include": ["apps/*/src", "apps/*/test", "packages/*/src", "test"],
   "exclude": ["apps/web"]
 }
