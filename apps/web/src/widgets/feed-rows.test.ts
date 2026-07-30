@@ -21,20 +21,28 @@ describe('feed row labels', () => {
     expect(placeLabel(hit())).toBe('Unknown');
   });
 
+  // The stored region is the geo database's own word — a NAME from DB-IP City
+  // Lite, a code from the Matomo importer. Both must print as the code.
   it('prints the state for US and CA — the address line people expect', () => {
-    expect(placeLabel(hit({ city: 'Wake Forest', region: 'NC', country: 'US' }))).toBe(
+    expect(placeLabel(hit({ city: 'Wake Forest', region: 'North Carolina', country: 'US' }))).toBe(
       'Wake Forest, NC',
     );
-    expect(placeLabel(hit({ city: 'Toronto', region: 'ON', country: 'CA' }))).toBe('Toronto, ON');
+    expect(placeLabel(hit({ city: 'Toronto', region: 'Ontario', country: 'CA' }))).toBe(
+      'Toronto, ON',
+    );
+    expect(placeLabel(hit({ city: 'Boston', region: 'MA', country: 'US' }))).toBe('Boston, MA');
   });
 
-  it('prints the country elsewhere, region or not — `Exeter, GB`, never `Exeter, DEV`', () => {
-    expect(placeLabel(hit({ city: 'Exeter', region: 'DEV', country: 'GB' }))).toBe('Exeter, GB');
+  it('prints the country elsewhere, region or not — `Exeter, GB`, never `Exeter, Devon`', () => {
+    expect(placeLabel(hit({ city: 'Exeter', region: 'Devon', country: 'GB' }))).toBe('Exeter, GB');
     expect(placeLabel(hit({ city: 'Hanoi', country: 'VN' }))).toBe('Hanoi, VN');
   });
 
-  it('falls back to the country when a US hit has no state', () => {
+  it('falls back to the country when a US hit has no state, or an unmapped one', () => {
     expect(placeLabel(hit({ city: 'Wake Forest', country: 'US' }))).toBe('Wake Forest, US');
+    expect(placeLabel(hit({ city: 'Nowhere', region: 'Freedonia', country: 'US' }))).toBe(
+      'Nowhere, US',
+    );
   });
 
   it('prints an event as category · action, and anything else as its path', () => {

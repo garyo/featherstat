@@ -47,7 +47,10 @@ CREATE TABLE events (
 
   -- geo (mmdb lookup at ingest; city centroid, never the IP)
   country     TEXT,                       -- ISO 3166-1 alpha-2
-  region      TEXT,                       -- ISO 3166-2 subdivision, unprefixed
+  region      TEXT,                       -- the source's own word: DB-IP City
+                                          --   Lite gives a NAME ("Massachusetts"),
+                                          --   the Matomo importer a code ("MA");
+                                          --   the dashboard codes US/CA for display
   city        TEXT,
   lat REAL, lon REAL
 );

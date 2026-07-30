@@ -211,12 +211,12 @@ describe('visitor engagement', () => {
         ts: now - 1_000,
         visitor: visitor('Observant Ocelot'),
         city: 'Wake Forest',
-        region: 'NC',
+        region: 'North Carolina',
         country: 'US',
       }),
     ];
     const row = visitorTally(hits, now)[0];
-    expect(row).toMatchObject({ city: 'Wake Forest', region: 'NC', country: 'US' });
+    expect(row).toMatchObject({ city: 'Wake Forest', region: 'North Carolina', country: 'US' });
     expect(placeOf(row ?? {})).toBe('Wake Forest, NC');
   });
 

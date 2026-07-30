@@ -1,7 +1,7 @@
 import { type RealtimeEngagement, type RealtimeHit, TALLY_WINDOW_MS } from '@featherstat/shared';
 import type { BarRow } from '../widgets/bar-rows.ts';
 import { displayDuration } from '../widgets/format.ts';
-import { countryName } from '../widgets/geo.ts';
+import { countryName, subdivisionCode } from '../widgets/geo.ts';
 import type { RealtimeEnv } from '../widgets/types.ts';
 import type { SiteScope } from './state.ts';
 
@@ -216,8 +216,10 @@ export function countryTally(
 }
 
 /**
- * Where subdivisions are how people write an address: `Wake Forest, NC` reads
- * as a place, while `Exeter, Devon` is noise next to `Exeter, GB`.
+ * Where the subdivision is how people write an address: `Wake Forest, NC` reads
+ * as a place, while `Exeter, Devon` is noise next to `Exeter, GB`. Only as a
+ * CODE — the stored region is a name ("North Carolina"), and the full word is
+ * too long for a feed row.
  */
 const REGION_AS_PLACE = new Set(['US', 'CA']);
 
@@ -228,7 +230,10 @@ export function placeOf(place: {
   country?: string | undefined;
 }): string | undefined {
   if (place.city !== undefined && place.country !== undefined) {
-    const region = REGION_AS_PLACE.has(place.country) ? place.region : undefined;
+    const region =
+      place.region !== undefined && REGION_AS_PLACE.has(place.country)
+        ? subdivisionCode(place.region)
+        : undefined;
     return `${place.city}, ${region ?? place.country}`;
   }
   if (place.city !== undefined) return place.city;

@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { CityResponse } from 'mmdb-lib';
 import { describe, expect, it } from 'vitest';
 import { buildMmdb } from '../../test/mmdb.ts';
 import { geoFromCity, MmdbProvider, NullProvider } from './geo.ts';
@@ -69,13 +70,19 @@ describe('geoFromCity', () => {
     ).toEqual({ country: 'US', region: 'MA', city: 'Boston', lat: 42.36, lon: -71.06 });
   });
 
-  it('takes the subdivision CODE, not its name — the importer writes codes too', () => {
-    const record = geoFromCity({
+  /**
+   * The deployed database is DB-IP City Lite, which carries NO `iso_code` on
+   * subdivisions for any country — only `names.en` — though the mmdb-lib type
+   * declares the field required. Reading `iso_code` alone silently nulled every
+   * region in production; this is the shape that actually arrives.
+   */
+  it('falls back to the subdivision name when the database carries no code', () => {
+    const dbipShaped = {
       country: { geoname_id: 1, iso_code: 'US', names: { en: 'United States' } },
-      subdivisions: [{ geoname_id: 2, iso_code: 'NC', names: { en: 'North Carolina' } }],
+      subdivisions: [{ geoname_id: 2, names: { en: 'North Carolina' } }],
       city: { geoname_id: 3, names: { en: 'Wake Forest' } },
-    });
-    expect(record.region).toBe('NC');
+    } as unknown as CityResponse;
+    expect(geoFromCity(dbipShaped).region).toBe('North Carolina');
   });
 
   it('fills missing records with nulls', () => {
