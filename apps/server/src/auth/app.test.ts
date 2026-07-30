@@ -1,11 +1,12 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DESKTOP_UA, openTestDb, T0 } from '../../test/rows.ts';
 import type { Db } from '../db/index.ts';
 import { createPipeline, type Pipeline } from '../pipeline/index.ts';
 import { createRealtimeHub } from '../realtime/hub.ts';
+import { QUERY_BATCHES_PER_SESSION } from '../routes/query.ts';
 import { createSecuredApp, type SecuredApp } from './app.ts';
 import { createAuth } from './auth.ts';
 import { SESSION_TTL_MS } from './session.ts';
@@ -73,12 +74,26 @@ async function setup(app: SecuredApp['app'] = secured.app): Promise<{
   return { cookie: cookiesOf(res), csrf };
 }
 
-async function postQuery(cookie?: string): Promise<Response> {
+async function postQuery(cookie?: string, ip?: string): Promise<Response> {
   return await secured.app.request('/api/query', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', ...(cookie === undefined ? {} : { cookie }) },
+    headers: {
+      'content-type': 'application/json',
+      ...(cookie === undefined ? {} : { cookie }),
+      ...(ip === undefined ? {} : { 'x-forwarded-for': ip }),
+    },
     body: QUERY_BODY,
   });
+}
+
+async function login(): Promise<string> {
+  const res = await secured.app.request('/api/admin/login', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ password: PASSWORD }),
+  });
+  expect(res.status).toBe(200);
+  return cookiesOf(res);
 }
 
 describe('route matrix — no session', () => {
@@ -281,6 +296,36 @@ describe('login, logout, expiry', () => {
     for (let i = 0; i < 40; i += 1) statuses.push((await attempt(i)).status);
     expect(statuses.filter((status) => status === 429).length).toBeGreaterThan(0);
     expect(statuses.slice(30)).toEqual(Array(10).fill(429)); // budget exhausted, all blocked
+  });
+
+  /**
+   * `/api/query` is the one gated route that executes a client-authored query
+   * plan, so its budget is metered on the principal the GATE established rather
+   * than on the address: an authenticated caller can change addresses at will,
+   * and an office behind one NAT would otherwise throttle itself. Login and
+   * `/share/:token` are keyed on the IP because they are unauthenticated and
+   * nothing better exists there.
+   *
+   * routes/query.test.ts drives the budget itself; what this holds is the
+   * wiring, which is the half that breaks silently — the router serving
+   * `/api/query` is mounted inside `createApp`, well below the middleware that
+   * sets `sessionId`, and a caller with no principal falls back to the address.
+   */
+  it('meters query batches per session, not per address', async () => {
+    const { cookie: mine } = await setup();
+    const theirs = await login();
+    vi.useFakeTimers({ now: clock, toFake: ['Date'] });
+    try {
+      for (let i = 0; i < QUERY_BATCHES_PER_SESSION; i += 1) {
+        expect((await postQuery(mine, '203.0.113.11')).status).toBe(200);
+      }
+      // One session, one budget — moving to another address does not mint a new one.
+      expect((await postQuery(mine, '198.51.100.22')).status).toBe(429);
+      // One address, many people: the next session is not punished for the last.
+      expect((await postQuery(theirs, '203.0.113.11')).status).toBe(200);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

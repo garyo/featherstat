@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { event, openTestDb, session } from '../../test/rows.ts';
 import { type Db, insertEvents, upsertSessions, withWriteTransaction } from '../db/index.ts';
 import { createApp } from '../index.ts';
+import { QUERY_BATCHES_GLOBAL, QUERY_BATCHES_PER_SESSION, QUERY_WINDOW_MS } from './query.ts';
 
 const BODY = {
   site: 1,
@@ -31,6 +32,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   db.close();
 });
 
@@ -205,6 +207,116 @@ describe('POST /api/query', () => {
   it('answers 404 for an unknown site id', async () => {
     const res = await post({ ...BODY, site: 42 });
     expect(res.status).toBe(404);
+  });
+
+  /**
+   * A batch is the most expensive thing an authenticated caller can ask for, and
+   * better-sqlite3 is synchronous — while one runs it owns the loop that also
+   * answers beacons (invariant 4). The budget is metered on the principal the
+   * gate already established; the address is only the fallback for a
+   * tracking-only app mounted without that gate, exercised here because it is
+   * the cheap way to drive the mechanism.
+   *
+   * The clock is frozen rather than read, so every charge in a loop lands at one
+   * instant and the sliding window moves only where a test moves it.
+   */
+  describe('rate limit', () => {
+    const IP = '203.0.113.7';
+    const FROZEN = Date.UTC(2023, 10, 14, 17);
+    /**
+     * The client's revalidation debounce (`REVALIDATE_DEBOUNCE_MS`, apps/web
+     * lib/live.ts) — the fastest a live view re-queries. Repeated as a number
+     * here rather than imported across packages; `test/contract/rate-limit.test.ts`
+     * is where the two are bound together.
+     */
+    const POLL_MS = 3_000;
+
+    const from = (ip: string): Promise<Response> => post(BODY, { 'x-forwarded-for': ip });
+
+    /** Spends the whole instance budget across as many callers as it takes. */
+    async function spendTheInstance(): Promise<void> {
+      const callers = QUERY_BATCHES_GLOBAL / QUERY_BATCHES_PER_SESSION;
+      expect(Number.isInteger(callers)).toBe(true);
+      for (let caller = 0; caller < callers; caller += 1) {
+        for (let i = 0; i < QUERY_BATCHES_PER_SESSION; i += 1) {
+          expect((await from(`198.51.100.${caller}`)).status).toBe(200);
+        }
+      }
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers({ now: FROZEN, toFake: ['Date'] });
+    });
+
+    it('answers 429 with a Retry-After once a caller has spent its budget', async () => {
+      for (let i = 0; i < QUERY_BATCHES_PER_SESSION; i += 1) {
+        expect((await from(IP)).status).toBe(200);
+      }
+      const refused = await from(IP);
+      expect(refused.status).toBe(429);
+      expect(refused.headers.get('retry-after')).toBe('60');
+      expect((await refused.json()) as { error: string }).toEqual({
+        error: 'too many query batches — try again in a minute',
+      });
+
+      // Someone else's budget is untouched — a limiter that blocked the instance
+      // on one caller's burst would be the outage it was meant to prevent.
+      expect((await from('198.51.100.4')).status).toBe(200);
+    });
+
+    it('never charges a 304 — a dashboard revalidating on an unchanged view is free', async () => {
+      const seed = await from(IP);
+      const etag = seed.headers.get('etag') as string;
+
+      // Far past the budget, all of it conditional: the response is served from
+      // the ETag before the limiter is consulted at all.
+      for (let i = 0; i < QUERY_BATCHES_PER_SESSION * 2; i += 1) {
+        const res = await post(BODY, { 'x-forwarded-for': IP, 'if-none-match': etag });
+        expect(res.status).toBe(304);
+      }
+      expect((await from(IP)).status).toBe(200);
+    });
+
+    it('lets a live client back in one window after its last executed batch', async () => {
+      for (let i = 0; i < QUERY_BATCHES_PER_SESSION; i += 1) {
+        expect((await from(IP)).status).toBe(200);
+      }
+      for (let elapsed = POLL_MS; elapsed < QUERY_WINDOW_MS; elapsed += POLL_MS) {
+        vi.setSystemTime(FROZEN + elapsed);
+        expect((await from(IP)).status).toBe(429);
+      }
+      vi.setSystemTime(FROZEN + QUERY_WINDOW_MS);
+      expect((await from(IP)).status).toBe(200);
+    });
+
+    it('bounds the whole instance too, so many callers cannot add up to an outage', async () => {
+      await spendTheInstance();
+      // A caller who has spent nothing of its own budget still waits.
+      expect((await from(IP)).status).toBe(429);
+    });
+
+    /**
+     * The false positive that would actually hurt, and the reason `/api/query`
+     * charges the WORK rather than the attempt (auth/ratelimit.ts).
+     *
+     * Once the instance budget is spent, every open dashboard keeps polling —
+     * that is what a live view does, and it cannot know why it was refused. A
+     * limiter that charged the attempt would let that ordinary polling hold the
+     * door shut on itself indefinitely: the refusals alone outnumber the budget,
+     * so the window would never drain and nobody would get back in.
+     */
+    it('does not let refusals hold the budget shut: a polling fleet still recovers', async () => {
+      await spendTheInstance();
+      const pollers = Math.ceil((QUERY_BATCHES_GLOBAL * POLL_MS) / (QUERY_WINDOW_MS - POLL_MS) + 1);
+      for (let elapsed = POLL_MS; elapsed < QUERY_WINDOW_MS; elapsed += POLL_MS) {
+        vi.setSystemTime(FROZEN + elapsed);
+        for (let poller = 0; poller < pollers; poller += 1) {
+          expect((await from(`192.0.2.${poller}`)).status).toBe(429);
+        }
+      }
+      vi.setSystemTime(FROZEN + QUERY_WINDOW_MS);
+      expect((await from('192.0.2.0')).status).toBe(200);
+    });
   });
 
   it('keeps hostile filter values inert end to end', async () => {

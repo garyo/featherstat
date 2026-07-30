@@ -39,50 +39,76 @@ bun run --cwd apps/web dev      # dashboard on :5173, proxies /api to :8080
 
 ## Invariants (load-bearing — never violate)
 
-1. **Widgets declare queries; views batch them.** One `/api/query` request per
-   view state. Never per-widget fetching — that's the Matomo failure mode this
-   project exists to fix.
-2. **Single writer**: all DB writes flow through the ingest batcher's
-   transactions. Reads from anywhere (WAL).
-3. **Raw IP is transient.** Used for the visitor hash + GeoIP lookup in
-   memory, then discarded. Never persisted, never logged, never in fixtures
-   (scrub captured data to documented test IPs).
-4. **Beacons never bounce.** Tracking endpoints ignore unknown params, record
-   what they understood, and always answer fast (204 / GIF). 4xx to a browser
-   beacon is a bug.
-5. **Bounce is engagement-aware** (docs/03): 1 pageview AND no events AND
-   `engaged_ms` < threshold. Don't reintroduce the naive definition anywhere.
-6. **Ratchets only tighten**: the golden corpus
-   (`apps/server/test/fixtures/matomo/`) and the perf thresholds only gain
-   cases / get stricter. Never delete a fixture or loosen a threshold to make
-   a change pass — surface the conflict instead.
-7. **Everything rendered is a widget.** Anything that draws data belongs in
-   `apps/web/src/widgets/`, registered in `registry.ts` and named in the
-   shared `VizType` enum — so it is reusable on any dashboard, replaceable,
-   and editable. A view supplies arrangement and shared interaction state
-   (the Realtime page owns its layout and the highlight its tally and feed
-   share); it never renders a widget's innards. A widget declares a query or
-   declares none — the realtime family reads the SSE stream and asks the
-   batch for nothing.
+Nine, numbered because the code cites them by number — the numbers are stable
+even as the prose shrinks. **An invariant a test enforces is documentation; one
+enforced only by memory is a liability.** Five have a guard now and are one line
+each: go read the guard, it is the source of truth and this is a map to it. Four
+are still memory, in whole or in part, and those are spelled out — that is the
+list to actually hold in your head.
 
-   Corollary — **one rendering per thing rendered**: never copy markup into a
-   second file; extract it (`FeedRows.svelte`, `BarRows.svelte`,
-   `WidgetGrid.svelte`) and let both callers render it — decorating the shared
-   piece, never re-implementing it. The realtime feed forked exactly this way,
-   and every fix after that had to be made twice; `feed-rows.test.ts` and
-   `widget-grid.test.ts` now fail if a second file grows those rows or a second
-   file renders the registry.
+### Enforced — the guard is the source of truth
 
-   Known exception, deliberate: the Journeys sankey and flows table are still
-   view-local (their edge-click and depth controls are coupled). Registering
-   them is open work, not licence for the next one.
-8. **The alias name is a label, never a key.** Realtime consumers group by the
-   visitor's opaque `ref` (minted per process, ephemeral, exact); the
-   two-word name exists to be read. 384 names for any number of visitors
-   means names collide, and keying on one merges strangers into a single row
-   — that bug shipped once.
-9. **Query vocabulary, never SQL from clients.** The compiler whitelists
-   metrics/dimensions/ops; everything is parameterized.
+- **2 · Single writer**: writes only inside `withWriteTransaction`, reads from
+  anywhere (WAL). Every write helper calls `assertWritable`, which throws on a
+  write outside a transaction — so this fails loudly rather than corrupting.
+  (Residue: a *new* write helper still has to make that call.)
+- **4 · Beacons never bounce**: ignore unknown params, record what was
+  understood, answer fast (204 / GIF). 4xx to a browser beacon is a bug. Every
+  case in `apps/server/test/fixtures/matomo/` asserts its own status and not one
+  is a 4xx; `routes/track.test.ts` covers the oversize body and the hit nothing
+  understood; the `auth/app.test.ts` route matrix keeps them public.
+- **5 · Bounce is engagement-aware** (docs/03). One definition, `bounce_rate` in
+  `query/compiler.ts`, with the threshold bound rather than inlined; the naive
+  definition fails `executor.test.ts` "an engaged single-page session is NOT a
+  bounce", which exists to say so.
+- **8 · The alias name is a label, never a key**: group by the visitor's opaque
+  `ref`; the two-word name exists to be read. `lib/realtime.test.ts` expects
+  maps keyed by `ref`, so keying on the name fails them. (Residue: no branded
+  type, so `tsc` would still allow it.)
+- **9 · Query vocabulary, never SQL from clients.** The zod enums 400 anything
+  outside the vocabulary; `compiler.test.ts` proves no filter value reaches the
+  SQL text and every op binds its parameters; `routes/query.test.ts` sends
+  `'; DELETE FROM events; --` through the live route and checks the table
+  survived.
+
+### Memory — no guard, or only half of one
+
+- **1 · Widgets declare queries; views batch them.** One `/api/query` request
+  per view state. Never per-widget fetching — that's the Matomo failure mode
+  this project exists to fix. *Guarded half*: `collectBatch` lives in
+  `packages/shared`, so server and client cannot build different batches
+  (`views/batch.test.ts`, `layout.test.ts`, and the batch invariants the
+  dashboard write path validates). *Unguarded half*: nothing stops a new widget
+  importing a fetch. Widgets read `env` and nothing else; wanting a query client
+  inside one means the view is wrong.
+- **3 · Raw IP is transient.** Used for the visitor hash + GeoIP lookup in
+  memory, then discarded. *Guarded half*: no column holds one, and
+  `realtime/hub.test.ts` proves nothing IP-shaped reaches the wire. *Unguarded
+  half, and the reason this stays long*: never logged, never in a fixture —
+  scrub captured data to the documented test ranges (192.0.2.x / 198.51.100.x /
+  203.0.113.x). Nothing scans for a leak.
+- **6 · Ratchets only tighten**: the golden corpus
+  (`apps/server/test/fixtures/matomo/`) and the perf thresholds only gain cases
+  / get stricter. Never delete a fixture or loosen a threshold to make a change
+  pass — surface the conflict instead. **Permanently memory**: a test cannot
+  object to being edited, so nothing here can ever enforce this one.
+- **7 · Everything rendered is a widget.** Anything that draws data belongs in
+  `apps/web/src/widgets/`, registered in `registry.ts` and named in the shared
+  `VizType` enum — so it is reusable on any dashboard, replaceable, and
+  editable. A view supplies arrangement and shared interaction state (the
+  Realtime page owns its layout and the highlight its tally and feed share); it
+  never renders a widget's innards. A widget declares a query or declares none —
+  the realtime family reads the SSE stream and asks the batch for nothing.
+  *Guarded*: `widgets/env.test.ts` makes every `VizType` declare what it needs
+  and keeps the stream readers out of the batch, and the corollary — **one
+  rendering per thing rendered** — is now a table in
+  `apps/web/src/ownership.test.ts` (markup → the one file allowed to own it).
+  Extract and decorate; never teach a second file the markup. *Unguarded*: that
+  a new drawing file lands in `widgets/` and reaches `registry.ts` at all —
+  `REGISTRY` is a `Partial<Record<VizType, …>>`, so an unregistered viz
+  type-checks. The Journeys sankey and flows table are the standing exception
+  (their edge-click and depth controls are coupled) — open work, not licence for
+  the next one.
 
 ## Conventions
 

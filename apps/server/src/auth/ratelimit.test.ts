@@ -27,6 +27,20 @@ describe('RateLimiter', () => {
     expect(limiter.allow('a', T0 + 101_000)).toBe(true);
   });
 
+  it('charges the work, not the attempt: a refusal leaves the window untouched', () => {
+    const limiter = new RateLimiter(2, 60_000);
+    limiter.charge('a', T0);
+    limiter.charge('a', T0);
+    expect(limiter.exhausted('a', T0)).toBe(true);
+
+    // Knocking, repeatedly, right up to the edge of the window records nothing —
+    // so the two charges age out on schedule and the caller gets back in.
+    for (let t = T0 + 3_000; t < T0 + 60_000; t += 3_000) {
+      expect(limiter.exhausted('a', t)).toBe(true);
+    }
+    expect(limiter.exhausted('a', T0 + 60_000)).toBe(false);
+  });
+
   it('prunes idle keys instead of remembering every IP forever', () => {
     const limiter = new RateLimiter(5, 60_000);
     for (let i = 0; i < 50; i += 1) limiter.allow(`ip-${i}`, T0);

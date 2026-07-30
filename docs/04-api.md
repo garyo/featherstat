@@ -271,6 +271,32 @@ batch itself still succeeds, and never returns wrong numbers.
   whose bounds did not move but whose hour axis did).
   Unchanged data → 304 with zero queries executed. Realtime SSE tells the
   client *when* to revalidate, so there's no polling loop.
+- **Rate limit.** A stored dashboard is a client-authored query plan executed
+  server-side, and better-sqlite3 is synchronous — while a batch runs it owns
+  the event loop that also answers beacons. The response-size budget above
+  bounds one answer; this bounds how many of them anyone can ask for: **120
+  executed batches per minute per session, 600 per minute for the instance**.
+  Over budget answers `429` with `Retry-After: 60` and
+  `{"error": "too many query batches — try again in a minute"}`; the SPA holds
+  its last good response, says "Live update failed — showing the last good
+  result", and offers retry — it never blanks.
+  - **Keyed on the session, not the address.** This route is behind the session
+    gate, so every request that reaches it names a principal the server minted
+    itself. One session keeps one budget however many addresses it arrives
+    from (a roaming phone, a stolen cookie replayed from a botnet), and an
+    office behind one NAT does not throttle itself. `/share/:token` and
+    `/api/admin/login` are keyed on the IP with tighter budgets because they
+    are unauthenticated and nothing better exists there — an anonymous link
+    holder and an accountable owner are not the same risk.
+  - **Only executed batches are charged**, never a 304 and never a refusal.
+    Charging refusals would let ordinary polling — a live view re-queries every
+    3 s — hold a tripped budget shut indefinitely, which is a worse outage than
+    the burst it was defending against.
+  - Sized from the client's own cadence rather than a guess: one view
+    revalidates at most every 3 s, so the per-session budget is six live views
+    saturated for a full minute. `test/contract/rate-limit.test.ts` drives the
+    shipped dashboards at the shipped cadence and fails if either number moves
+    out from under the other.
 - `"site": "all"` grants the all-sites overview the same one-request property,
   with per-site grouping in the rows.
 
