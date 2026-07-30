@@ -69,6 +69,48 @@ documented deltas. **Then Matomo gets turned off.**
 - Flourishes as time allows: realtime globe (R19, reusing globe-viz's
   three.js globe), weekly digest (R18).
 
+## Deferred by decision — returning visitors and cohorts
+
+**Not a gap to close casually; a trade to make deliberately.** Gary wants to
+know whether deep-timeline and globe-viz get returning readers, and someday may
+turn this on for those sites. Deferred 2026-07-30 rather than dropped, with the
+reasoning recorded so it is not re-derived.
+
+The daily-rotating salt makes cross-day identity **cryptographically
+impossible**, not merely unimplemented: the previous day's salt is destroyed, so
+nothing can link Monday's visitor to Tuesday's. Retention needs exactly that
+link. Cohorts and cross-day unlinkability are mutually exclusive, and no tool
+has both:
+
+- **Plausible** uses our exact construction (`hash(daily_salt + domain + ip +
+  ua)`, rotated and destroyed every 24 h) and states it cannot offer
+  new-vs-returning or retention.
+- **Matomo's** cohort analysis rides the persistent `_pk_id` cookie. In
+  cookieless mode its `config_id` seed also regenerates every 24 h, and its
+  docs list cohort analysis, returning-visitor counts and multi-session
+  attribution as losing accuracy. Same boundary; opposite default.
+
+So the shape is a **per-site policy**, not an architecture change — Matomo makes
+it a per-install choice and we would make it per-site, defaulting to the strict
+setting so a site needs no consent banner unless it opts out.
+
+What exists already: `uid` opt-in (`pipeline/identity.ts`) hashes a
+site-provided user id with a stable per-site salt, off by default. **A site with
+logins has full cohort capability today** — and it costs nothing in privacy
+terms, because that site already knows who the user is.
+
+What it would take, beyond the setting itself: retention cards and their query
+kinds, and — the part that must not be skipped — a way for the UI to say WHICH
+kind of count it is showing. One site's `visitors` would mean people; another's
+means visitor-days. The `measures` header (`unit`/`population`/`aggregate`) is
+where that belongs, and the approximation mark already exists for it. Shipping
+the setting without that distinction would recreate defect 13 across sites
+instead of across screens.
+
+Cheaper and available now, and often what "cohorts" actually means to the
+asker: segment-over-time (traffic from one referrer, week over week) needs no
+identity at all and is a filtered query.
+
 ## Sequencing notes
 
 - The golden corpus (M0/M1) is the highest-leverage early artifact: it makes
