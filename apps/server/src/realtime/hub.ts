@@ -236,6 +236,7 @@ function toRealtimeHit(event: EventRow, visitor: RealtimeVisitor, engagedMs?: nu
     eventCategory: event.event_category ?? undefined,
     eventAction: event.event_action ?? undefined,
     country: event.country ?? undefined,
+    region: event.region ?? undefined,
     city: event.city ?? undefined,
     lat: event.lat ?? undefined,
     lon: event.lon ?? undefined,

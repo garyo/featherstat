@@ -151,7 +151,9 @@ describe('query engine on the replay corpus', () => {
         .rows.map((row) => row[id])
         .filter((value): value is string => typeof value === 'string');
     expect(named('city')).toContain('Boston');
-    expect(named('region')).toContain('Massachusetts');
+    // ISO 3166-2, unprefixed — the same form the Matomo importer writes, so
+    // imported and live rows group together instead of splitting the dimension.
+    expect(named('region')).toContain('MA');
     // Non-ASCII place names survive ingest, storage and the compiler intact.
     expect(named('city')).toContain('São Paulo');
   });

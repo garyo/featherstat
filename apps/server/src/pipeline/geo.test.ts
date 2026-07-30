@@ -66,7 +66,16 @@ describe('geoFromCity', () => {
         city: { geoname_id: 3, names: { en: 'Boston' } },
         location: { accuracy_radius: 20, latitude: 42.36, longitude: -71.06 },
       }),
-    ).toEqual({ country: 'US', region: 'Massachusetts', city: 'Boston', lat: 42.36, lon: -71.06 });
+    ).toEqual({ country: 'US', region: 'MA', city: 'Boston', lat: 42.36, lon: -71.06 });
+  });
+
+  it('takes the subdivision CODE, not its name — the importer writes codes too', () => {
+    const record = geoFromCity({
+      country: { geoname_id: 1, iso_code: 'US', names: { en: 'United States' } },
+      subdivisions: [{ geoname_id: 2, iso_code: 'NC', names: { en: 'North Carolina' } }],
+      city: { geoname_id: 3, names: { en: 'Wake Forest' } },
+    });
+    expect(record.region).toBe('NC');
   });
 
   it('fills missing records with nulls', () => {

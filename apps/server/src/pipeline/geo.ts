@@ -4,6 +4,8 @@ import { type CityResponse, Reader } from 'mmdb-lib';
 export interface GeoResult {
   /** ISO 3166-1 alpha-2. */
   country: string | null;
+  /** ISO 3166-2 subdivision code without the country prefix (`MA`, `ENG`) — the
+   * form the Matomo importer already writes, so both paths group together. */
   region: string | null;
   city: string | null;
   lat: number | null;
@@ -85,7 +87,7 @@ export class MmdbProvider implements GeoProvider {
 export function geoFromCity(record: CityResponse): GeoResult {
   return {
     country: record.country?.iso_code ?? null,
-    region: record.subdivisions?.[0]?.names.en ?? null,
+    region: record.subdivisions?.[0]?.iso_code ?? null,
     city: record.city?.names.en ?? null,
     lat: record.location?.latitude ?? null,
     lon: record.location?.longitude ?? null,

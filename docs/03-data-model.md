@@ -47,7 +47,8 @@ CREATE TABLE events (
 
   -- geo (mmdb lookup at ingest; city centroid, never the IP)
   country     TEXT,                       -- ISO 3166-1 alpha-2
-  region      TEXT, city TEXT,
+  region      TEXT,                       -- ISO 3166-2 subdivision, unprefixed
+  city        TEXT,
   lat REAL, lon REAL
 );
 

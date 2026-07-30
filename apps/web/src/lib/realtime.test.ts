@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   countryTally,
   engagementByName,
+  placeOf,
   pushFeed,
   relativeAgo,
   seedFeed,
@@ -200,6 +201,23 @@ describe('visitor engagement', () => {
       }),
     ];
     expect(visitorTrail(hits, mine, now).map((step) => step.label)).toEqual(['/newest', '/older']);
+  });
+
+  it('carries the region onto the row, so a tally row can print the state too', () => {
+    const now = 60_000;
+    const hits = [
+      hit({ ts: now, visitor: visitor('Observant Ocelot') }), // unlocated, must not blank
+      hit({
+        ts: now - 1_000,
+        visitor: visitor('Observant Ocelot'),
+        city: 'Wake Forest',
+        region: 'NC',
+        country: 'US',
+      }),
+    ];
+    const row = visitorTally(hits, now)[0];
+    expect(row).toMatchObject({ city: 'Wake Forest', region: 'NC', country: 'US' });
+    expect(placeOf(row ?? {})).toBe('Wake Forest, NC');
   });
 
   it('leaves the tally alone when no engagement has arrived', () => {

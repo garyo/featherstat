@@ -654,6 +654,8 @@ export interface RealtimeHit {
   eventCategory?: string;
   eventAction?: string;
   country?: string;
+  /** ISO 3166-2 subdivision code, unprefixed — the feed prints it for US/CA. */
+  region?: string;
   city?: string;
   lat?: number;
   lon?: number;

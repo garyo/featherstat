@@ -83,6 +83,7 @@ export interface VisitorCount {
   siteId: number;
   /** Newest located hit's city, else its country code; undefined when never located. */
   city?: string;
+  region?: string;
   country?: string;
   /** Engaged time in this visitor's current session; absent until they have some. */
   engagedMs?: number;
@@ -154,6 +155,7 @@ export function visitorTally(
     // must not blank a visitor an older hit can still place.
     if (row.city === undefined && row.country === undefined && hit.country !== undefined) {
       row.city = hit.city;
+      row.region = hit.region;
       row.country = hit.country;
     }
   }
@@ -213,13 +215,21 @@ export function countryTally(
     .map((row) => ({ ...row, pct: ((row.count / max) * 100).toFixed(1) }));
 }
 
-/** A hit's place, as the feed prints it: `City, CC`, else the country, else Unknown. */
+/**
+ * Where subdivisions are how people write an address: `Wake Forest, NC` reads
+ * as a place, while `Exeter, Devon` is noise next to `Exeter, GB`.
+ */
+const REGION_AS_PLACE = new Set(['US', 'CA']);
+
+/** A hit's place, as the feed prints it: `City, NC` or `City, CC`, else the country, else Unknown. */
 export function placeOf(place: {
   city?: string | undefined;
+  region?: string | undefined;
   country?: string | undefined;
 }): string | undefined {
   if (place.city !== undefined && place.country !== undefined) {
-    return `${place.city}, ${place.country}`;
+    const region = REGION_AS_PLACE.has(place.country) ? place.region : undefined;
+    return `${place.city}, ${region ?? place.country}`;
   }
   if (place.city !== undefined) return place.city;
   return place.country !== undefined ? countryName(place.country) : undefined;

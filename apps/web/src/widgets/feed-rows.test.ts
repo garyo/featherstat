@@ -21,6 +21,22 @@ describe('feed row labels', () => {
     expect(placeLabel(hit())).toBe('Unknown');
   });
 
+  it('prints the state for US and CA — the address line people expect', () => {
+    expect(placeLabel(hit({ city: 'Wake Forest', region: 'NC', country: 'US' }))).toBe(
+      'Wake Forest, NC',
+    );
+    expect(placeLabel(hit({ city: 'Toronto', region: 'ON', country: 'CA' }))).toBe('Toronto, ON');
+  });
+
+  it('prints the country elsewhere, region or not — `Exeter, GB`, never `Exeter, DEV`', () => {
+    expect(placeLabel(hit({ city: 'Exeter', region: 'DEV', country: 'GB' }))).toBe('Exeter, GB');
+    expect(placeLabel(hit({ city: 'Hanoi', country: 'VN' }))).toBe('Hanoi, VN');
+  });
+
+  it('falls back to the country when a US hit has no state', () => {
+    expect(placeLabel(hit({ city: 'Wake Forest', country: 'US' }))).toBe('Wake Forest, US');
+  });
+
   it('prints an event as category · action, and anything else as its path', () => {
     expect(
       actionLabel(hit({ type: 'event', eventCategory: 'signup', eventAction: 'created' })),

@@ -25,7 +25,7 @@ const MATOMO_ID = '00112233445566aa';
 const BOSTON: GeoProvider = {
   lookup: () => ({
     country: 'US',
-    region: 'Massachusetts',
+    region: 'MA',
     city: 'Boston',
     lat: 42.36,
     lon: -71.06,
@@ -65,7 +65,7 @@ describe('GET /api/realtime', () => {
     const frames = await connect();
     const snapshot = (await frames.next()).data as RealtimeSnapshot;
     expect(snapshot.active).toEqual({ 1: 1, 2: 1 });
-    const geo = { country: 'US', city: 'Boston' };
+    const geo = { country: 'US', region: 'MA', city: 'Boston' };
     expect(snapshot.recent).toEqual([
       { siteId: 1, ts: T0, type: 'pageview', visitor: ALIAS, path: '/a', ...geo, ...POINT },
       { siteId: 2, ts: T0, type: 'pageview', visitor: ALIAS, path: '/b', ...geo, ...POINT },
