@@ -683,10 +683,11 @@ function account(hits: readonly ReplayHit[]): Accounted {
       continue;
     }
 
-    // The visitor hash mixes in the site and a salt that rotates at 00:00 UTC, so
-    // one person is a different visitor on either side of a UTC midnight (docs/03)
-    // — which is also the hard ceiling on how far revival can reach back.
-    const identity = `${hit.siteId}|${Math.floor(ctx.receivedAt / DAY_MS)}|${fingerprint(hit, ctx)}`;
+    // The visitor hash mixes in the site and a salt that rotates at site-local
+    // midnight, so one person is a different visitor on either side of the same
+    // boundary `local_date` is bucketed on (docs/03) — which is also the hard
+    // ceiling on how far revival can reach back.
+    const identity = `${hit.siteId}|${localDate}|${fingerprint(hit, ctx)}`;
 
     // A ping is a continuation signal, never the start of a visit (docs/03), so it
     // reaches further back than any other hit: past the idle timeout it revives the

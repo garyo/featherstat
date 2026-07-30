@@ -354,13 +354,21 @@ describe('replay corpus invariants', () => {
   });
 
   it('5. additive metrics sum across day buckets; distinct counts only bound', () => {
+    // The bound is asserted over WEEK buckets and over a dimension, not over day
+    // buckets. A day bucket is the one grouping where a distinct visitor count is
+    // exactly additive — that is invariant 10 below, and asserting `<=` here as
+    // well would only re-state it more weakly. A week holds several days and each
+    // is a fresh salt, so a reader who comes back on Thursday is two visitors in
+    // it; a path is not a day at all, so one visitor reading two articles is
+    // counted in both groups.
     let sawReturningVisitor = false;
     for (const scope of SCOPES) {
       const response = ask(scope, [
         { id: 'total', metrics: ADDITIVE },
         { id: 'days', metrics: ADDITIVE, bucket: 'day' },
         { id: 'vTotal', metrics: ['visitors'] },
-        { id: 'vDays', metrics: ['visitors'], bucket: 'day' },
+        { id: 'vWeeks', metrics: ['visitors'], bucket: 'week' },
+        { id: 'vPaths', metrics: ['visitors'], dim: 'path' },
       ]);
       const total = resultOf(response, 'total').rows[0];
       const days = resultOf(response, 'days').rows;
@@ -374,18 +382,20 @@ describe('replay corpus invariants', () => {
 
       const label = `${scope.label} visitors`;
       const overall = num(resultOf(response, 'vTotal').rows[0], 'visitors', label);
-      const buckets = resultOf(response, 'vDays').rows.map((row) => num(row, 'visitors', label));
-      const summed = buckets.reduce((sum, value) => sum + value, 0);
-      expect(overall, `${label} total <= sum of days`).toBeLessThanOrEqual(summed);
-      for (const bucket of buckets) {
-        expect(overall, `${label} total >= any single day`).toBeGreaterThanOrEqual(bucket);
+      for (const id of ['vWeeks', 'vPaths']) {
+        const groups = resultOf(response, id).rows.map((row) => num(row, 'visitors', label));
+        const summed = groups.reduce((sum, value) => sum + value, 0);
+        expect(overall, `${label} ${id} total <= sum of groups`).toBeLessThanOrEqual(summed);
+        for (const group of groups) {
+          expect(overall, `${label} ${id} total >= any single group`).toBeGreaterThanOrEqual(group);
+        }
+        if (overall < summed) sawReturningVisitor = true;
       }
-      if (overall < summed) sawReturningVisitor = true;
     }
-    // Someone in the corpus came back on a second day. Without that the `<=`
-    // above would be an equality everywhere and would not distinguish a distinct
-    // count from an additive one at all.
-    expect(sawReturningVisitor, 'no visitor spans two days — the distinct bound is vacuous').toBe(
+    // Someone in the corpus came back in a second week, or read a second page.
+    // Without that the `<=` above would be an equality everywhere and would not
+    // distinguish a distinct count from an additive one at all.
+    expect(sawReturningVisitor, 'no visitor spans two groups — the distinct bound is vacuous').toBe(
       true,
     );
   });
@@ -597,7 +607,72 @@ describe('replay corpus invariants', () => {
     // actually testing that the breakdown keeps it.
     expect(sawNullGroup, 'no NULL group in any breakdown — conservation proves less').toBe(true);
   });
+
+  it('10. a range of visitors is exactly the sum of its local days', () => {
+    /**
+     * The alignment invariant. `visitor_id` is minted under a salt that rotates
+     * at SITE-LOCAL midnight (docs/03), the same boundary `local_date` is
+     * bucketed on, so every id belongs to exactly one of the days a dashboard
+     * draws — and the range total and the day-by-day breakdown of the same
+     * distinct count have to agree to the visitor.
+     *
+     * This is the strongest available statement that the boundary really moved.
+     * A `<=` bound holds under any rotation whatsoever, so it could not tell an
+     * aligned boundary from a misaligned one; equality can only hold if no id
+     * ever appears under two dates. Both the engine's answer and a plain SQL
+     * count are checked, because a compiler that grouped on something other than
+     * `local_date` would satisfy one and not the other.
+     *
+     * (Sites that opt into `uid` hashing get a stable per-site salt and are the
+     * documented exception — their ids deliberately span days. No corpus site
+     * opts in, and the KPI's approximation mark exists for that case.)
+     */
+    for (const scope of SCOPES) {
+      const label = `${scope.label} visitors`;
+      const response = ask(scope, [
+        { id: 'total', metrics: ['visitors'] },
+        { id: 'days', metrics: ['visitors'], bucket: 'day' },
+      ]);
+      const overall = num(resultOf(response, 'total').rows[0], 'visitors', label);
+      const summed = sumOf(resultOf(response, 'days').rows, 'visitors', label);
+      expect(overall, `${label} total = sum of local days`).toBe(summed);
+      expect(overall, `${label} engine agrees with the table`).toBe(actingVisitors(scope));
+    }
+
+    // Anti-vacuity, and the sharpest form of it available: the SAME corpus is NOT
+    // additive over UTC days. Visitors really do straddle midnight here — the
+    // equality above is the boundary being aligned, not a corpus where nobody
+    // spans a day. `local_date BETWEEN` scopes both sums to the same rows, so the
+    // only thing that differs is which midnight groups them.
+    const total = actingVisitors(WHOLE_CORPUS);
+    expect(total, 'the corpus has visitors, or none of this proves anything').toBeGreaterThan(0);
+    expect(
+      sumOverUtcDays(WHOLE_CORPUS),
+      'UTC days over-count — the boundary matters',
+    ).toBeGreaterThan(total);
+  });
 });
+
+/** The full window across every site — where the day-straddling traffic is guaranteed. */
+const WHOLE_CORPUS: Scope = { ...WINDOWS[3], label: 'all sites / full', site: 'all', whole: true };
+
+/**
+ * The same distinct count as `actingVisitors`, grouped on the UTC date of `ts`
+ * instead of the site-local date, and summed. Over the same rows: only the
+ * grouping changes.
+ */
+function sumOverUtcDays(scope: Scope): number {
+  const sql = `SELECT COALESCE(SUM(n), 0) FROM (
+       SELECT COUNT(DISTINCT visitor_id) AS n FROM events
+        WHERE type != 'ping' AND local_date BETWEEN ? AND ?${scope.site === 'all' ? '' : ' AND site_id = ?'}
+        GROUP BY strftime('%Y-%m-%d', ts / 1000, 'unixepoch'))`;
+  const params: (string | number)[] = [scope.from, scope.to];
+  if (scope.site !== 'all') params.push(scope.site);
+  return db
+    .prepare(sql)
+    .pluck()
+    .get(...params) as number;
+}
 
 /**
  * The visitor population, counted straight from the rows with no compiler in the

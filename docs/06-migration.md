@@ -150,7 +150,7 @@ metric *means* has to be logged here or the comparison silently drifts.
     counterpart being tracked.
   - The card also gained the `~` approximation mark docs/03 always claimed the
     UI carried: a distinct count is exact within a day and an approximation over
-    a longer range, because the id salt rotates at 00:00 UTC.
+    a longer range, because the id salt rotates daily.
 - **2026-07-29 — `avg_engagement` became a server metric.** The value is
   **unchanged to the last bit** — it is the same `engaged_ms / engaged_sessions`
   the client was computing, verified identical on the corpus across a day, a
@@ -164,6 +164,49 @@ metric *means* has to be logged here or the comparison silently drifts.
   `SUM(CASE WHEN type = 'x' THEN 1 ELSE 0 END)` as the population vocabulary
   took over; both are the same value in SQLite, and the replay oracles and the
   invariant sweep agree before and after.
+- **2026-07-30 — the visitor-id salt rotates at site-local midnight**, not UTC
+  midnight (docs/03 § Identity). Visitor counts shift *slightly*, and one visit
+  in a hundred that used to be split at 20:00 local is now one visit.
+  - **This is forward-only.** Rows already written keep the ids they were minted
+    with; nothing re-hashes history. There is therefore **one transition day per
+    site on which both boundaries appear**: hits from before the deploy carry
+    ids minted under a UTC day, hits after carry ids minted under the local day,
+    and a reader active on both sides of the deploy counts twice on that day.
+    Expect exactly one day of slightly inflated visitors per site, then nothing.
+    Do not reconcile that day against Matomo.
+  - On the replay corpus, six sites, 90 days — **before → after**: visitors over
+    a single day 171 → 170, 7 days 923 → 921, 30 days 4063 → 4054, the whole
+    corpus 12787 → 12787 (unchanged in aggregate; per site it moves both ways:
+    site 5 1261 → 1272, site 6 1015 → 1006, site 3 1660 → 1660 exactly, because
+    site 3 *is* on UTC and has no boundary to move).
+  - The reason to move it, in one line: the sum of a range's per-local-day
+    visitor counts used to exceed the range's own count — 934 vs 923 over 7
+    days, 4120 vs 4063 over 30, **13009 vs 12787 over the whole corpus (1.7 %)**
+    — and now equals it exactly, in every window and for every site. Invariant
+    10 in `test/replay/invariants.test.ts` asserts that equality and, as its
+    anti-vacuity check, that the same corpus is still *not* additive over UTC
+    days.
+  - Sessionization moves with it, by about a tenth of a percent: visits
+    13813 → 13799 (−14, −0.10 %), because a reader who stepped away at 19:50
+    local and came back at 20:20 used to become a different visitor mid-evening
+    and start a second visit. For the same reason **256 fewer heartbeats are
+    dropped as orphans** (stored rows 137487 → 137743, +0.19 %; dropped pings
+    4095 → 3839). Bounces 2181 → 2180; engaged sessions 11482 → 11469.
+  - Nothing in the Matomo reconciliation is defined away: the daily per-site
+    visitor totals it compares are single-day figures, and a single day still
+    counts every id exactly once. They shift by well under a percent because the
+    day they cover now starts and ends where the site's clock says it does —
+    which is the boundary Matomo uses too.
+- **2026-07-30 — schema v4**: `ix_events_site_date (site_id, local_date, type)`
+  was replaced by `ix_events_site_date_visitor (…, visitor_id)`, which covers
+  the distinct-visitor count whole. No metric changes; the all-sites 90-day
+  dashboard batch drops from ~279 ms to ~208 ms on the bench corpus and the
+  database grows ~10 B/event (287 → 297).
+  - **Rollback is no longer one command.** `migrate` refuses a database newer
+    than the build knows, so the pre-v4 image will not start against a v4 file.
+    Rolling back means restoring the pre-deploy database copy, or dropping the
+    new index, re-creating the old one and setting `PRAGMA user_version = 3` by
+    hand. Take the copy before deploying — see docs/09 § Bake log.
 
 ## Cutover sequence
 

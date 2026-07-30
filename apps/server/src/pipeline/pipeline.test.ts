@@ -226,10 +226,28 @@ describe('a reader who comes back to an open tab', () => {
     );
   });
 
-  it('cannot reach across the 00:00 UTC visitor-id rotation (docs/03)', () => {
-    const beforeMidnight = Math.floor(T0 / DAY_MS) * DAY_MS + DAY_MS - 5 * 60_000;
-    pipeline.sink([hit()], ctx({ receivedAt: beforeMidnight }));
-    const left = read(beforeMidnight, 60_000);
+  /** 19:50 EDT, ten minutes before the UTC day turns over — mid-evening locally. */
+  const BEFORE_UTC_MIDNIGHT = Math.floor(T0 / DAY_MS) * DAY_MS + DAY_MS - 10 * 60_000;
+  /** 23:50 EDT: the site's own midnight is at 04:00 UTC, four hours past the UTC one. */
+  const BEFORE_LOCAL_MIDNIGHT = Date.UTC(2026, 6, 28, 4) - 10 * 60_000;
+
+  it('reaches across 00:00 UTC, which is mid-evening for this site (docs/03)', () => {
+    // The reader steps away at 19:50 local and comes back at 20:20. Nothing about
+    // that is a new day, and since the salt turns over at site-local midnight the
+    // same person is still the same visitor: one visit, revived.
+    pipeline.sink([hit()], ctx({ receivedAt: BEFORE_UTC_MIDNIGHT }));
+    const left = read(BEFORE_UTC_MIDNIGHT, 60_000);
+    pipeline.flush();
+
+    read(left + 30 * 60_000, 60_000);
+    pipeline.flush();
+    expect(db.prepare('SELECT COUNT(*) FROM sessions').pluck().get()).toBe(1);
+    expect(db.prepare('SELECT COUNT(*) FROM events').pluck().get()).toBe(9); // 1 + 4 + 4 beats
+  });
+
+  it('cannot reach across the site-local visitor-id rotation (docs/03)', () => {
+    pipeline.sink([hit()], ctx({ receivedAt: BEFORE_LOCAL_MIDNIGHT }));
+    const left = read(BEFORE_LOCAL_MIDNIGHT, 60_000);
     pipeline.flush();
 
     // 40 min later is well inside the revival window, but on the other side of the

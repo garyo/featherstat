@@ -1,5 +1,4 @@
 import {
-  DAY_MS,
   type Hit,
   PING_CLAMP_MS,
   type QueryRequest,
@@ -17,7 +16,7 @@ import { openReplayDb } from './harness.ts';
  * Journeys acceptance (M2, docs/08): sequence queries over the 90-day replay
  * corpus must agree with an oracle that never touches SQL — it re-sessionizes
  * the generator's raw hit stream in plain JS (docs/03 rules: identity with the
- * UTC-midnight rotation, 30-min idle timeout, clamped engagement) and derives
+ * site-local midnight rotation, 30-min idle timeout, clamped engagement) and derives
  * transitions/flows by grouping each session's ordered non-ping steps.
  */
 
@@ -59,9 +58,9 @@ function sessionize(source: Corpus): OracleSession[] {
   const all: OracleSession[] = [];
   for (const { hit, ctx } of source.hits) {
     if (BOT_AGENT_SET.has(ctx.userAgent)) continue;
-    // Identity rotates at UTC midnight (docs/03), so the UTC day is part of the key.
-    const day = Math.floor(ctx.receivedAt / DAY_MS);
-    const identity = `${hit.siteId}|${day}|${hit.visitorId ?? `${ctx.ip}\n${ctx.userAgent}`}`;
+    // Identity rotates at site-local midnight (docs/03), so the local date is part of the key.
+    const localDate = localStamp(zones.get(hit.siteId) ?? 'UTC', ctx.receivedAt).date;
+    const identity = `${hit.siteId}|${localDate}|${hit.visitorId ?? `${ctx.ip}\n${ctx.userAgent}`}`;
     // A ping continues a visit, never starts one (docs/03): it reaches back to the
     // returning-reader window, and past that it is dropped rather than stored.
     const prior = open.get(identity);
@@ -72,7 +71,7 @@ function sessionize(source: Corpus): OracleSession[] {
     if (session === undefined) {
       session = {
         siteId: hit.siteId,
-        localDate: localStamp(zones.get(hit.siteId) ?? 'UTC', ctx.receivedAt).date,
+        localDate,
         lastSeen: ctx.receivedAt,
         engagedMs: 0,
         steps: [],

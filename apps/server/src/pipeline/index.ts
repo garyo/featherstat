@@ -56,7 +56,7 @@ export function createPipeline(db: Db, options: PipelineOptions = {}): Pipeline 
       const sessionized = sessionizer.process({
         site,
         hit,
-        visitorId: identity.visitorId(hit, ctx),
+        visitorId: identity.visitorId(hit, ctx, site.timezone),
         now: ctx.receivedAt,
         device,
         geo: geoResult,

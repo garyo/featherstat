@@ -3,7 +3,9 @@
  * docs/04 § 4): a whimsical two-word name plus a display color, derived from a
  * sha256 digest of (UTC day ∥ visitor id) — computed server-side, so this module
  * stays pure and browser-safe. The digest is one-way and the visitor id never
- * appears on the wire; the alias resets at 00:00 UTC along with the day salt.
+ * appears on the wire; the alias resets at 00:00 UTC. That is deliberately NOT
+ * the day salt's boundary, which is site-local: an alias labels a live feed the
+ * reader is watching now, so which day it belongs to is a question nobody asks.
  *
  * Both lists hold 96 entries — four per initial letter, in the same letter order —
  * so any adjective and animal picked from the same letter group alliterate.

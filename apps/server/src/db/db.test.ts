@@ -57,11 +57,12 @@ describe('migrate', () => {
       'share_tokens',
       'sites',
     ]);
-    expect(schemaVersion(db)).toBe(3);
+    expect(schemaVersion(db)).toBe(4);
     expect(db.prepare('SELECT version, name FROM schema_migrations').all()).toEqual([
       { version: 1, name: 'init' },
       { version: 2, name: 'admin-sessions' },
       { version: 3, name: 'dashboards' },
+      { version: 4, name: 'visitor-covering-index' },
     ]);
     db.close();
   });
@@ -77,7 +78,7 @@ describe('migrate', () => {
     expect(indexes).toEqual([
       'ix_admin_sessions_expiry',
       'ix_events_session',
-      'ix_events_site_date',
+      'ix_events_site_date_visitor',
       'ix_events_site_ts',
       'ix_sessions_open',
       'ix_sessions_site_date',
@@ -89,7 +90,7 @@ describe('migrate', () => {
   it('is a no-op when re-run on an already-migrated database', () => {
     const db = openDb(':memory:');
     const applied = db.prepare('SELECT applied_at FROM schema_migrations').pluck().all();
-    expect(migrate(db)).toBe(3);
+    expect(migrate(db)).toBe(4);
     expect(db.prepare('SELECT applied_at FROM schema_migrations').pluck().all()).toEqual(applied);
     db.close();
   });
@@ -118,12 +119,13 @@ describe('migrate', () => {
         { version: 1, name: 'init', sql: 'SELECT 1' },
         { version: 2, name: 'admin-sessions', sql: 'SELECT 1' },
         { version: 3, name: 'dashboards', sql: 'SELECT 1' },
-        { version: 4, name: 'later', sql: 'CREATE TABLE later (a INTEGER)' },
+        { version: 4, name: 'visitor-covering-index', sql: 'SELECT 1' },
+        { version: 5, name: 'later', sql: 'CREATE TABLE later (a INTEGER)' },
       ]),
-    ).toBe(4);
+    ).toBe(5);
     expect(tableNames(db)).toContain('later');
     expect(db.prepare('SELECT name FROM schema_migrations ORDER BY version').pluck().all()).toEqual(
-      ['init', 'admin-sessions', 'dashboards', 'later'],
+      ['init', 'admin-sessions', 'dashboards', 'visitor-covering-index', 'later'],
     );
     db.close();
   });
@@ -135,11 +137,12 @@ describe('migrate', () => {
         { version: 1, name: 'init', sql: 'SELECT 1' },
         { version: 2, name: 'admin-sessions', sql: 'SELECT 1' },
         { version: 3, name: 'dashboards', sql: 'SELECT 1' },
-        { version: 4, name: 'broken', sql: 'CREATE TABLE half (a INTEGER); NOT SQL;' },
+        { version: 4, name: 'visitor-covering-index', sql: 'SELECT 1' },
+        { version: 5, name: 'broken', sql: 'CREATE TABLE half (a INTEGER); NOT SQL;' },
       ]),
     ).toThrow();
     expect(tableNames(db)).not.toContain('half');
-    expect(schemaVersion(db)).toBe(3);
+    expect(schemaVersion(db)).toBe(4);
     db.close();
   });
 });
@@ -167,8 +170,8 @@ describe('openDb on a file', () => {
     first.close();
 
     const second = openDb(path);
-    expect(schemaVersion(second)).toBe(3);
-    expect(second.prepare('SELECT count(*) FROM schema_migrations').pluck().get()).toBe(3);
+    expect(schemaVersion(second)).toBe(4);
+    expect(second.prepare('SELECT count(*) FROM schema_migrations').pluck().get()).toBe(4);
     expect(getSite(second, site.id)).toEqual(site);
     second.close();
   });

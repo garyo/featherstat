@@ -52,8 +52,12 @@ CREATE TABLE events (
 );
 
 CREATE INDEX ix_events_site_ts   ON events (site_id, ts);
-CREATE INDEX ix_events_site_date ON events (site_id, local_date, type);
 CREATE INDEX ix_events_session   ON events (session_id);
+-- Covers `visitors` = COUNT(DISTINCT visitor_id) whole: every column of the
+-- query is in the index, so the count never touches the table. It replaced the
+-- narrower (site_id, local_date, type) — same prefix, same seeks, so keeping
+-- both bought no plan and cost every insert a second B-tree.
+CREATE INDEX ix_events_site_date_visitor ON events (site_id, local_date, type, visitor_id);
 
 CREATE TABLE sessions (
   id            BLOB PRIMARY KEY,
@@ -89,15 +93,59 @@ Migrations: sequential SQL files applied at boot, tracked in
 visitor_id = first 8 bytes of SHA-256(day_salt ∥ site_id ∥ ip ∥ user_agent)
 ```
 
-- `day_salt` is random, held in the `settings` table, rotated at 00:00 UTC;
-  the previous day's salt is deleted. After rotation, yesterday's hashes are
-  unlinkable to today's — this is the Plausible model, and it is why "unique
-  visitors" is exact within a day and approximate across ranges. Two things
-  carry that consequence rather than leaving it to be remembered: the metric
-  declares `aggregate: 'distinct'`, so nothing may add its buckets into a range
-  total (see § Derived metrics below), and every figure drawn from a distinct
-  measure wears the approximation mark — KPI tile and site card alike, from the
+- `day_salt` is random, held in the `settings` table under
+  `salt:<IANA zone>:<YYYY-MM-DD>`, and rotated at **00:00 site-local** — the
+  same boundary `local_date` is computed on. Every strictly older salt for that
+  zone is deleted. After rotation, yesterday's hashes are unlinkable to today's
+  — this is the Plausible model, and it is why "unique visitors" is exact within
+  a day and approximate across longer ranges. Two things carry that consequence
+  rather than leaving it to be remembered: the metric declares
+  `aggregate: 'distinct'`, so nothing may add its buckets into a range total
+  (see § Derived metrics below), and every figure drawn from a distinct measure
+  wears the approximation mark — KPI tile and site card alike, from the
   declaration and not from the metric's name (`widgets/ApproxMark.svelte`).
+
+### Why the salt is keyed by timezone, and what that buys
+
+Keyed by **zone**, not by site: `site_id` is already inside the hash, so two
+sites sharing a zone can share one salt row without their visitors colliding,
+and a single-timezone install keeps exactly one salt per day. A per-site salt
+would be one more row per site for no property a query can see.
+
+Aligning the rotation to the boundary the dashboards already bucket on is worth
+more than tidiness. A UTC-keyed salt made a visitor id belong to a UTC day while
+every row it landed on was stamped with a *local* day, and four things followed:
+
+- **Two screens disagreed.** A range-wide distinct visitor count and the sum of
+  its per-local-day counts differed — 1.9 % on the replay corpus. With the
+  boundary aligned every id belongs to exactly one `local_date`, so the range
+  total **equals** the sum of its day buckets, exactly. That is asserted as
+  invariant 10 in `test/replay/invariants.test.ts`, together with the fact that
+  the same corpus is *not* additive over UTC days — the equality is the
+  alignment, not a corpus in which nobody stays up past midnight.
+- **Daily rollups can be exact** for the buckets we display, if they are ever
+  needed (§ Size & retention). Under a UTC-keyed salt a rolled-up day could only
+  ever approximate its own visitor count.
+- **Sessions no longer split mid-evening.** The boundary was 20:00 local for a
+  US-Eastern site, inside a day the stats report as one day.
+- **Returning-reader revival** (`SESSION_REVIVAL_MS`) is bounded by local
+  midnight rather than by an arbitrary hour of the local evening.
+
+Rotation is **forward-only** — `if (date > current)` on the ISO dates
+themselves. A backward clock step (NTP) therefore cannot re-mint the current
+salt and re-key every visitor mid-day. Timezones are the interesting case:
+US transitions are at 02:00, so local midnight always exists there, but some
+zones move their clocks *at* midnight. `America/Santiago` skips 00:00–00:59 on
+its spring transition — the date still advances, so the salt rotates exactly
+once. `America/Havana` repeats the 00:00 hour on its autumn one — the date does
+not go backwards (a repeat is not a step back to the previous day), so the
+doubled hour keeps one salt and the visitor keeps one id. Both are tested
+against the real tz database in `pipeline/identity.test.ts`.
+
+This is **forward-only for history too**: rows already written keep the ids they
+were minted with, and nothing re-hashes them. There is therefore one transition
+day per install on which both boundaries appear in the data — see
+[06](06-migration.md) § Changes made during the bake.
 - The IP is consumed by the hash and the GeoIP lookup, then discarded. No
   masked-IP column, no debug switch that quietly stores it.
 - Matomo's `_id` parameter (16-hex visitor id), when present, replaces the
@@ -125,7 +173,9 @@ alias = word-lists[ sha256(UTC day ∥ visitor_id) ]   →  {name, color}
   concurrent visitors) are rare and accepted — two colliding visitors simply
   merge in the live view.
 - The derivation is one-way and includes the **UTC day**, so aliases reset at
-  00:00 UTC exactly like the day salt. The day input is load-bearing for
+  00:00 UTC. That is deliberately not the day salt's boundary (site-local): an
+  alias labels a live feed somebody is watching right now, so which day it
+  belongs to is a question nobody asks of it. The day input is load-bearing for
   `_id`- and `uid`-derived visitor ids, which do not rotate on their own.
 - Aliases exist **only on the SSE wire**: never stored, never logged, and the
   line holds — there is **no visitor dimension in the query vocabulary**.
@@ -184,13 +234,14 @@ A ping is a **continuation signal**, so:
   could not be attributed to a page anyway. Ingest's only other drop is bots.
 
 **Limitation, stated rather than papered over**: `visitor_id` rotates at 00:00
-UTC (see Identity), so revival can never cross that boundary — its effective
-reach is `min(4 h, time since the last UTC midnight)`. For a US-Eastern site
-that boundary falls at 20:00 local, mid-evening: a reader who steps away at
-19:50 and returns at 20:20 is a different visitor by then, and their heartbeats
-are dropped rather than joined to the earlier visit. Sites that opt into `uid`
-hashing get a stable per-site salt, so revival works across the whole window
-for them.
+site-local (see Identity), so revival can never cross that boundary — its
+effective reach is `min(4 h, time since the site's last local midnight)`. A
+reader who steps away at 23:50 and returns at 00:20 is a different visitor by
+then, and their heartbeats are dropped rather than joined to the earlier visit.
+That is a boundary a visit legitimately ends at, which is the point of moving
+it: it used to fall at 20:00 local for a US-Eastern site, mid-evening and inside
+a day the stats report as one day. Sites that opt into `uid` hashing get a
+stable per-site salt, so revival works across the whole window for them.
 
 A revived visit can stop being a bounce, and that is correct: bounce is
 engagement-aware (below), and a focus-gated heartbeat is evidence of attention.
@@ -335,4 +386,6 @@ retention: keep raw events forever.
 Escape hatches, deliberately deferred (not in v1): daily rollup tables when a
 deployment approaches ~10 M raw events, and age-based pruning of raw rows once
 rollups exist. The query engine's vocabulary (metric × dimension × range) is
-designed so rollups can slot in behind it without any API change.
+designed so rollups can slot in behind it without any API change — and a
+rolled-up day's visitor count would now be *exact* for the day it covers, since
+the salt turns over on the same boundary the rollup would key on (§ Identity).
