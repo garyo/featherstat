@@ -1,3 +1,4 @@
+import { RangeSchema } from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
 import {
   applyViewState,
@@ -91,8 +92,13 @@ describe('view state serialization', () => {
 
 describe('range presets', () => {
   it('offers every preset the query API accepts, in display order', () => {
-    expect(RANGE_PRESETS).toEqual(['today', '7d', '30d', '90d', 'mtd']);
-    for (const preset of RANGE_PRESETS) expect(RANGE_LABELS[preset]).toBeTruthy();
+    expect(RANGE_PRESETS).toEqual(['today', '24h', '7d', '30d', '90d', 'mtd']);
+    for (const preset of RANGE_PRESETS) {
+      expect(RANGE_LABELS[preset]).toBeTruthy();
+      // The claim in the name, checked: a label the query API would 400 on is a
+      // picker button that blanks the dashboard.
+      expect(RangeSchema.safeParse({ preset }).success).toBe(true);
+    }
   });
 });
 

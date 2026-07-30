@@ -17,7 +17,13 @@ import {
   stmt,
   withReadSnapshot,
 } from '../db/index.ts';
-import { type CompiledQuery, compileMetricQuery, metricEmpty, queryMeasures } from './compiler.ts';
+import {
+  boundsParams,
+  type CompiledQuery,
+  compileMetricQuery,
+  metricEmpty,
+  queryMeasures,
+} from './compiler.ts';
 import { type CompiledDwell, compileDwellQuery, DWELL_MEASURES } from './dwell.ts';
 import { bucketAxis, compareWindow, resolveWindow } from './ranges.ts';
 import { type CompiledSequence, compileSequenceQuery } from './sequences.ts';
@@ -78,8 +84,8 @@ export function executeQueryRequest(
         const filters = request.filters ?? [];
         const compiled =
           query.kind === 'dwell'
-            ? compileDwellQuery(query, filters, windows.length)
-            : compileSequenceQuery(query, filters, windows.length);
+            ? compileDwellQuery(query, filters, windows)
+            : compileSequenceQuery(query, filters, windows);
         if (isQueryError(compiled)) {
           results[query.id] = compiled;
           continue;
@@ -90,7 +96,7 @@ export function executeQueryRequest(
         results[query.id] = entry;
         continue;
       }
-      const compiled = compileMetricQuery(query, request.filters ?? [], windows.length);
+      const compiled = compileMetricQuery(query, request.filters ?? [], windows);
       if (isQueryError(compiled)) {
         results[query.id] = compiled;
         continue;
@@ -156,12 +162,6 @@ function runScoped(
     for (const row of rows) row.steps = JSON.parse(row.steps as string) as string[];
   }
   return rows;
-}
-
-function boundsParams(windows: readonly SiteWindow[]): (string | number)[] {
-  const bounds: (string | number)[] = [];
-  for (const window of windows) bounds.push(window.siteId, window.from, window.to);
-  return bounds;
 }
 
 function runCompiled(db: Db, compiled: CompiledQuery, windows: readonly SiteWindow[]): ResultRow[] {

@@ -26,6 +26,9 @@ declare global {
  *
  * Deliberately no SPA auto-tracking — the blog re-pushes itself on
  * `astro:page-load` and a history hook here would double-count (docs/04 § 1).
+ * An app that pushes `trackPageView` twice for one navigation is caught in
+ * `core.ts` instead: this guard is about installing twice, that one about
+ * announcing twice.
  */
 export function startShim(): () => void {
   // Second <script src="matomo.js"> on one page: the first shim keeps working
@@ -128,6 +131,7 @@ function pageInfo(): PageInfo {
     url: location.href,
     title: document.title,
     referrer: document.referrer,
+    at: Date.now(),
     screen: `${screen.width}x${screen.height}`,
     lang: navigator.language,
   };

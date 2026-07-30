@@ -2,7 +2,7 @@ import { type Filter, MAX_QUERIES_PER_BATCH, type QueryResponse } from '@feather
 import { describe, expect, it } from 'vitest';
 import { allSites } from '../dashboards/all-sites.ts';
 import { siteOverview } from '../dashboards/site-overview.ts';
-import { collectBatch, hourlyWhenToday, widgetData, withoutBlockedMetrics } from './batch.ts';
+import { collectBatch, hourlyWhenIntraday, widgetData, withoutBlockedMetrics } from './batch.ts';
 
 describe('collectBatch', () => {
   it('collects every widget query of the default site dashboard into one batch', () => {
@@ -143,19 +143,23 @@ describe('widgetData', () => {
   });
 });
 
-describe('hourlyWhenToday', () => {
+describe('hourlyWhenIntraday', () => {
   const { queries } = collectBatch(siteOverview);
 
-  it('rewrites day buckets to hours only for the today preset', () => {
-    const hourly = hourlyWhenToday(queries, 'today');
-    const buckets = new Map(hourly.map((q) => [q.id, 'kind' in q ? undefined : q.bucket]));
-    expect(buckets.get('series')).toBe('hour');
-    expect(buckets.get('kpis')).toBeUndefined(); // totals stay unbucketed
-    expect(buckets.get('pages')).toBeUndefined();
+  it('rewrites day buckets to hours for the ranges a day bucket cannot describe', () => {
+    // `today` is one local day; `24h` is two partial ones — a day bucket draws a
+    // point or a pair for either.
+    for (const preset of ['today', '24h'] as const) {
+      const hourly = hourlyWhenIntraday(queries, preset);
+      const buckets = new Map(hourly.map((q) => [q.id, 'kind' in q ? undefined : q.bucket]));
+      expect(buckets.get('series')).toBe('hour');
+      expect(buckets.get('kpis')).toBeUndefined(); // totals stay unbucketed
+      expect(buckets.get('pages')).toBeUndefined();
+    }
   });
 
   it('leaves the KPI spark companion day-bucketed — its session metrics cannot take hours', () => {
-    const hourly = hourlyWhenToday(queries, 'today');
+    const hourly = hourlyWhenIntraday(queries, 'today');
     const spark = hourly.find((q) => q.id === 'kpis~spark');
     expect(spark).toBeDefined();
     if (spark === undefined || 'kind' in spark) throw new Error('metric query expected');
@@ -163,7 +167,7 @@ describe('hourlyWhenToday', () => {
   });
 
   it('leaves every other preset untouched, without mutating the input', () => {
-    const same = hourlyWhenToday(queries, '30d');
+    const same = hourlyWhenIntraday(queries, '30d');
     expect(same).toEqual(queries);
     expect(same).not.toBe(queries);
   });

@@ -8,12 +8,18 @@ import {
   type Range,
   type SiteAxis,
   type SiteWindow,
+  startOfLocalHour,
 } from '@featherstat/shared';
 
 /**
  * Range presets resolve to inclusive `local_date` bounds in one site's timezone
  * (docs/03 § Timezones: the tz math happened at ingest, so date windows are plain
  * indexed string comparisons). `site: "all"` resolves a window per site.
+ *
+ * `24h` is the exception and the reason `DateWindow` carries instants at all: a
+ * rolling day starts and ends INSIDE a local date, so dates alone cannot express
+ * it (docs/04 § 3). It rolls by the hour, never by the millisecond — a moving
+ * edge would mint a new ETag on every request and revalidate nothing.
  *
  * This module also enumerates a window's bucket keys, because the server is the
  * only party that knows the timezone the range resolved in AND the granularity
@@ -23,31 +29,71 @@ import {
 export interface DateWindow {
   from: string;
   to: string;
+  /** See `SiteWindow`: a half-open UTC-ms refinement, only for a rolling window. */
+  fromTs?: number;
+  toTs?: number;
 }
 
-/** Days a rolling preset covers, counting today. */
+/** Days a preset covers, counting today. */
 const PRESET_DAYS = { '7d': 7, '30d': 30, '90d': 90 } as const;
+
+const HOUR_MS = 3_600_000;
+
+/** Hour buckets `24h` covers, counting the one in progress. */
+const ROLLING_HOURS = 24;
+
+/** The tz database's widest offsets are ±14 h, so a local date starts within this of UTC midnight. */
+const OFFSET_SLACK_MS = 15 * HOUR_MS;
+
+/** Upper bound on hour keys per local date — a day is 23–25 hours across a DST edge. */
+const MAX_HOURS_PER_DAY = 25;
 
 export function resolveWindow(range: Range, timezone: string, now: number): DateWindow {
   if ('from' in range) return { from: range.from, to: range.to };
+  if (range.preset === '24h') {
+    // The 24 hour buckets ending with the one in progress. Its newest bucket is
+    // partial exactly as `today`'s is — `clip` says so — but its OLDEST edge
+    // moves too, which is the whole point: the preceding 24 hours is the same
+    // shape of window, so a comparison against it is like-for-like without any
+    // clipping. `today` at 09:00 compares 9 hours against a full 24 by design.
+    const toTs = startOfLocalHour(timezone, now) + HOUR_MS;
+    return tsWindow(timezone, toTs - ROLLING_HOURS * HOUR_MS, toTs);
+  }
   const today = localClock(timezone, now).date;
   if (range.preset === 'today') return { from: today, to: today };
   if (range.preset === 'mtd') return { from: `${today.slice(0, 8)}01`, to: today };
   return { from: addDays(today, 1 - PRESET_DAYS[range.preset]), to: today };
 }
 
-/** `previous` = the same-length window immediately before; `year` = the same window one year back. */
-export function compareWindow(window: DateWindow, mode: 'previous' | 'year'): DateWindow {
+/**
+ * `previous` = the same-length window immediately before; `year` = the same
+ * window one year back.
+ *
+ * A rolling window shifts by its own exact duration, so the previous 24 hours
+ * line up hour for hour with the current 24 — including across a DST edge, where
+ * shifting whole local dates instead would land an hour out.
+ */
+export function compareWindow(window: SiteWindow, mode: 'previous' | 'year'): DateWindow {
+  const { fromTs, toTs } = window;
+  if (fromTs !== undefined && toTs !== undefined) {
+    const shift =
+      mode === 'year' ? parseIso(window.to) - parseIso(addYears(window.to, -1)) : toTs - fromTs;
+    return tsWindow(window.timezone, fromTs - shift, toTs - shift);
+  }
   if (mode === 'year') return { from: addYears(window.from, -1), to: addYears(window.to, -1) };
   const days = daysBetween(window.from, window.to) + 1;
   return { from: addDays(window.from, -days), to: addDays(window.from, -1) };
 }
 
-const HOUR_MS = 3_600_000;
-/** The tz database's widest offsets are ±14 h, so a local date starts within this of UTC midnight. */
-const OFFSET_SLACK_MS = 15 * HOUR_MS;
-/** Upper bound on hour keys per local date — a day is 23–25 hours across a DST edge. */
-const MAX_HOURS_PER_DAY = 25;
+/** A half-open UTC-ms span, wearing the inclusive local dates it touches. */
+function tsWindow(timezone: string, fromTs: number, toTs: number): DateWindow {
+  return {
+    from: localClock(timezone, fromTs).date,
+    to: localClock(timezone, toTs - 1).date,
+    fromTs,
+    toTs,
+  };
+}
 
 /**
  * Every bucket key inside one site's window, oldest first, plus where elapsed
@@ -77,12 +123,22 @@ export function bucketAxis(window: SiteWindow, bucket: Bucket, now: number): Sit
  * day yields 23 keys with no `02:00` (an hour that never happened, which SQL can
  * never return a row for) and a fall-back day yields 24 keys with one `01:00`
  * (both passes through it share the `local_hour` bucket, so they share the key).
+ *
+ * A rolling window walks its own instants instead of expanding whole dates: it
+ * starts mid-day and spans two of them, so `[from, to]` names the dates it
+ * touches and would enumerate roughly twice the hours it holds. Counting to 24
+ * would be wrong for the same reason it is wrong for a day — 24 hours of real
+ * time is 24 keys, except across a fall-back, where one key covers two of them.
  */
 function hourKeys(window: SiteWindow): string[] {
   const keys: string[] = [];
   const last = (): string | undefined => keys[keys.length - 1];
-  const until = parseIso(window.to) + DAY_MS + OFFSET_SLACK_MS;
-  for (let at = parseIso(window.from) - OFFSET_SLACK_MS; at <= until; at += HOUR_MS) {
+  const until = window.toTs ?? parseIso(window.to) + DAY_MS + OFFSET_SLACK_MS;
+  for (
+    let at = window.fromTs ?? parseIso(window.from) - OFFSET_SLACK_MS;
+    at < until;
+    at += HOUR_MS
+  ) {
     const clock = localClock(window.timezone, at);
     if (clock.date < window.from) continue;
     if (clock.date > window.to) break;

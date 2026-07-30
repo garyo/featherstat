@@ -169,17 +169,23 @@ export function dashboardBatchIssue(dashboard: Dashboard): string | undefined {
 export type RangePreset = Extract<Range, { preset: string }>['preset'];
 
 /**
- * `today` resolves to a single local day, where day buckets collapse to one
- * point — serve hours instead. Bucketing stays a widget concern for every
- * other preset.
+ * The presets a day bucket cannot describe: `today` is one local day and `24h`
+ * is two partial ones, so day buckets collapse to a point or a pair. Serve hours
+ * instead. Bucketing stays a widget concern for every other preset.
+ */
+const INTRADAY_PRESETS = new Set<RangePreset>(['today', '24h']);
+
+/**
+ * Day buckets rewritten to hours for the ranges that are shorter than the chart
+ * they would draw.
  *
  * KPI spark companions are exempt: they mix session-level metrics (engaged_ms,
  * bounce_rate) that the vocabulary cannot bucket by hour, so rewriting them
  * turns the whole companion into a compile error. They keep day buckets and
  * collapse to a single point, which KpiRow renders sparkless.
  */
-export function hourlyWhenToday(queries: readonly Query[], range: RangePreset): Query[] {
-  if (range !== 'today') return [...queries];
+export function hourlyWhenIntraday(queries: readonly Query[], range: RangePreset): Query[] {
+  if (!INTRADAY_PRESETS.has(range)) return [...queries];
   return queries.map((query) =>
     'kind' in query || query.bucket !== 'day' || isSparkCompanion(query.id)
       ? query

@@ -1,4 +1,9 @@
-import type { QueryRequest } from '@featherstat/shared';
+import {
+  localClock,
+  type QueryRequest,
+  type QueryResponse,
+  type SiteWindow,
+} from '@featherstat/shared';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { binId, event, resultOf, session } from '../../test/rows.ts';
 import {
@@ -465,11 +470,11 @@ describe('error entries', () => {
       ],
     });
     expect(resultOf(response, 'kpis').rows).toEqual([{ visitors: 4 }]);
-    // A's pages (/ → /docs → /docs) and D's event step (/ → cta · click).
+    // A's pages (/ → /docs → /docs, one move once the repeat collapses) and
+    // D's event step (/ → cta · click).
     expect(resultOf(response, 'sankey').rows).toEqual([
       { step: 1, from: '/', to: '/docs', sessions: 1 },
       { step: 1, from: '/', to: 'event: cta · click', sessions: 1 },
-      { step: 2, from: '/docs', to: '/docs', sessions: 1 },
     ]);
   });
 
@@ -666,5 +671,106 @@ describe('metrics that heartbeats must not distort', () => {
       ],
     });
     expect(resultOf(response, 'q').rows).toEqual([{ visits: 0, engaged_sessions: 0 }]);
+  });
+});
+
+/**
+ * The rolling `24h` preset is the only window whose edges fall INSIDE a local
+ * date, and the only reason the bounds CTE carries instants at all (compiler.ts).
+ * What that buys is exactly the case below: an hour whose local DATE is inside
+ * the window but whose clock time is not.
+ *
+ * It is also the preset whose comparison is like-for-like by construction — the
+ * preceding 24 hours is the same shape of window, so nothing is clipped.
+ */
+describe("the rolling '24h' window", () => {
+  const ZONE = 'America/New_York';
+  /** 2026-07-28 10:30 EDT → the window is [Jul 27 11:00, Jul 28 11:00). */
+  const AT = Date.parse('2026-07-28T14:30:00Z');
+  let rolling: Db;
+
+  /** A one-hit visit at a known instant, with the two local columns ingest would compute. */
+  function seedHit(visitor: number, at: number): void {
+    const clock = localClock(ZONE, at);
+    insertEvents(rolling, [
+      event({
+        ts: at,
+        local_date: clock.date,
+        local_hour: clock.hour,
+        visitor_id: binId(visitor),
+        session_id: binId(visitor),
+      }),
+    ]);
+    upsertSessions(rolling, [
+      session({
+        id: binId(visitor),
+        visitor_id: binId(visitor),
+        started_at: at,
+        last_seen_at: at,
+        local_date: clock.date,
+      }),
+    ]);
+  }
+
+  beforeAll(() => {
+    rolling = openDb(':memory:');
+    withWriteTransaction(rolling, () => {
+      createSite(rolling, { id: 1, name: 'one', domains: ['one.test'], timezone: ZONE });
+      seedHit(1, Date.parse('2026-07-28T13:30:00Z')); // 09:30 today — inside
+      seedHit(2, Date.parse('2026-07-27T16:30:00Z')); // 12:30 yesterday — inside
+      seedHit(3, Date.parse('2026-07-27T13:30:00Z')); // 09:30 yesterday — before the edge
+      seedHit(4, Date.parse('2026-07-26T20:00:00Z')); // 16:00 two days back — compare side
+    });
+  });
+
+  const ask = (compare?: 'previous'): QueryResponse =>
+    executeQueryRequest(
+      rolling,
+      {
+        site: 1,
+        range: { preset: '24h' },
+        ...(compare === undefined ? {} : { compare }),
+        queries: [
+          { id: 'kpis', metrics: ['visitors', 'visits'] },
+          { id: 'series', metrics: ['visitors'], bucket: 'hour' },
+        ],
+      },
+      { now: AT },
+    );
+
+  it('excludes an hour the date bound alone would have let in', () => {
+    // Visitor 3 hit at 09:30 yesterday: inside `from`..`to` as DATES, two hours
+    // before the window opens. A date-granular bound counts it; this must not.
+    expect(resultOf(ask(), 'kpis').rows).toEqual([{ visitors: 2, visits: 2 }]);
+  });
+
+  it('states an axis of 24 hour buckets crossing local midnight', () => {
+    const axis = resultOf(ask(), 'series').axis?.[0];
+    expect(axis?.keys).toHaveLength(24);
+    expect(axis?.keys[0]).toBe('2026-07-27 11:00');
+    expect(axis?.keys.at(-1)).toBe('2026-07-28 10:00');
+    expect(axis?.clip).toBe('2026-07-28 10:00');
+    // Rows stay sparse: the axis is the key list, never a promise of a row each.
+    expect(resultOf(ask(), 'series').rows).toEqual([
+      { bucket: '2026-07-27 12:00', visitors: 1 },
+      { bucket: '2026-07-28 09:00', visitors: 1 },
+    ]);
+  });
+
+  it('compares against the preceding 24 hours, hour for hour', () => {
+    // [Jul 26 11:00, Jul 27 11:00): visitor 4 at 16:00 on the 26th, and visitor
+    // 3 — the hit the current window is two hours too late for.
+    expect(resultOf(ask('previous'), 'kpis').compare).toEqual([{ visitors: 2, visits: 2 }]);
+  });
+
+  it('resolves the same window for a whole hour, then rolls', () => {
+    const windowAt = (at: number): SiteWindow | undefined =>
+      executeQueryRequest(
+        rolling,
+        { site: 1, range: { preset: '24h' }, queries: [{ id: 'k', metrics: ['visitors'] }] },
+        { now: at },
+      ).meta.windows[0];
+    expect(windowAt(AT + 29 * 60_000)).toEqual(windowAt(AT));
+    expect(windowAt(AT + 3_600_000)).not.toEqual(windowAt(AT));
   });
 });

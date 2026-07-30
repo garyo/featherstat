@@ -187,6 +187,9 @@ describe('GET /share/:token', () => {
   it('accepts only whitelisted range presets', async () => {
     const token = await mintShare(await login());
     expect((await app.request(`/share/${token}?range=7d`)).status).toBe(200);
+    // The rolling preset resolves a sub-day window here too, through this
+    // route's own copy of the ETag construction.
+    expect((await app.request(`/share/${token}?range=24h`)).status).toBe(200);
     expect((await app.request(`/share/${token}?range=yesterday`)).status).toBe(400);
     expect((await app.request(`/share/${token}?range=2023-01-01,2023-02-01`)).status).toBe(400);
   });

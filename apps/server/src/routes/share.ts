@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import {
   collectBatch,
   type Dashboard,
-  hourlyWhenToday,
+  hourlyWhenIntraday,
   type QueryRequest,
   type QueryResponse,
   RangeSchema,
@@ -24,6 +24,7 @@ import {
 } from '../db/index.ts';
 import { executeQueryRequest, resolveSiteWindows, UnknownSiteError } from '../query/executor.ts';
 import { parseDashboardId } from './dashboards.ts';
+import { windowTag } from './query.ts';
 import { clientIp } from './track.ts';
 
 /**
@@ -137,12 +138,12 @@ export function createShareRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
 
     // The SAME batch the in-app view would run (packages/shared): widget queries
     // plus their derived companions (sparklines, browsers, per-site pages), the
-    // same previous-period compare, the same hourly rewrite under `today`.
+    // same previous-period compare, the same hourly rewrite for the intraday presets.
     const request: QueryRequest = {
       site: layout.site,
       range: range.data,
       compare: 'previous',
-      queries: hourlyWhenToday(collectBatch(layout).queries, range.data.preset),
+      queries: hourlyWhenIntraday(collectBatch(layout).queries, range.data.preset),
     };
 
     const now = Date.now();
@@ -223,9 +224,8 @@ function etag(
   canonicalBody: string,
   windows: readonly SiteWindow[],
 ): string {
-  const resolved = windows.map((w) => `${w.siteId}:${w.timezone}:${w.from}:${w.to}`).join(',');
   const hash = createHash('sha256')
-    .update(`${version}|${schema}|${canonicalBody}|${resolved}`)
+    .update(`${version}|${schema}|${canonicalBody}|${windowTag(windows)}`)
     .digest('base64url');
   return `"${hash}"`;
 }

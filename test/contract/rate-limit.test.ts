@@ -41,7 +41,7 @@ const SUSTAINED_WINDOWS = 3;
 /** A deploy restarts the process; every open tab reconnects and re-queries at once. */
 const TABS_RETURNING = 12;
 
-const PRESETS: readonly RangePreset[] = ['today', '7d', '30d', '90d'];
+const PRESETS: readonly RangePreset[] = ['today', '24h', '7d', '30d', '90d'];
 
 let app: ReturnType<typeof createApp>;
 

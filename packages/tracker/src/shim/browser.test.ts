@@ -1,5 +1,7 @@
 // @vitest-environment happy-dom
+import { SESSION_TIMEOUT_MS } from '@featherstat/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { REPEAT_VIEW_MS } from '../repeat.ts';
 import { startShim } from './browser.ts';
 
 const TRACKER_URL = 'https://analytics.example.org/matomo.php';
@@ -77,7 +79,7 @@ describe('_paq wiring', () => {
     const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
     queue(snippet());
     stop = startShim();
-    window._paq?.push(['setUserId', 'u1'], ['setUserId', 'u2'], ['trackPageView']);
+    window._paq?.push(['setUserId', 'u1'], ['setUserId', 'u2'], ['trackEvent', 'app', 'ready']);
     expect(debug).toHaveBeenCalledTimes(1);
     expect(sent()).toHaveLength(2);
   });
@@ -102,6 +104,45 @@ describe('_paq wiring', () => {
     second(); // tearing down the no-op must not detach the real shim
     window._paq?.push(['trackPageView']);
     expect(sent()).toHaveLength(4);
+  });
+});
+
+describe('repeated page views', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  it('sends one hit when the app announces one navigation twice', () => {
+    queue(snippet());
+    stop = startShim(); // the snippet's own trackPageView
+    vi.advanceTimersByTime(100); // the router's, 100 ms later
+    window._paq?.push(['trackPageView']);
+    expect(sent()).toHaveLength(1);
+  });
+
+  it('sends both when the reader comes back to the same URL later', () => {
+    queue(snippet());
+    stop = startShim();
+    vi.advanceTimersByTime(REPEAT_VIEW_MS);
+    window._paq?.push(['trackPageView']);
+    expect(sent()).toHaveLength(2);
+  });
+
+  /**
+   * A reader who idles past the session timeout and reloads starts a NEW visit.
+   * If the guard swallowed that page view the visit would hold heartbeats and
+   * nothing else — the ghost visit `bbd4427` removed (repeat.ts).
+   */
+  it('never swallows the page view that starts the next visit', () => {
+    queue(snippet());
+    stop = startShim();
+    window.dispatchEvent(new Event('blur')); // away: nothing is sent while blurred
+    vi.advanceTimersByTime(SESSION_TIMEOUT_MS + 60_000);
+    window.dispatchEvent(new Event('focus'));
+    window._paq?.push(['trackPageView']);
+    const views = sent().filter((params) => !params.has('ping'));
+    expect(views).toHaveLength(2);
+    expect(views[1]?.get('url')).toBe(location.href);
   });
 });
 

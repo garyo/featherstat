@@ -174,6 +174,26 @@ describe('replay harness', () => {
     expect(count(db, outlived, SESSION_TIMEOUT_MS)).toBeGreaterThan(0);
   });
 
+  it('carries the SPA double-fire, on the SPA sites and nowhere else', () => {
+    // History holds these rows — the tracker guard stops new ones, it does not
+    // rewrite what is already stored — so the journey collapse has something to
+    // fold away (docs/06). Sub-second and same URL: no dwell in the generator is
+    // under a second, so nothing else can produce this shape.
+    const seen = new Map<string, { url: string; at: number }>();
+    const repeats = new Map<number, number>();
+    for (const { hit, ctx } of corpus.hits) {
+      if (hit.type !== 'pageview' || hit.url === undefined) continue;
+      const key = `${hit.siteId}|${hit.visitorId ?? `${ctx.ip}\n${ctx.userAgent}`}`;
+      const prior = seen.get(key);
+      if (prior?.url === hit.url && ctx.receivedAt - prior.at < 1_000) {
+        repeats.set(hit.siteId, (repeats.get(hit.siteId) ?? 0) + 1);
+      }
+      seen.set(key, { url: hit.url, at: ctx.receivedAt });
+    }
+    expect([...repeats.keys()].sort()).toEqual([3, 5]);
+    for (const [siteId, count] of repeats) expect(count, `site ${siteId}`).toBeGreaterThan(20);
+  });
+
   it('matches the expected totals for every site and every local day', () => {
     const actual = totalsFromDb(db);
     expect(actual).toHaveLength(corpus.totals.length);

@@ -186,7 +186,11 @@ describe('dwell attribution', () => {
   });
 
   it('binds the clamp — never inlines it', () => {
-    const compiled = compileDwellQuery({ id: 'q', kind: 'dwell', limit: 10 }, [], 1);
+    const compiled = compileDwellQuery(
+      { id: 'q', kind: 'dwell', limit: 10 },
+      [],
+      [{ siteId: 1, timezone: 'UTC', from: '2026-07-01', to: '2026-07-31' }],
+    );
     if ('error' in compiled) throw new Error(compiled.error.message);
     expect(compiled.sql).not.toContain(String(PING_CLAMP_MS));
     expect(compiled.params).toContain(PING_CLAMP_MS);

@@ -13,7 +13,7 @@ import { dashboardEnv } from '../widgets/env.ts';
 import { windowLabel } from '../widgets/format.ts';
 import type { AppEnv } from '../widgets/types.ts';
 import { createBatchRunner } from './batch.svelte.ts';
-import { collectBatch, hourlyWhenToday, withoutBlockedMetrics } from './batch.ts';
+import { collectBatch, hourlyWhenIntraday, withoutBlockedMetrics } from './batch.ts';
 import DashboardGrid from './DashboardGrid.svelte';
 
 interface Props {
@@ -53,7 +53,7 @@ const requestFor = (queries: readonly Query[]): QueryRequest => ({
   range: { preset: range },
   compare: 'previous',
   ...(filters.length > 0 ? { filters } : {}),
-  queries: withoutBlockedMetrics(hourlyWhenToday(queries, range), filters),
+  queries: withoutBlockedMetrics(hourlyWhenIntraday(queries, range), filters),
 });
 
 const request = $derived.by<QueryRequest>(() => requestFor(collectBatch(dashboard).queries));
@@ -103,9 +103,15 @@ function removeFilter(index: number): void {
   onfilters(filters.filter((_, i) => i !== index));
 }
 
-/** Compare wording per preset (mockup: "compared with previous 30 days"). */
+/**
+ * Compare wording per preset (mockup: "compared with previous 30 days"). Only
+ * `24h` is like-for-like: a partial period is compared against a complete one,
+ * which is how a calendar range reads everywhere, and why the rolling preset
+ * exists beside it (docs/04 § 3).
+ */
 const COMPARE_NOTE: Record<RangePreset, string> = {
-  today: 'compared with yesterday',
+  today: 'compared with all of yesterday',
+  '24h': 'compared with the previous 24 hours',
   '7d': 'compared with the previous 7 days',
   '30d': 'compared with the previous 30 days',
   '90d': 'compared with the previous 90 days',

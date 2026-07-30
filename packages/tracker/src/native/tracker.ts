@@ -1,5 +1,6 @@
 import type { HitType } from '@featherstat/shared';
 import { classifyLink } from '../links.ts';
+import { isRepeatView } from '../repeat.ts';
 import { send } from '../send.ts';
 
 /** The native tracker for new sites (docs/04 § 2): `POST /api/collect`, JSON, ESM. */
@@ -42,6 +43,8 @@ interface Runtime {
   endpoint: string;
   /** URL of the last pageview — also the referrer of the next one within the app. */
   url: string;
+  /** When that pageview was taken; with `url` it is the repeat-view guard's memory (repeat.ts). */
+  viewAt: number;
   stop: () => void;
 }
 
@@ -114,6 +117,7 @@ export function init(config: TrackerConfig): () => void {
     site: config.site,
     endpoint: config.endpoint ?? DEFAULT_ENDPOINT,
     url: '',
+    viewAt: 0,
     stop: () => {
       clearInterval(heartbeat);
       window.removeEventListener('focus', onFocus);
@@ -137,13 +141,18 @@ export function init(config: TrackerConfig): () => void {
   };
 }
 
-/** Record a pageview; defaults to the current document. */
+/** Record a pageview; defaults to the current document. Repeats are dropped (repeat.ts). */
 export function page(url: string = location.href, title: string = document.title): void {
   if (!runtime) return;
+  const at = Date.now();
+  // One navigation an SPA router announced twice — through the history hook and
+  // again from the app — is one page view.
+  if (isRepeatView(url, at, runtime.url, runtime.viewAt)) return;
   // Within the app the previous view is the referrer; only the first pageview
   // of a visit can learn where the visitor came from.
   const referrer = runtime.url || document.referrer;
   runtime.url = url;
+  runtime.viewAt = at;
   emit({
     type: 'pageview',
     url,

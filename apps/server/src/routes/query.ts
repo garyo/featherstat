@@ -126,15 +126,27 @@ function anyMatch(ifNoneMatch: string | undefined, current: string): boolean {
   return ifNoneMatch.split(',').some((candidate) => candidate.trim() === current);
 }
 
+/**
+ * The resolved windows as ETag input — the reason a preset expires on the site's
+ * clock rather than on a data change. `today` moves at site-local midnight; the
+ * rolling `24h` preset moves at every local hour turn and is stable in between,
+ * which is exactly what its quantization buys (ranges.ts). Shared with the share
+ * route so the two cannot disagree about what a tag covers.
+ */
+export function windowTag(windows: readonly SiteWindow[]): string {
+  return windows
+    .map((w) => `${w.siteId}:${w.timezone}:${w.from}:${w.to}:${w.fromTs ?? ''}:${w.toTs ?? ''}`)
+    .join(',');
+}
+
 function etag(
   version: number,
   schema: number,
   canonicalBody: string,
   windows: readonly SiteWindow[],
 ): string {
-  const resolved = windows.map((w) => `${w.siteId}:${w.timezone}:${w.from}:${w.to}`).join(',');
   const hash = createHash('sha256')
-    .update(`${version}|${schema}|${canonicalBody}|${resolved}`)
+    .update(`${version}|${schema}|${canonicalBody}|${windowTag(windows)}`)
     .digest('base64url');
   return `"${hash}"`;
 }

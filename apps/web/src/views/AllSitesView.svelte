@@ -12,7 +12,7 @@ import { localDayKey, type RangePreset } from '../lib/state.ts';
 import { dashboardEnv } from '../widgets/env.ts';
 import type { AppEnv } from '../widgets/types.ts';
 import { createBatchRunner } from './batch.svelte.ts';
-import { collectBatch, hourlyWhenToday } from './batch.ts';
+import { collectBatch, hourlyWhenIntraday } from './batch.ts';
 import DashboardGrid from './DashboardGrid.svelte';
 
 interface Props {
@@ -53,7 +53,7 @@ const requestFor = (queries: readonly Query[]): QueryRequest => ({
   site: 'all',
   range: { preset: range },
   compare: 'previous',
-  queries: hourlyWhenToday([...queries], range),
+  queries: hourlyWhenIntraday([...queries], range),
 });
 
 const request = $derived.by<QueryRequest>(() => requestFor(collectBatch(dashboard).queries));

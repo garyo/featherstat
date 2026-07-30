@@ -17,7 +17,8 @@ import { openReplayDb } from './harness.ts';
  * corpus must agree with an oracle that never touches SQL — it re-sessionizes
  * the generator's raw hit stream in plain JS (docs/03 rules: identity with the
  * site-local midnight rotation, 30-min idle timeout, clamped engagement) and derives
- * transitions/flows by grouping each session's ordered non-ping steps.
+ * transitions/flows by grouping each session's ordered non-ping steps, with
+ * consecutive repeats of one label collapsed into a single step.
  */
 
 const corpus = generateCorpus();
@@ -48,6 +49,8 @@ interface OracleSession {
   engagedMs: number;
   /** Ordered non-ping step labels, exactly as the server would label them. */
   steps: string[];
+  /** Non-ping rows before the collapse — what makes the check below non-vacuous. */
+  rows: number;
 }
 
 const BOT_AGENT_SET = new Set(BOT_AGENTS);
@@ -75,6 +78,7 @@ function sessionize(source: Corpus): OracleSession[] {
         lastSeen: ctx.receivedAt,
         engagedMs: 0,
         steps: [],
+        rows: 0,
       };
       open.set(identity, session);
       all.push(session);
@@ -83,7 +87,13 @@ function sessionize(source: Corpus): OracleSession[] {
       session.engagedMs += Math.min(Math.max(gap, 0), PING_CLAMP_MS);
       session.lastSeen = ctx.receivedAt;
     }
-    if (hit.type !== 'ping') session.steps.push(label(hit));
+    // Consecutive identical labels are one step: a journey is movement between
+    // pages, so a reload or an SPA double-fire adds nothing (docs/03 § Journeys).
+    if (hit.type !== 'ping') {
+      const step = label(hit);
+      session.rows += 1;
+      if (step !== session.steps.at(-1)) session.steps.push(step);
+    }
   }
   return all;
 }
@@ -249,6 +259,39 @@ describe('sequence queries on the replay corpus', () => {
       const expected = expectedFlows(scopedSessions(envelope), 4, 200);
       expect(expected.length, site.name).toBeGreaterThan(0);
       expect(resultOf(response, 'journeys').rows, site.name).toEqual(expected);
+    }
+  });
+
+  it('collapses consecutive repeats, and the corpus has plenty to collapse', () => {
+    // Anti-vacuity first: without repeats in the data, agreeing with an oracle
+    // that collapses them would say nothing at all.
+    const rows = oracle.reduce((total, session) => total + session.rows, 0);
+    const steps = oracle.reduce((total, session) => total + session.steps.length, 0);
+    expect(steps, 'no repeat anywhere — the collapse is untested').toBeLessThan(rows);
+    expect(oracle.filter((session) => session.steps.length < session.rows).length).toBeGreaterThan(
+      0,
+    );
+
+    // And the shape it guarantees, straight off the engine: a journey never
+    // steps from a label to itself, in either kind.
+    for (const site of corpus.sites) {
+      const response = executeQueryRequest(
+        db,
+        sequenceBatch({ site: site.id, ...FULL_RANGE }, 4, 200),
+      );
+      const edges = resultOf(response, 'sankey').rows;
+      expect(edges.length, site.name).toBeGreaterThan(0);
+      expect(
+        edges.filter((row) => row.from === row.to),
+        site.name,
+      ).toEqual([]);
+      for (const row of resultOf(response, 'journeys').rows) {
+        const signature = row.steps as string[];
+        expect(
+          signature.filter((step, i) => i > 0 && step === signature[i - 1]),
+          `${site.name} ${JSON.stringify(signature)}`,
+        ).toEqual([]);
+      }
     }
   });
 

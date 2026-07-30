@@ -5,6 +5,8 @@
  * without a DOM.
  */
 
+import { isRepeatView } from '../repeat.ts';
+
 /** Ordered tracking parameters; the shim encodes its own bodies to stay small. */
 export type Params = readonly (readonly [string, string])[];
 
@@ -13,6 +15,8 @@ export interface PageInfo {
   url: string;
   title: string;
   referrer: string;
+  /** `Date.now()` at the push — the clock the repeat-view guard reads. */
+  at: number;
   /** `screen.width` × `screen.height`. */
   screen?: string;
   lang?: string;
@@ -41,6 +45,9 @@ export interface ShimState {
   readonly pending: readonly Params[];
   /** Unknown command names already reported — each one debugs exactly once. */
   readonly reported: readonly string[];
+  /** The last page view taken, and when — the repeat-view guard's memory (repeat.ts). */
+  readonly lastView: string;
+  readonly lastViewAt: number;
 }
 
 export interface Reduction {
@@ -48,7 +55,7 @@ export interface Reduction {
   readonly effects: readonly Effect[];
 }
 
-export const INITIAL_STATE: ShimState = { pending: [], reported: [] };
+export const INITIAL_STATE: ShimState = { pending: [], reported: [], lastView: '', lastViewAt: 0 };
 
 /** Every production tag pushes 15 (docs/01); a bare `enableHeartBeatTimer` means the same. */
 const DEFAULT_HEARTBEAT_SECONDS = 15;
@@ -80,7 +87,7 @@ export function reduce(state: ShimState, command: unknown, page: PageInfo): Redu
     case 'setReferrerUrl':
       return assign(state, 'referrerUrl', text(args[0]));
     case 'trackPageView':
-      return emit(state, pageviewParams(state, page, text(args[0])));
+      return view(state, page, text(args[0]));
     case 'trackEvent':
       return emit(state, eventParams(state, page, args));
     case 'trackLink':
@@ -136,8 +143,28 @@ function beacon(trackerUrl: string, siteId: string, params: Params): Effect {
   return { kind: 'beacon', beacon: { url: trackerUrl, body } };
 }
 
-function pageviewParams(state: ShimState, page: PageInfo, title: string | undefined): Params {
-  const params: (readonly [string, string])[] = [['url', currentUrl(state, page)]];
+/**
+ * One page view, unless it repeats the previous one within `REPEAT_VIEW_MS` —
+ * an SPA that announced one navigation twice (repeat.ts). Only a view that is
+ * actually taken moves the mark, so a router firing on a loop still yields a
+ * view per window rather than one forever.
+ */
+function view(state: ShimState, page: PageInfo, title: string | undefined): Reduction {
+  const url = currentUrl(state, page);
+  if (isRepeatView(url, page.at, state.lastView, state.lastViewAt)) {
+    return { state, effects: NO_EFFECTS };
+  }
+  const next = { ...state, lastView: url, lastViewAt: page.at };
+  return emit(next, pageviewParams(next, page, title, url));
+}
+
+function pageviewParams(
+  state: ShimState,
+  page: PageInfo,
+  title: string | undefined,
+  url: string,
+): Params {
+  const params: (readonly [string, string])[] = [['url', url]];
   const documentTitle = title ?? state.documentTitle ?? page.title;
   if (documentTitle) params.push(['action_name', documentTitle]);
   const referrer = state.referrerUrl ?? page.referrer;

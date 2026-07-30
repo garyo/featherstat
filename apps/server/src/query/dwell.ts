@@ -1,4 +1,10 @@
-import { type DwellQuery, type Filter, type Measures, PING_CLAMP_MS } from '@featherstat/shared';
+import {
+  type DwellQuery,
+  type Filter,
+  type Measures,
+  PING_CLAMP_MS,
+  type SiteWindow,
+} from '@featherstat/shared';
 import type { CompileError } from './compiler.ts';
 import { populationWhere } from './population.ts';
 import { sessionScope } from './session-scope.ts';
@@ -58,9 +64,9 @@ export const DWELL_MEASURES: Measures = {
 export function compileDwellQuery(
   query: DwellQuery,
   filters: readonly Filter[],
-  siteCount: number,
+  windows: readonly SiteWindow[],
 ): CompiledDwell | CompileError {
-  const scope = sessionScope('dwell queries', filters, siteCount);
+  const scope = sessionScope('dwell queries', filters, windows);
   if ('error' in scope) return scope;
 
   // The clamp is bound, never inlined — the same discipline as bounce_rate's threshold.

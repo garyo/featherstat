@@ -1,7 +1,7 @@
 import {
   collectBatch,
   type Dashboard,
-  hourlyWhenToday,
+  hourlyWhenIntraday,
   type QueryRequest,
   type RangePreset,
 } from '@featherstat/shared';
@@ -50,7 +50,7 @@ function batchOf(
     site,
     range: { preset: range },
     compare,
-    queries: hourlyWhenToday(collectBatch(dashboard).queries, range),
+    queries: hourlyWhenIntraday(collectBatch(dashboard).queries, range),
   };
 }
 
@@ -69,6 +69,13 @@ const READ_SHAPES: readonly ReadShape[] = [
     // the page most people leave open — hourly buckets, one site
     name: 'site dashboard @ today',
     request: () => batchOf(siteOverview, SITE, 'today', 'previous'),
+  },
+  {
+    // the rolling window: the same hourly shape as `today`, but its bounds fall
+    // inside two local dates, so it is the one shape that pays for the ts
+    // refinement in the bounds CTE (query/compiler.ts)
+    name: 'site dashboard @ 24h',
+    request: () => batchOf(siteOverview, SITE, '24h', 'previous'),
   },
   {
     // the default view of one site

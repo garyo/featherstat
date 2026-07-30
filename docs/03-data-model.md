@@ -360,6 +360,14 @@ extra tables:
   steps into a signature string (window function), then `GROUP BY` signature
   → session count, avg engaged time, exit-vs-continue share.
 
+**Consecutive identical labels are one step**, in both kinds, applied before the
+window function assigns positions. A journey is movement *between* pages, so
+`/app → /app → /app` is one step — whether the repeat came from a reload, an
+outlink taken from the page it labels, or an SPA router announcing one
+navigation twice (04 § 1 stops new ones at the tracker; history still holds the
+old ones). A visit whose every row is the same page therefore has one step and
+no edges.
+
 At target scale these run in milliseconds over the range being viewed. If a
 large deployment ever needs more, a flows rollup can hide behind the same
 query vocabulary (see 04) without any API change.

@@ -127,6 +127,12 @@ interface SiteProfile extends ReplaySite {
   matomoIdShare: number;
   /** Server-side event hits per day — packzen's Clerk signup webhook (docs/01). */
   webhookEvents: number;
+  /**
+   * Share of page views this site's router announces twice (docs/06). Only the
+   * SPAs do it, at the prevalence production measured: 1 of 70 on globe-viz,
+   * 4 of 21 on pelorus-nav.
+   */
+  spaRepeats: number;
   paths: string[];
 }
 
@@ -141,6 +147,7 @@ const SITES: SiteProfile[] = [
     visitors: 420,
     matomoIdShare: 0,
     webhookEvents: 0,
+    spaRepeats: 0,
     paths: ['/', '/docs', '/docs/getting-started', '/docs/pcons-build', '/download', '/changelog'],
   },
   {
@@ -153,6 +160,7 @@ const SITES: SiteProfile[] = [
     visitors: 900,
     matomoIdShare: 0,
     webhookEvents: 0,
+    spaRepeats: 0,
     paths: [
       '/',
       '/about',
@@ -173,6 +181,7 @@ const SITES: SiteProfile[] = [
     visitors: 260,
     matomoIdShare: 0.8,
     webhookEvents: 0,
+    spaRepeats: 0.014,
     paths: ['/', '/globe', '/globe?layer=temp', '/about'],
   },
   {
@@ -185,6 +194,7 @@ const SITES: SiteProfile[] = [
     visitors: 340,
     matomoIdShare: 0,
     webhookEvents: 0,
+    spaRepeats: 0,
     paths: ['/', '/timeline', '/timeline/cambrian', '/timeline/holocene', '/sources'],
   },
   {
@@ -197,6 +207,7 @@ const SITES: SiteProfile[] = [
     visitors: 180,
     matomoIdShare: 0.5,
     webhookEvents: 0,
+    spaRepeats: 0.19,
     paths: ['/', '/app', '/app/route', '/pricing'],
   },
   {
@@ -209,6 +220,7 @@ const SITES: SiteProfile[] = [
     visitors: 150,
     matomoIdShare: 0,
     webhookEvents: 3,
+    spaRepeats: 0,
     paths: ['/', '/signup', '/pricing', '/docs/api'],
   },
 ];
@@ -327,6 +339,15 @@ const ACCEPT_LANGUAGE_SHARE = 0.85;
 const WEBHOOK_FIRE_SHARE = 0.7;
 /** Probability of a session having 1, 2, … 6 steps. */
 const STEP_WEIGHTS = [0.42, 0.22, 0.14, 0.1, 0.07, 0.05];
+/** How late an SPA's second announcement of one navigation lands: 0–119 ms in production. */
+const SPA_REPEAT_SPREAD_MS = 120;
+/**
+ * The golden-ratio mix, so the SPA repeats draw from a stream sharing no
+ * structure with the traffic shaping — and, more to the point, so ADDING them
+ * leaves every other hit in the corpus bit-identical. The 90 days the rest of
+ * the suite is measured against do not reshuffle because these arrived.
+ */
+const SPA_SEED_MIX = 0x9e37_79b9;
 const TEST_NET_BLOCKS = ['192.0.2', '198.51.100', '203.0.113'];
 
 // ---------------------------------------------------------------------------
@@ -375,7 +396,9 @@ interface Visitor {
 export function generateCorpus(options: GenerateOptions = {}): Corpus {
   const days = options.days ?? 90;
   const startMs = options.startMs ?? Date.UTC(2026, 1, 15);
-  const rng = mulberry32(options.seed ?? 0x5eed_1e55);
+  const seed = options.seed ?? 0x5eed_1e55;
+  const rng = mulberry32(seed);
+  const spa = mulberry32(seed ^ SPA_SEED_MIX);
 
   const pools = new Map(SITES.map((site) => [site.id, buildVisitors(site, rng)]));
   const hits: ReplayHit[] = [];
@@ -391,7 +414,7 @@ export function generateCorpus(options: GenerateOptions = {}): Corpus {
       const jitter = 0.75 + rng() * 0.5;
       const sessions = Math.round(site.baseSessions * shape * trend * jitter);
       for (let i = 0; i < sessions; i += 1) {
-        emitSession(site, visitorFrom(rng, pool), startWithin(site, dayStart, rng), rng, hits);
+        emitSession(site, visitorFrom(rng, pool), startWithin(site, dayStart, rng), rng, spa, hits);
       }
       emitBots(site, dayStart, Math.round(sessions * BOT_SHARE), rng, hits);
       emitWebhookEvents(site, dayStart, rng, hits);
@@ -460,6 +483,8 @@ function emitSession(
   visitor: Visitor,
   startMs: number,
   rng: Rng,
+  /** The SPA double-fire stream, kept apart from the traffic shaping (SPA_SEED_MIX). */
+  spa: Rng,
   out: ReplayHit[],
 ): void {
   const engaged = rng() < ENGAGED_SHARE;
@@ -475,7 +500,15 @@ function emitSession(
       referrer = url; // the page we came from — classified 'internal' if it mattered
       url = `https://${host}${pick(rng, site.paths)}`;
     }
-    out.push(request(visitor, ts, buildHit(site, visitor, host, type, url, referrer, rng)));
+    const hit = buildHit(site, visitor, host, type, url, referrer, rng);
+    out.push(request(visitor, ts, hit));
+    // The SPA double-fire (docs/06): one navigation the app announced twice, so
+    // the identical page view arrives again milliseconds later. These are the
+    // rows the tracker guard now prevents and the journey collapse folds away —
+    // history already holds them, so the corpus does too.
+    if (type === 'pageview' && spa() < site.spaRepeats) {
+      out.push(request(visitor, ts + Math.floor(spa() * SPA_REPEAT_SPREAD_MS), { ...hit }));
+    }
 
     const dwell = engaged
       ? ENGAGED_DWELL_MS + Math.floor(rng() * ENGAGED_DWELL_SPREAD_MS)

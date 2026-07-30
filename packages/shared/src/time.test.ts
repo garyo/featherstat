@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { elapsedThrough, hourBucketKey, localClock } from './time.ts';
+import { elapsedThrough, hourBucketKey, localClock, startOfLocalHour } from './time.ts';
 
 /**
  * The site-local clock both sides share (time.ts). Ingest writes
@@ -62,5 +62,64 @@ describe('bucket ceilings', () => {
     for (const bucket of ['day', 'week', 'month'] as const) {
       expect(elapsedThrough(bucket, 'America/New_York', at)).toBe('2026-07-27');
     }
+  });
+});
+
+/**
+ * The quantum the rolling range preset snaps to. A UTC-hour floor would pass
+ * every test a whole-hour-offset zone can write and still put three quarters of
+ * the oldest bucket outside the window in Kathmandu — so the zone's own offset
+ * is what decides, and the cases below are the ones that tell the two apart.
+ */
+describe('startOfLocalHour', () => {
+  const HOUR = 3_600_000;
+
+  it('floors to the local hour boundary, which is a UTC one only in whole-hour zones', () => {
+    expect(startOfLocalHour('America/New_York', Date.UTC(2026, 6, 27, 14, 37, 12))).toBe(
+      Date.UTC(2026, 6, 27, 14),
+    );
+    // Kathmandu is +05:45: local hours begin at :15 past each UTC hour.
+    expect(startOfLocalHour('Asia/Kathmandu', Date.UTC(2026, 6, 27, 14, 37))).toBe(
+      Date.UTC(2026, 6, 27, 14, 15),
+    );
+    expect(startOfLocalHour('Asia/Kathmandu', Date.UTC(2026, 6, 27, 14, 5))).toBe(
+      Date.UTC(2026, 6, 27, 13, 15),
+    );
+    // Kolkata is +05:30.
+    expect(startOfLocalHour('Asia/Kolkata', Date.UTC(2026, 6, 27, 14, 5))).toBe(
+      Date.UTC(2026, 6, 27, 13, 30),
+    );
+  });
+
+  it('is idempotent, and one hour back is one bucket back', () => {
+    for (const zone of ['UTC', 'America/New_York', 'Asia/Kathmandu', 'Australia/Lord_Howe']) {
+      const start = startOfLocalHour(zone, Date.UTC(2026, 6, 27, 14, 37));
+      expect(startOfLocalHour(zone, start)).toBe(start);
+      expect(localClock(zone, start).hour).toBe(localClock(zone, start + HOUR - 1).hour);
+    }
+  });
+
+  it('gives each pass through a doubled fall-back hour its own start', () => {
+    // 2026-11-01: 01:59 EDT becomes 01:00 EST — both wear the key '01:00'.
+    const first = startOfLocalHour('America/New_York', Date.UTC(2026, 10, 1, 5, 30));
+    const second = startOfLocalHour('America/New_York', Date.UTC(2026, 10, 1, 6, 30));
+    expect(first).toBe(Date.UTC(2026, 10, 1, 5));
+    expect(second).toBe(Date.UTC(2026, 10, 1, 6));
+    expect(hourBucketKey(localClock('America/New_York', first))).toBe('2026-11-01 01:00');
+    expect(hourBucketKey(localClock('America/New_York', second))).toBe('2026-11-01 01:00');
+  });
+
+  it('lands on the hour the clock jumped to across a spring-forward', () => {
+    // 2026-03-08: 01:59 EST becomes 03:00 EDT; hour 02 never happens.
+    const at = Date.UTC(2026, 2, 8, 7, 30); // 03:30 EDT
+    expect(startOfLocalHour('America/New_York', at)).toBe(Date.UTC(2026, 2, 8, 7));
+    expect(startOfLocalHour('America/New_York', at) - HOUR).toBe(Date.UTC(2026, 2, 8, 6));
+    expect(localClock('America/New_York', Date.UTC(2026, 2, 8, 6)).hour).toBe(1);
+  });
+
+  it('falls back to UTC for an invalid timezone, like the rest of this module', () => {
+    expect(startOfLocalHour('Not/A_Zone', Date.UTC(2026, 6, 27, 14, 37))).toBe(
+      Date.UTC(2026, 6, 27, 14),
+    );
   });
 });

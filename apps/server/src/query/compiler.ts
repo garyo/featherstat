@@ -9,6 +9,7 @@ import {
   type Metric,
   type MetricQuery,
   type Population,
+  type SiteWindow,
   type Unit,
 } from '@featherstat/shared';
 import { populationSql } from './population.ts';
@@ -351,10 +352,61 @@ export function eventOnlyDimension(dim: Dimension): boolean {
   return DIMS[dim].sessions === null;
 }
 
-/** The per-site scope every statement joins through: `(site_id, from, to)` tuples bound at execution. */
-export function boundsCte(siteCount: number): string {
-  const tuples = Array.from({ length: siteCount }, () => '(?, ?, ?)').join(', ');
-  return `WITH bounds(site_id, from_date, to_date) AS (VALUES ${tuples})`;
+const DATE_BOUNDS = ['site_id', 'from_date', 'to_date'] as const;
+const ROLLING_BOUNDS = [...DATE_BOUNDS, 'from_ts', 'to_ts'] as const;
+
+/** UTC-ms column each table is dated by; a session is dated by where it STARTED. */
+const TS_COLUMN: Record<Table, string> = { events: 'ts', sessions: 'started_at' };
+
+/** Every window in a request resolves from one range, so one of them answers for all. */
+function isRolling(windows: readonly SiteWindow[]): boolean {
+  return windows[0]?.fromTs !== undefined;
+}
+
+/**
+ * The per-site scope every statement joins through: `(site_id, from_date,
+ * to_date)` tuples bound at execution, plus `(from_ts, to_ts)` for a rolling
+ * window, whose edges fall inside a local date (ranges.ts).
+ *
+ * Date-granular presets emit exactly the SQL they always did. The refinement
+ * costs a comparison per candidate row, and a window that covers whole local
+ * dates has nothing to refine — 90 days of rows must not pay for a preset they
+ * are not.
+ */
+export function boundsCte(windows: readonly SiteWindow[]): string {
+  const columns = isRolling(windows) ? ROLLING_BOUNDS : DATE_BOUNDS;
+  const tuple = `(${columns.map(() => '?').join(', ')})`;
+  const tuples = Array.from({ length: windows.length }, () => tuple).join(', ');
+  return `WITH bounds(${columns.join(', ')}) AS (VALUES ${tuples})`;
+}
+
+/**
+ * The join predicate scoping one table to those bounds. `local_date` does the
+ * index work either way (it is the dates the span touches); the instants trim
+ * the two partial dates at the ends down to the hour.
+ */
+export function boundsJoin(table: Table, windows: readonly SiteWindow[]): string {
+  const alias = table === 'events' ? 'e' : 's';
+  const scope = [
+    `${alias}.site_id = bounds.site_id`,
+    `${alias}.local_date BETWEEN bounds.from_date AND bounds.to_date`,
+  ];
+  if (isRolling(windows)) {
+    const ts = `${alias}.${TS_COLUMN[table]}`;
+    scope.push(`${ts} >= bounds.from_ts`, `${ts} < bounds.to_ts`);
+  }
+  return `${table} ${alias} JOIN bounds ON ${scope.join('\n  AND ')}`;
+}
+
+/** The values those tuples bind, in column order — the other half of `boundsCte`. */
+export function boundsParams(windows: readonly SiteWindow[]): (string | number)[] {
+  const rolling = isRolling(windows);
+  const params: (string | number)[] = [];
+  for (const window of windows) {
+    params.push(window.siteId, window.from, window.to);
+    if (rolling) params.push(window.fromTs ?? 0, window.toTs ?? Number.MAX_SAFE_INTEGER);
+  }
+  return params;
 }
 
 export interface CompiledStatement {
@@ -391,7 +443,7 @@ interface Group {
 export function compileMetricQuery(
   query: MetricQuery,
   globalFilters: readonly Filter[],
-  siteCount: number,
+  windows: readonly SiteWindow[],
 ): CompiledQuery | CompileError {
   const filters = [...globalFilters, ...(query.filters ?? [])];
   for (const filter of filters) {
@@ -433,7 +485,7 @@ export function compileMetricQuery(
   const statements: CompiledStatement[] = [];
   for (const [table, tableMetrics] of byTable) {
     statements.push(
-      buildStatement(table, tableMetrics, groups, filters, siteCount, {
+      buildStatement(table, tableMetrics, groups, filters, windows, {
         orderAndLimit: single,
         firstMetric: metrics[0],
         limit: query.limit,
@@ -475,7 +527,7 @@ function buildStatement(
   metrics: readonly Metric[],
   groups: readonly Group[],
   filters: readonly Filter[],
-  siteCount: number,
+  windows: readonly SiteWindow[],
   options: StatementOptions,
 ): CompiledStatement {
   const alias = table === 'events' ? 'e' : 's';
@@ -496,10 +548,9 @@ function buildStatement(
   const where = filters.map((filter) => filterSql(filter, table, params));
 
   const lines = [
-    boundsCte(siteCount),
+    boundsCte(windows),
     `SELECT ${select.join(', ')}`,
-    `FROM ${table} ${alias} JOIN bounds ON ${alias}.site_id = bounds.site_id`,
-    `  AND ${alias}.local_date BETWEEN bounds.from_date AND bounds.to_date`,
+    `FROM ${boundsJoin(table, windows)}`,
   ];
   if (where.length > 0) lines.push(`WHERE ${where.join(' AND ')}`);
   if (groups.length > 0) lines.push(`GROUP BY ${groups.map((_, i) => i + 1).join(', ')}`);

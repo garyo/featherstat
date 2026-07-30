@@ -1,4 +1,4 @@
-import type { Filter, SequenceQuery } from '@featherstat/shared';
+import type { Filter, SequenceQuery, SiteWindow } from '@featherstat/shared';
 import type { CompileError } from './compiler.ts';
 import { populationWhere } from './population.ts';
 import { sessionScope } from './session-scope.ts';
@@ -12,6 +12,11 @@ import { sessionScope } from './session-scope.ts';
  * `event: <category> · <action>` for events. Pings are session upkeep, not
  * steps: `seq` orders a session's rows, and ROW_NUMBER over the non-ping rows
  * renumbers around the pings sitting between them.
+ *
+ * Consecutive identical labels collapse into one step. A journey diagram is
+ * about movement BETWEEN pages, so `/ → / → /` is one visit to `/`, whether the
+ * repeat came from a reload, an outlink taken from the page it labels, or an SPA
+ * router announcing one navigation twice (docs/03 § Journeys, docs/06).
  */
 
 export interface CompiledSequence {
@@ -29,25 +34,33 @@ const LABEL = `COALESCE(CASE WHEN e.type = 'event'
 export function compileSequenceQuery(
   query: SequenceQuery,
   filters: readonly Filter[],
-  siteCount: number,
+  windows: readonly SiteWindow[],
 ): CompiledSequence | CompileError {
   const scope = sessionScope(
     'sequence queries',
     filters,
-    siteCount,
+    windows,
     query.kind === 'flows' ? ['s.engaged_ms AS engaged_ms'] : [],
   );
   if ('error' in scope) return scope;
 
   const { params } = scope;
-  const labeled = [
-    '(',
+  const walked = [
+    'walked AS (',
+    // Consecutive identical labels are one step, so what both kinds want is the
+    // RUNS. `next` names what follows each row, which makes the last row of a
+    // run the one whose successor differs — and the collapse is then a WHERE
+    // clause, which SQL runs ahead of windowing. Nothing below pays an extra
+    // ordered pass for it.
+    '  SELECT sid, seq, label, LEAD(label) OVER (PARTITION BY sid ORDER BY seq) AS next',
+    '  FROM (',
     `    SELECT e.session_id AS sid, e.seq AS seq, ${LABEL} AS label`,
     '    FROM events e JOIN scoped ON e.session_id = scoped.sid',
     // A journey is what the visitor DID: the `actions` population, so a
     // heartbeat never becomes a step.
     `    WHERE ${populationWhere('actions', 'e')}`,
     '  )',
+    ')',
   ].join('\n');
 
   if (query.kind === 'transitions') {
@@ -56,14 +69,16 @@ export function compileSequenceQuery(
     params.push(query.steps, query.limit);
     const sql = [
       `${scope.sql},`,
-      'walked AS (',
-      '  SELECT ROW_NUMBER() OVER w AS step, label, LEAD(label) OVER w AS next',
-      `  FROM ${labeled}`,
-      '  WINDOW w AS (PARTITION BY sid ORDER BY seq)',
+      `${walked},`,
+      // A move is a run ending against a DIFFERENT label, so a repeated page is
+      // never an edge to itself and never spends a step (docs/03 § Journeys).
+      'moves AS (',
+      '  SELECT ROW_NUMBER() OVER (PARTITION BY sid ORDER BY seq) AS step, label, next',
+      '  FROM walked WHERE next IS NOT NULL AND next IS NOT label',
       '),',
       'edges AS (',
       '  SELECT step, label AS "from", next AS "to", COUNT(*) AS sessions',
-      '  FROM walked WHERE next IS NOT NULL AND step <= ?',
+      '  FROM moves WHERE step <= ?',
       '  GROUP BY 1, 2, 3',
       ')',
       'SELECT step, "from", "to", sessions FROM (',
@@ -76,18 +91,26 @@ export function compileSequenceQuery(
     return { kind: query.kind, sql, params };
   }
 
-  params.push(query.steps, query.steps, query.limit);
+  params.push(query.steps, query.steps, query.steps, query.limit);
   const sql = [
     `${scope.sql},`,
-    'positioned AS (',
-    '  SELECT sid, label, ROW_NUMBER() OVER (PARTITION BY sid ORDER BY seq) AS pos',
-    `  FROM ${labeled}`,
+    `${walked},`,
+    // One entry per run, and their count. A session's last row ends a run too:
+    // `next` is NULL there, which differs from every label.
+    'runs AS (',
+    '  SELECT sid,',
+    '    json_group_array(label ORDER BY seq) FILTER (WHERE label IS NOT next) AS walk,',
+    '    COUNT(*) FILTER (WHERE label IS NOT next) AS total',
+    '  FROM walked GROUP BY sid',
     '),',
     'signatures AS (',
-    '  SELECT sid,',
-    '    json_group_array(label ORDER BY pos) FILTER (WHERE pos <= ?) AS signature,',
-    '    MAX(pos) AS total',
-    '  FROM positioned GROUP BY sid',
+    '  SELECT sid, total,',
+    // Most journeys are shorter than the depth asked for, and theirs already IS
+    // the signature; only the longer ones pay to be cut down to it.
+    '    CASE WHEN total <= ? THEN walk ELSE',
+    '      (SELECT json_group_array(value) FROM json_each(runs.walk) WHERE key < ?)',
+    '    END AS signature',
+    '  FROM runs',
     ')',
     'SELECT signatures.signature AS "steps",',
     '  COUNT(*) AS sessions,',

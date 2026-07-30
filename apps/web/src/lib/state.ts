@@ -53,6 +53,7 @@ export function resolveNav(
 /** Exhaustive by construction: a new preset in `packages/shared` fails to compile until it is labeled. */
 export const RANGE_LABELS: Record<RangePreset, string> = {
   today: 'Today',
+  '24h': 'Last 24 hours',
   '7d': '7 days',
   '30d': '30 days',
   '90d': '90 days',
@@ -75,6 +76,7 @@ export function localDayKey(zones: readonly string[], now: Date): string {
 /** Widget-title qualifier (mockup: "Traffic by hour · last 30 days"). */
 export const RANGE_QUALIFIER: Record<RangePreset, string> = {
   today: 'today',
+  '24h': 'last 24 hours',
   '7d': 'last 7 days',
   '30d': 'last 30 days',
   '90d': 'last 90 days',

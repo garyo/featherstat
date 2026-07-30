@@ -1,7 +1,7 @@
 import {
   collectBatch,
   type Dashboard,
-  hourlyWhenToday,
+  hourlyWhenIntraday,
   isQueryError,
   type Query,
   type QueryRequest,
@@ -92,7 +92,7 @@ export function requestFor(
     site: options.site ?? dashboard.site,
     range: { preset: range },
     compare: 'previous',
-    queries: hourlyWhenToday(collectBatch(dashboard).queries, range),
+    queries: hourlyWhenIntraday(collectBatch(dashboard).queries, range),
   };
 }
 

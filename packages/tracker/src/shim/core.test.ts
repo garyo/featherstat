@@ -1,13 +1,21 @@
+import { SESSION_TIMEOUT_MS } from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
+import { REPEAT_VIEW_MS } from '../repeat.ts';
 import { type Effect, INITIAL_STATE, type PageInfo, ping, reduce, type ShimState } from './core.ts';
 
 const PAGE: PageInfo = {
   url: 'https://blog.oberbrunner.com/posts/hello?utm_source=hn',
   title: 'Hello World',
   referrer: 'https://news.ycombinator.com/',
+  at: 1_770_000_000_000,
   screen: '1512x982',
   lang: 'en-us',
 };
+
+/** The same page, `ms` later — the shim reads the clock at every push. */
+function later(ms: number, page: PageInfo = PAGE): PageInfo {
+  return { ...page, at: page.at + ms };
+}
 
 const TRACKER_URL = 'https://analytics.example.org/matomo.php';
 
@@ -82,7 +90,7 @@ describe('tracking commands', () => {
   });
 
   it('omits a missing title and referrer rather than sending empties', () => {
-    const bare: PageInfo = { url: 'https://pcons.org/', title: '', referrer: '' };
+    const bare: PageInfo = { url: 'https://pcons.org/', title: '', referrer: '', at: PAGE.at };
     const params = only(configured([['trackPageView']], bare).effects);
     expect(params.has('action_name')).toBe(false);
     expect(params.has('urlref')).toBe(false);
@@ -240,8 +248,79 @@ describe('pre-load queue draining', () => {
   });
 
   it('stops queueing for a tag that never configures itself', () => {
-    const commands = Array.from({ length: 25 }, () => ['trackPageView']);
-    const { state } = run(commands);
+    // Spaced past the repeat window, so what is being capped is the queue and
+    // not the double-fire guard.
+    let state = INITIAL_STATE;
+    for (let i = 0; i < 25; i += 1) {
+      state = reduce(state, ['trackPageView'], later(i * REPEAT_VIEW_MS)).state;
+    }
     expect(state.pending).toHaveLength(20);
+  });
+});
+
+describe('repeated page views', () => {
+  /** Two `trackPageView` pushes `apart` ms apart, on the same URL. */
+  function twice(apart: number) {
+    const first = configured([['trackPageView']]);
+    const second = reduce(first.state, ['trackPageView'], later(apart));
+    return beacons([...first.effects, ...second.effects]);
+  }
+
+  it('sends one hit for a navigation an SPA announced twice', () => {
+    expect(twice(0)).toHaveLength(1);
+    expect(twice(112)).toHaveLength(1);
+  });
+
+  it('sends both for a genuine revisit past the window', () => {
+    expect(twice(REPEAT_VIEW_MS)).toHaveLength(2);
+    expect(twice(45_000)).toHaveLength(2);
+  });
+
+  /**
+   * The guard must never produce a visit with no page view in it: past the
+   * session timeout a page view legitimately starts a NEW visit, and swallowing
+   * it would leave that visit holding only heartbeats (repeat.ts).
+   */
+  it('never swallows the page view that starts the next visit', () => {
+    expect(twice(SESSION_TIMEOUT_MS + 1)).toHaveLength(1 + 1);
+  });
+
+  it('measures from the view it took, so a router on a loop still reports', () => {
+    // Pushing every 400 ms forever yields one view per window, not one view ever:
+    // the mark moves only when a view is actually taken (0, 1200, 2400, 3600).
+    const first = configured([['trackPageView']]);
+    let state = first.state;
+    const all: Effect[] = [...first.effects];
+    for (let i = 1; i <= 10; i += 1) {
+      const step = reduce(state, ['trackPageView'], later(i * 400));
+      state = step.state;
+      all.push(...step.effects);
+    }
+    expect(beacons(all)).toHaveLength(4);
+  });
+
+  it('follows setCustomUrl: an SPA route change is a different view', () => {
+    const { effects } = configured([
+      ['setCustomUrl', 'https://pelorus-nav.com/app'],
+      ['trackPageView'],
+      ['trackPageView'],
+      ['setCustomUrl', 'https://pelorus-nav.com/app/route'],
+      ['trackPageView'],
+    ]);
+    expect(beacons(effects).map((params) => params.get('url'))).toEqual([
+      'https://pelorus-nav.com/app',
+      'https://pelorus-nav.com/app/route',
+    ]);
+  });
+
+  it('leaves every other hit type alone', () => {
+    const { effects } = configured([
+      ['trackPageView'],
+      ['trackEvent', 'globe', 'rotate'],
+      ['trackEvent', 'globe', 'rotate'],
+      ['trackLink', 'https://github.com/garyo/pcons', 'link'],
+      ['trackLink', 'https://github.com/garyo/pcons', 'link'],
+    ]);
+    expect(beacons(effects)).toHaveLength(5);
   });
 });

@@ -10,6 +10,7 @@ import {
   POPULATIONS,
   type Population,
   SESSION_ONLY_METRICS,
+  type SiteWindow,
 } from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
 import {
@@ -23,8 +24,17 @@ import {
 
 const TABLES = ['events', 'sessions'] as const satisfies readonly Table[];
 
+/** One window per site over whole local dates — what every date-granular preset resolves to. */
+const sites = (count: number): SiteWindow[] =>
+  Array.from({ length: count }, (_, index) => ({
+    siteId: index + 1,
+    timezone: 'UTC',
+    from: '2026-07-01',
+    to: '2026-07-31',
+  }));
+
 function compile(query: Partial<MetricQuery> & Pick<MetricQuery, 'metrics'>): CompiledQuery {
-  const compiled = compileMetricQuery({ id: 'q', ...query }, [], 1);
+  const compiled = compileMetricQuery({ id: 'q', ...query }, [], sites(1));
   if (isQueryError(compiled)) {
     throw new Error(`unexpected compile error: ${compiled.error.message}`);
   }
@@ -35,7 +45,7 @@ describe('shared vocabulary constants stay true to the compiler tables', () => {
   it('EVENT_ONLY_DIMENSIONS = exactly the dims that break session metrics', () => {
     const eventOnly = new Set<string>(EVENT_ONLY_DIMENSIONS);
     for (const dim of DimensionSchema.options) {
-      const compiled = compileMetricQuery({ id: 'q', metrics: ['engaged_ms'], dim }, [], 1);
+      const compiled = compileMetricQuery({ id: 'q', metrics: ['engaged_ms'], dim }, [], sites(1));
       expect(isQueryError(compiled), dim).toBe(eventOnly.has(dim));
     }
   });
@@ -43,7 +53,11 @@ describe('shared vocabulary constants stay true to the compiler tables', () => {
   it('SESSION_ONLY_METRICS = exactly the metrics an event-level dim cannot answer', () => {
     const sessionOnly = new Set<string>(SESSION_ONLY_METRICS);
     for (const metric of MetricSchema.options) {
-      const compiled = compileMetricQuery({ id: 'q', metrics: [metric], dim: 'path' }, [], 1);
+      const compiled = compileMetricQuery(
+        { id: 'q', metrics: [metric], dim: 'path' },
+        [],
+        sites(1),
+      );
       expect(isQueryError(compiled), metric).toBe(sessionOnly.has(metric));
     }
   });
@@ -194,7 +208,7 @@ describe('compileMetricQuery', () => {
     const compiled = compileMetricQuery(
       { id: 'q', metrics: ['pageviews'], filters: [{ dim: 'path', op: 'eq', value: hostile }] },
       [],
-      1,
+      sites(1),
     );
     if (isQueryError(compiled)) throw new Error('expected success');
     expect(compiled.statements[0]?.sql).not.toContain('DROP');
@@ -236,20 +250,24 @@ describe('compileMetricQuery', () => {
   });
 
   it('rejects session metrics crossed with event-level dimensions', () => {
-    const byDim = compileMetricQuery({ id: 'q', metrics: ['bounce_rate'], dim: 'title' }, [], 1);
+    const byDim = compileMetricQuery(
+      { id: 'q', metrics: ['bounce_rate'], dim: 'title' },
+      [],
+      sites(1),
+    );
     expect(byDim).toHaveProperty(['error', 'code'], 'unsupported');
 
     const byFilter = compileMetricQuery(
       { id: 'q', metrics: ['engaged_ms'], filters: [{ dim: 'path', op: 'eq', value: '/' }] },
       [],
-      1,
+      sites(1),
     );
     expect(byFilter).toHaveProperty(['error', 'code'], 'unsupported');
 
     const byBucket = compileMetricQuery(
       { id: 'q', metrics: ['engaged_ms'], bucket: 'hour' },
       [],
-      1,
+      sites(1),
     );
     expect(byBucket).toHaveProperty(['error', 'code'], 'unsupported');
   });
@@ -262,7 +280,7 @@ describe('compileMetricQuery', () => {
         filters: [{ dim: 'path', op: 'eq', value: ['/a', '/b'] }],
       },
       [],
-      1,
+      sites(1),
     );
     expect(compiled).toHaveProperty(['error', 'code'], 'unsupported');
   });
@@ -271,7 +289,7 @@ describe('compileMetricQuery', () => {
     const compiled = compileMetricQuery(
       { id: 'q', metrics: ['pageviews'], dim: 'path', limit: 5 },
       [],
-      3,
+      sites(3),
     );
     if (isQueryError(compiled)) throw new Error('expected success');
     const statement = compiled.statements[0];
@@ -285,7 +303,7 @@ describe('compileMetricQuery', () => {
     const compiled = compileMetricQuery(
       { id: 'q', metrics: ['pageviews', 'visits'] },
       [{ dim: 'country', op: 'eq', value: 'US' }],
-      1,
+      sites(1),
     );
     if (isQueryError(compiled)) throw new Error('expected success');
     expect(compiled.statements).toHaveLength(2);

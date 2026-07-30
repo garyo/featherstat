@@ -1,6 +1,7 @@
-import type { Filter } from '@featherstat/shared';
+import type { Filter, SiteWindow } from '@featherstat/shared';
 import {
   boundsCte,
+  boundsJoin,
   type CompileError,
   eventOnlyDimension,
   filterSql,
@@ -28,7 +29,7 @@ export function sessionScope(
   /** Names the asking kind (plural) in the refusal message: "<subject> are session-scoped …". */
   subject: string,
   filters: readonly Filter[],
-  siteCount: number,
+  windows: readonly SiteWindow[],
   /** Extra session columns a kind needs downstream, e.g. `s.engaged_ms AS engaged_ms`. */
   columns: readonly string[] = [],
 ): SessionScope | CompileError {
@@ -46,11 +47,10 @@ export function sessionScope(
   const params: (string | number)[] = [];
   const where = filters.map((filter) => filterSql(filter, 'sessions', params));
   const sql = [
-    `${boundsCte(siteCount)},`,
+    `${boundsCte(windows)},`,
     'scoped AS (',
     `  SELECT ${['s.id AS sid', ...columns].join(', ')}`,
-    '  FROM sessions s JOIN bounds ON s.site_id = bounds.site_id',
-    '    AND s.local_date BETWEEN bounds.from_date AND bounds.to_date',
+    `  FROM ${boundsJoin('sessions', windows)}`,
     ...(where.length > 0 ? [`  WHERE ${where.join(' AND ')}`] : []),
     ')',
   ].join('\n');

@@ -1,5 +1,7 @@
 // @vitest-environment happy-dom
+import { SESSION_TIMEOUT_MS } from '@featherstat/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { REPEAT_VIEW_MS } from '../repeat.ts';
 import { init, page, track } from './tracker.ts';
 
 const ENDPOINT = 'https://analytics.example.org/api/collect';
@@ -88,6 +90,60 @@ describe('pageviews', () => {
     stop?.();
     stop = undefined;
     expect(history.pushState).toBe(original);
+  });
+});
+
+describe('repeated page views', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  it('sends one hit when the router and the app both announce a navigation', () => {
+    start(); // the history hook's pageview
+    vi.advanceTimersByTime(100);
+    page(); // and the app's, for the same route
+    expect(sent()).toHaveLength(1);
+  });
+
+  it('sends both when the reader comes back to the same URL later', () => {
+    start();
+    vi.advanceTimersByTime(REPEAT_VIEW_MS);
+    page();
+    expect(sent()).toHaveLength(2);
+  });
+
+  it('keeps the referrer chain: a suppressed repeat is not the next referrer', () => {
+    start({ autoPageviews: false });
+    const entry = location.href;
+    page(entry);
+    page(entry); // the double-fire
+    vi.advanceTimersByTime(2_000);
+    page('https://deep-timeline.org/era/cambrian');
+    expect(sent()).toHaveLength(2);
+    expect(sent()[1]).toMatchObject({
+      url: 'https://deep-timeline.org/era/cambrian',
+      referrer: entry,
+    });
+  });
+
+  /**
+   * Past the session timeout a page view starts a NEW visit. A guard that
+   * swallowed it would leave that visit with nothing but heartbeats in it — the
+   * ghost visit `bbd4427` removed, rebuilt from the other end (repeat.ts).
+   */
+  it('never swallows the page view that starts the next visit', () => {
+    start();
+    window.dispatchEvent(new Event('blur')); // idle: no pings while blurred
+    vi.advanceTimersByTime(SESSION_TIMEOUT_MS + 60_000);
+    page();
+    expect(sent().filter((hit) => hit.type === 'pageview')).toHaveLength(2);
+  });
+
+  it('leaves events and links alone', () => {
+    start();
+    track('rotate', { category: 'globe' });
+    track('rotate', { category: 'globe' });
+    expect(sent()).toHaveLength(3);
   });
 });
 

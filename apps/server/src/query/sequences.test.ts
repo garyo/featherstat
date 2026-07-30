@@ -15,8 +15,9 @@ import { executeQueryRequest } from './executor.ts';
 /**
  * Handcrafted journeys with known step sequences (docs/03 § Journeys). Sessions
  * carry interleaved pings (stored rows that are not steps), an event step, an
- * outlink step, and one session that crosses midnight — every rule the sequence
- * compiler implements has a session here that would catch its loss.
+ * outlink step, a page announced three times in a row, and one session that
+ * crosses midnight — every rule the sequence compiler implements has a session
+ * here that would catch its loss.
  */
 
 const DAY = '2026-07-27';
@@ -126,8 +127,22 @@ beforeAll(() => {
       engaged: 8_000,
       hits: [{ path: '/late' }, { path: '/after', date: '2026-07-28' }],
     });
+    // H: the SPA shape — /app announced twice for one navigation, then reloaded
+    // after a real visit to /app/route. Three rows, two steps (docs/06).
+    seedJourney({
+      sess: 8,
+      country: 'US',
+      engaged: 20_000,
+      hits: [
+        { path: '/app' },
+        { path: '/app' },
+        { path: '/app/route' },
+        { type: 'ping', path: '/app/route' },
+        { path: '/app/route' },
+      ],
+    });
     // Site 2: must never leak into site 1 answers.
-    seedJourney({ sess: 8, site: 2, engaged: 1_000, hits: [{ path: '/x' }, { path: '/y' }] });
+    seedJourney({ sess: 9, site: 2, engaged: 1_000, hits: [{ path: '/x' }, { path: '/y' }] });
   });
 });
 
@@ -143,12 +158,19 @@ describe('transitions', () => {
     const response = run({ queries: [{ id: 'q', kind: 'transitions', steps: 4, limit: 20 }] });
     expect(resultOf(response, 'q').rows).toEqual([
       { step: 1, from: '/', to: '/docs', sessions: 2 },
-      { step: 1, from: '/', to: '/', sessions: 1 },
       { step: 1, from: '/', to: '/pricing', sessions: 1 },
+      { step: 1, from: '/app', to: '/app/route', sessions: 1 },
       { step: 1, from: '/late', to: '/after', sessions: 1 },
       { step: 2, from: '/docs', to: 'event: cta · click', sessions: 1 },
       { step: 3, from: 'event: cta · click', to: '/pricing', sessions: 1 },
     ]);
+  });
+
+  it('never steps from a label to itself: a repeat is one step, not an edge', () => {
+    // E's outlink leaves from the page it labels and H announced /app twice
+    // before reloading /app/route — neither is movement, so neither is an edge.
+    const rows = run({ queries: [{ id: 'q', kind: 'transitions', steps: 4, limit: 20 }] });
+    expect(resultOf(rows, 'q').rows.filter((row) => row.from === row.to)).toEqual([]);
   });
 
   it("caps edge depth at 'steps'", () => {
@@ -200,8 +222,11 @@ describe('flows', () => {
     expect(resultOf(response, 'q').rows).toEqual([
       // A went on beyond the 2-step signature, B stopped inside it: exit_rate 0.5.
       { steps: ['/', '/docs'], sessions: 2, avg_engaged_ms: 45_000, exit_rate: 0.5 },
-      { steps: ['/', '/'], sessions: 1, avg_engaged_ms: 45_000, exit_rate: 1 },
       { steps: ['/', '/pricing'], sessions: 1, avg_engaged_ms: 5_000, exit_rate: 1 },
+      // E: one page and an outlink taken from it — one step, and a completed journey.
+      { steps: ['/'], sessions: 1, avg_engaged_ms: 45_000, exit_rate: 1 },
+      // H: five rows, two steps.
+      { steps: ['/app', '/app/route'], sessions: 1, avg_engaged_ms: 20_000, exit_rate: 1 },
       { steps: ['/docs'], sessions: 1, avg_engaged_ms: 12_000, exit_rate: 1 },
       { steps: ['/late', '/after'], sessions: 1, avg_engaged_ms: 8_000, exit_rate: 1 },
     ]);
@@ -210,7 +235,6 @@ describe('flows', () => {
   it('orders deterministically (sessions desc, then signature) at full depth', () => {
     const response = run({ queries: [{ id: 'q', kind: 'flows', steps: 4, limit: 20 }] });
     expect(resultOf(response, 'q').rows).toEqual([
-      { steps: ['/', '/'], sessions: 1, avg_engaged_ms: 45_000, exit_rate: 1 },
       {
         steps: ['/', '/docs', 'event: cta · click', '/pricing'],
         sessions: 1,
@@ -219,16 +243,28 @@ describe('flows', () => {
       },
       { steps: ['/', '/docs'], sessions: 1, avg_engaged_ms: 30_000, exit_rate: 1 },
       { steps: ['/', '/pricing'], sessions: 1, avg_engaged_ms: 5_000, exit_rate: 1 },
+      { steps: ['/'], sessions: 1, avg_engaged_ms: 45_000, exit_rate: 1 },
+      { steps: ['/app', '/app/route'], sessions: 1, avg_engaged_ms: 20_000, exit_rate: 1 },
       { steps: ['/docs'], sessions: 1, avg_engaged_ms: 12_000, exit_rate: 1 },
       { steps: ['/late', '/after'], sessions: 1, avg_engaged_ms: 8_000, exit_rate: 1 },
     ]);
+  });
+
+  it('no signature repeats a label back to back, at any depth', () => {
+    for (const steps of [2, 3, 4]) {
+      const response = run({ queries: [{ id: 'q', kind: 'flows', steps, limit: 20 }] });
+      for (const row of resultOf(response, 'q').rows) {
+        const signature = row.steps as string[];
+        expect(signature.filter((step, i) => i > 0 && step === signature[i - 1])).toEqual([]);
+      }
+    }
   });
 
   it("guards the long tail with 'limit'", () => {
     const response = run({ queries: [{ id: 'q', kind: 'flows', steps: 2, limit: 2 }] });
     expect(resultOf(response, 'q').rows).toEqual([
       { steps: ['/', '/docs'], sessions: 2, avg_engaged_ms: 45_000, exit_rate: 0.5 },
-      { steps: ['/', '/'], sessions: 1, avg_engaged_ms: 45_000, exit_rate: 1 },
+      { steps: ['/', '/pricing'], sessions: 1, avg_engaged_ms: 5_000, exit_rate: 1 },
     ]);
   });
 });
@@ -246,13 +282,14 @@ describe('envelope filters', () => {
     });
     expect(resultOf(response, 'sankey').rows).toEqual([
       { step: 1, from: '/', to: '/docs', sessions: 2 },
-      { step: 1, from: '/', to: '/', sessions: 1 },
+      { step: 1, from: '/app', to: '/app/route', sessions: 1 },
       { step: 2, from: '/docs', to: 'event: cta · click', sessions: 1 },
       { step: 3, from: 'event: cta · click', to: '/pricing', sessions: 1 },
     ]);
     expect(resultOf(response, 'journeys').rows).toEqual([
       { steps: ['/', '/docs'], sessions: 2, avg_engaged_ms: 45_000, exit_rate: 0.5 },
-      { steps: ['/', '/'], sessions: 1, avg_engaged_ms: 45_000, exit_rate: 1 },
+      { steps: ['/'], sessions: 1, avg_engaged_ms: 45_000, exit_rate: 1 },
+      { steps: ['/app', '/app/route'], sessions: 1, avg_engaged_ms: 20_000, exit_rate: 1 },
     ]);
   });
 

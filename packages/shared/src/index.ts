@@ -252,8 +252,15 @@ const isoDate = z
     return !Number.isNaN(ms) && new Date(ms).toISOString().startsWith(date);
   }, 'not a calendar date');
 
+/**
+ * The range vocabulary (docs/04 § 3). `24h` is the one ROLLING preset: the 24
+ * hour buckets ending with the one in progress, which is why it alone resolves
+ * to edges inside a local date. The rest are whole local dates, and `today` and
+ * `mtd` are partial — their compare period is the complete one before, as every
+ * calendar-range analytics product reads it.
+ */
 export const RangeSchema = z.union([
-  z.object({ preset: z.enum(['today', '7d', '30d', '90d', 'mtd']) }),
+  z.object({ preset: z.enum(['today', '24h', '7d', '30d', '90d', 'mtd']) }),
   z.object({ from: isoDate, to: isoDate }),
 ]);
 export type Range = z.infer<typeof RangeSchema>;
@@ -285,6 +292,19 @@ export interface SiteWindow {
   timezone: string;
   from: string;
   to: string;
+  /**
+   * A half-open `[fromTs, toTs)` refinement in UTC ms, present only for a window
+   * whose edges fall INSIDE a local date — today, only the rolling `24h` preset.
+   * The dates above still bound it (they are the dates this span touches, which
+   * is what keeps the indexed `local_date` comparison doing the index work); the
+   * instants trim it to the hour.
+   *
+   * Both are quantized to a local hour boundary, so the window is stable within
+   * an hour and rolls as the hour turns. That is what lets the ETag hash it: an
+   * edge that followed the clock would mint a new tag on every request.
+   */
+  fromTs?: number;
+  toTs?: number;
 }
 
 /**

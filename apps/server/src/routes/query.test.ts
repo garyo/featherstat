@@ -141,6 +141,52 @@ describe('POST /api/query', () => {
     }
   });
 
+  /**
+   * The rolling preset is quantized to the hour precisely so this holds: a
+   * window with a moving edge would hash differently on every request and
+   * revalidate nothing, which is the caching cost that pays for the feature.
+   */
+  it("holds the rolling '24h' ETag within the hour and expires it when the hour turns", async () => {
+    vi.useFakeTimers();
+    try {
+      // 18:05 in New York, an hour after the seeded hit at 17:13 local.
+      vi.setSystemTime(Date.UTC(2023, 10, 14, 23, 5));
+      const body = { ...BODY, range: { preset: '24h' } };
+      const first = await post(body);
+      const etag = first.headers.get('etag') as string;
+      const seeded = (await first.json()) as QueryResponse;
+      expect(seeded.results.kpis).toMatchObject({ rows: [{ visitors: 1, pageviews: 1 }] });
+      // The window states its own sub-day edges, so no client re-derives them.
+      expect(seeded.meta.windows).toEqual([
+        {
+          siteId: 1,
+          timezone: 'America/New_York',
+          from: '2023-11-13',
+          to: '2023-11-14',
+          fromTs: Date.UTC(2023, 10, 14),
+          toTs: Date.UTC(2023, 10, 15),
+        },
+      ]);
+
+      // Later in the same local hour: same window, same tag, no query work.
+      vi.setSystemTime(Date.UTC(2023, 10, 14, 23, 59, 59));
+      expect((await post(body, { 'if-none-match': etag })).status).toBe(304);
+
+      // The hour turns and the window rolls with it, even though no data moved.
+      vi.setSystemTime(Date.UTC(2023, 10, 15, 0, 0, 1));
+      const rolled = await post(body, { 'if-none-match': etag });
+      expect(rolled.status).toBe(200);
+      expect(rolled.headers.get('etag')).not.toBe(etag);
+
+      // And a day on, the hit has rolled out of the window entirely.
+      vi.setSystemTime(Date.UTC(2023, 10, 16, 0, 0, 1));
+      const later = (await post(body)).json() as Promise<QueryResponse>;
+      expect((await later).results.kpis).toMatchObject({ rows: [{ visitors: 0, pageviews: 0 }] });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('mints a new ETag when data changes, so a stale tag re-executes', async () => {
     const first = await post(BODY);
     const etag = first.headers.get('etag') as string;

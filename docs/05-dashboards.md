@@ -12,8 +12,8 @@ is the visual reference for everything below (both views, light and dark).
 | View | Contents |
 | --- | --- |
 | **All sites** (home) | One card per site: name, active-now, today's visitors + delta ("today" = the SITE's local today, per its timezone), 14-day sparkline, the site's **top 3 pages with per-page trend** (micro-sparkline + delta vs previous period — how each blog article is doing, at a glance, R20), and goal/event pills (e.g. "3 signups today" — **M2**, alongside goals themselves). A site with no traffic yet gets a "waiting for the first hit" card, not a blank. Sorted by traffic. The whole view is one `/api/query` batch + the SSE stream. |
-| **Site** | The workhorse. Filter row (date presets, active dimension filters as removable chips; the compare mode is fixed to "previous period" until the compare toggle ships in **M2**) → KPI row → main time series → breakdown grid (pages, referrers, geo, devices, events, outbound links, time on page, hours heatmap) → top journeys. Every breakdown row is click-to-filter; a filter on an event-level dimension renders the session-only KPI tiles (engagement, bounce) as "—" rather than erroring the row. |
-| **Journeys** (per site) | R21. A sankey of the first N steps from the entry page (pages and events as nodes, edge weight = sessions) over a top-journeys table: sequence · sessions · avg time · exit rate. Clicking a sankey edge filters the table; the view honors the global filter row, so "journeys of visitors from HN" is one click. |
+| **Site** | The workhorse. Filter row (date presets — Today · Last 24 hours · 7 / 30 / 90 days · Month to date, the second of which is the rolling window whose comparison is like-for-like, 04 § 3 — active dimension filters as removable chips; the compare mode is fixed to "previous period" until the compare toggle ships in **M2**) → KPI row → main time series → breakdown grid (pages, referrers, geo, devices, events, outbound links, time on page, hours heatmap) → top journeys. Every breakdown row is click-to-filter; a filter on an event-level dimension renders the session-only KPI tiles (engagement, bounce) as "—" rather than erroring the row. |
+| **Journeys** (per site) | R21. A sankey of the first N steps from the entry page (pages and events as nodes, edge weight = sessions) over a top-journeys table: sequence · sessions · avg time · exit rate. Clicking a sankey edge filters the table; the view honors the global filter row, so "journeys of visitors from HN" is one click. **A step is a move, not a hit**: a page repeated back to back — reloaded, or announced twice by an SPA router — is one step, so no edge loops a node back to itself and no journey reads `/app → /app` (03 § Journeys, 06). A session that never left its entry page is a one-step journey with no edges, and shows up in the table rather than the sankey. |
 | **Realtime** | Active-now hero number, a per-visitor tally of the last 30 minutes (alias · hits · engaged time · place · site — the time is the server's, since only it sees the heartbeat pings), live feed, country tally of the same window. Pure SSE, no queries. The world map with fading dots (city centroids) moved to **M2**: it needs the map-outline data that arrives with the sankey work, so M1 ships hero + feed + country list and the map joins when that asset lands. |
 | **Settings** | Sites, tracking snippets, tokens, share links, retention, diagnostics (bot counts, ingest health). |
 
@@ -242,6 +242,16 @@ color never carries the sign alone.
 — identity): every figure drawn from a `distinct` measure wears the `~` mark and
 its explanation, on the KPI tile's label and the site card's caption alike, from
 the aggregate rather than from the metric's name.
+
+**A delta on a partial range compares against a complete one, and says so.**
+`today` at 09:00 is 9 hours of traffic against all 24 of yesterday, so its
+tiles read low all morning; the filter row states the comparison in words
+("compared with all of yesterday") rather than letting the arrow imply a drop
+that is really a clock. The fix is a range, not a smaller yesterday: **Last 24
+hours** compares 24 hour buckets against the 24 before them, which is
+like-for-like by construction (04 § 3). Clipping the calendar presets instead
+would make "yesterday" mean "yesterday until 09:00" — the same misreading,
+pointing the other way, and invisible.
 
 ## Responsive & performance
 

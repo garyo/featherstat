@@ -17,7 +17,7 @@ import {
  * supplies the reality, that one supplies the proof it is being measured.
  */
 
-const PRESETS: readonly RangePreset[] = ['today', '7d', '30d', '90d'];
+const PRESETS: readonly RangePreset[] = ['today', '24h', '7d', '30d', '90d'];
 
 afterAll(closeContractDb);
 

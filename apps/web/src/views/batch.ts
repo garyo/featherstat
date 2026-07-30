@@ -10,12 +10,12 @@ import type { WidgetData } from '../widgets/types.ts';
 
 /**
  * The view half of the one-fetch rule (CLAUDE.md invariant 1). Collection
- * (`collectBatch`, `widgetQueries`, `hourlyWhenToday`) lives in
+ * (`collectBatch`, `widgetQueries`, `hourlyWhenIntraday`) lives in
  * `packages/shared` — the share route assembles the same batch server-side —
  * so this module keeps only what needs the view: routing answers back to
  * widgets, and trimming metrics the active filters make unanswerable.
  */
-export { collectBatch, hourlyWhenToday } from '@featherstat/shared';
+export { collectBatch, hourlyWhenIntraday } from '@featherstat/shared';
 
 /**
  * The routing half of `collectBatch`: one widget's slice of the batch response,

@@ -207,6 +207,70 @@ metric *means* has to be logged here or the comparison silently drifts.
     Rolling back means restoring the pre-deploy database copy, or dropping the
     new index, re-creating the old one and setting `PRAGMA user_version = 3` by
     hand. Take the copy before deploying — see docs/09 § Bake log.
+- **2026-07-30 — one navigation is one page view, and a repeated page is one
+  journey step.** Two changes, one finding, and a **deliberate divergence from
+  Matomo**, which records both hits of a double-fire.
+  - What was measured on the live database: SPA integrations fire
+    `trackPageView` twice for a single navigation. Gaps of **0–112 ms** — not
+    reloads. **pelorus-nav 4 duplicates in 21 page views (19 %)**, **globe-viz 1
+    in 70 (1.4 %)**, **oberbrunner.com 0 in 67**, everything else 0 in 35. Only
+    the SPAs; the static blog is clean. Affected sites: **pelorus-nav.com** and
+    **globe-viz** (both native-tracker SPAs; any future SPA on the matomo.js
+    shim is covered too).
+  - **Tracker side** (`packages/tracker`, both the matomo.js shim and the native
+    ESM tracker): a `trackPageView` for the **same URL within 1 s** of the
+    previous one is dropped client-side. The window is short on purpose — a
+    genuine reload is a real second view — and bounded on purpose: it sits three
+    orders of magnitude below `SESSION_TIMEOUT_MS`, so it can never swallow the
+    page view that legitimately *starts* the next visit and leave that visit
+    with nothing in it. The owner's ruling: *"Two page-views for the same URL
+    from the same origin are clearly not worth counting as two views. I don't
+    think reloads are significant in any real way."* Invariant 4 is untouched:
+    this is the client declining to send, never the collector declining to
+    accept.
+  - **Reconciliation:** on an SPA, featherstat will read **below Matomo on page
+    views by that site's double-fire rate** — about 19 % on pelorus-nav, 1.4 %
+    on globe-viz, 0 % everywhere else. Matomo counts both hits. Do not chase it.
+    Two knock-on effects on the same sites: **bounce rate rises** (a
+    single-page visit whose view double-fired had 2 page views and was not a
+    bounce; now it is), and **views-per-visit falls**.
+  - **Journeys side** (`query/sequences.ts`): consecutive identical step labels
+    now collapse into one step, in both `transitions` and `flows`. A flow
+    diagram is about movement *between* pages, so `/app → /app → /app` is one
+    step, whether the repeat came from a double-fire, a reload, or an outlink
+    taken from the page it labels. Sankey edges from a node to itself no longer
+    exist. This changes what the sequence queries return for **every** site, not
+    just the SPAs — reloads happen everywhere.
+  - On the replay corpus, before → after, whole 90 days: journey steps
+    **32 864 → 28 942 (−11.9 %)**, and 3 070 of 13 799 visits lose at least one
+    step. Sankey edges per site (weight in brackets): site 1 **466 → 415**
+    [3 662 → 3 139], site 2 **616 → 572** [6 129 → 5 352], site 3 **252 → 223**
+    [2 322 → 1 821], site 4 **328 → 296** [2 570 → 2 129], site 5 **257 → 199**
+    [2 124 → 1 356], site 6 **221 → 194** [1 333 → 1 066]. Distinct flow
+    signatures at depth 4: **968 → 813**, **1 586 → 1 356**, **493 → 387**,
+    **662 → 539**, **422 → 319**, **363 → 281**. Sessions counted as exiting
+    inside a 4-step signature rise (fewer steps means more journeys finish
+    inside the window): **2 464 → 2 592**, **4 111 → 4 315**, **1 548 → 1 664**,
+    **1 759 → 1 857**, **1 120 → 1 286**, **1 053 → 1 109**.
+  - The corpus itself gained the double-fire so the collapse is tested against
+    it (invariant 6: it only gains cases). Sites 3 and 5 now repeat a share of
+    their page views 0–119 ms later, at the prevalence production measured; the
+    repeats draw from a second PRNG stream, so **every other hit in the corpus
+    is bit-identical** and visits (13 799), visitors (12 787) and dropped/revived
+    heartbeats do not move at all. What does move: stored rows **137 743 →
+    138 371 (+628)**, page views **29 517 → 30 145 (+2.13 %)** — all of it site
+    3 **3 845 → 3 899 (+1.40 %)** and site 5 **2 930 → 3 504 (+19.59 %)**, which
+    reproduces the production rate — and bounces **2 180 → 2 134 (−46)**, site 3
+    277 → 272 and site 5 227 → 186, which is the bounce distortion above, seen
+    from the corpus side. Journey steps after the collapse are **28 942 either
+    way**: the collapse absorbs the double-fire exactly.
+  - Read cost, since the collapse needs to know what follows each row: the
+    gated shapes move **85.1 → 87.1 ms** (`journeys @ 90d, busiest site`,
+    budget 100) and **266 → 274 ms** (`journeys @ 90d, all sites`, budget 760).
+    The naive shape — collapse into its own CTE, then number the survivors —
+    cost 111 ms and breached; both kinds instead select the runs out of a single
+    `LEAD` pass, and flows cuts a signature to depth only for the journeys
+    actually longer than it.
 
 ## Cutover sequence
 

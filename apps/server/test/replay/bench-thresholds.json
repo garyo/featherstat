@@ -9,6 +9,7 @@
     "dashboardBudgetMs": 50,
     "maxMedianMs": {
       "site dashboard @ today": 20,
+      "site dashboard @ 24h": 16,
       "site dashboard @ 7d": 70,
       "site dashboard @ 90d": 490,
       "hours x weekday @ 90d": 40,

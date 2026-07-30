@@ -64,6 +64,22 @@ Unknown `_paq` commands log one `console.debug` and are ignored. Delivery via
 15 s ping, exactly like the tags expect. No SPA auto-tracking here — the blog
 already re-pushes on `astro:page-load` and the shim must not double-count.
 
+**One navigation is one page view (both trackers).** A `trackPageView` for the
+same URL within **1 s** of the previous one is dropped client-side: SPA routers
+announce a single route change from two places, and production measured the
+pair 0–112 ms apart. Two guards, two problems — `browser.ts` stops a page that
+*installs* matomo.js twice, this stops an app that *announces* twice; the shim
+resolves the URL through `setCustomUrl` first, so an SPA route change is a
+different view and passes. Deliberately not longer than a second, and the
+reason is not tidiness: past the 30-minute session timeout a page view
+legitimately **starts a new visit**, and a guard that swallowed it would leave
+that visit holding heartbeats and nothing else — the pageview-less ghost visit
+the sessionizer was fixed to stop producing. `packages/tracker/src/repeat.ts`
+owns the rule; its test pins the window far below `SESSION_TIMEOUT_MS` and both
+trackers assert the timeout case end to end. Events, outlinks, downloads and
+pings are untouched. A suppressed hit is never sent, so invariant 4 (beacons
+never bounce) is not in play: the collector refuses nothing.
+
 ### Compatibility contract
 
 The golden corpus in `apps/server/test/fixtures/matomo/` (real access-log
@@ -130,6 +146,48 @@ A query the vocabulary cannot answer honestly (e.g. `bounce_rate` × `title`) or
 a kind that ships in a later milestone yields a per-query `error` entry — the
 batch itself still succeeds, and never returns wrong numbers.
 
+- **Ranges: five calendar presets, one rolling one, or explicit dates.**
+  `today` · `24h` · `7d` · `30d` · `90d` · `mtd`, or `{from, to}`. Every one of
+  them resolves per site timezone (`site: "all"` resolves one window per site),
+  and all but `24h` resolve to whole inclusive `local_date` bounds — the tz math
+  happened at ingest, so a calendar window is a plain indexed string comparison.
+
+  **`24h` is the rolling one**: the last 24 hour buckets, ending with the one in
+  progress. It exists because a calendar day is a bad comparison — *"'today'
+  always reports lower than yesterday especially in the morning, whereas 24 hour
+  periods are directly comparable to the previous 24 hrs."* Three consequences:
+
+  - **It is quantized to the site's local hour**, never to the request instant.
+    An edge that followed the clock would resolve a different window on every
+    request, so the ETag would change on every request and revalidate nothing.
+    Within an hour the window is fixed; when the hour turns it rolls, and the
+    ETag expires with it — the same contract `today` has at local midnight, one
+    granularity down. The quantum is the *local* hour: in a 45-minute zone
+    (Kathmandu) a UTC-hour floor would leave the oldest bucket three quarters
+    outside the window.
+  - **Its window carries instants.** It begins and ends inside a local date, so
+    `meta.windows` adds a half-open `fromTs`/`toTs` in UTC ms beside the dates
+    (the dates are the two the span touches). The compiler keeps both: the
+    indexed `local_date` bound does the seek, and the instants trim the two
+    partial dates at the ends. `events` are dated by `ts` and `sessions` by
+    `started_at` — a visit belongs to the window it *started* in, exactly as it
+    belongs to the local date it started on.
+  - **Its axis is 24 hour keys crossing local midnight**, enumerated from the
+    window's own instants rather than by expanding its two dates (which would
+    give 48). It is 24 keys across a spring-forward — no real time is lost, only
+    a label — and **23 across a fall-back**, where one key covers the two real
+    hours that share it. Same rule as a local day's axis, which is 23 or 24 keys
+    for the same reason.
+- **Compare is never clipped to elapsed time.** `previous` is the same-length
+  window immediately before; `year` is the same window one year back. A partial
+  current period is therefore compared against a *complete* previous one:
+  `today` at 09:00 reads 9 hours against a full yesterday, and `mtd` reads a
+  part-month against the equivalent number of complete days before it. That is
+  how every calendar-range analytics product reads, and clipping would make
+  "yesterday" silently mean "yesterday until 09:00" — a label that lies in the
+  other direction. **`24h` is the like-for-like answer**: both sides are 24 hour
+  buckets, so its comparison needs no clipping to be honest. Adding the preset
+  beats mutating what `today` means.
 - **The response describes itself.** Resolving a range preset needs the site's
   timezone and a clock; enumerating a chart's x axis needs that *and* the
   granularity the query ran at. The server has all three, so it says what it
@@ -143,6 +201,7 @@ batch itself still succeeds, and never returns wrong numbers.
     "dataVersion": 91824,
     "windows": [                                  // one per site in scope
       { "siteId": 4, "timezone": "America/New_York", "from": "2026-06-30", "to": "2026-07-29" }
+      // a rolling window adds "fromTs"/"toTs" (UTC ms, half-open) beside its dates
     ]
   }
   ```
@@ -172,6 +231,9 @@ batch itself still succeeds, and never returns wrong numbers.
 
   `keys` is a pure function of the window and the granularity — never of the
   clock — so a body replayed from cache on a 304 can never state a stale axis.
+  (A rolling window's *resolution* reads the clock, but the window it resolves
+  to is fixed for the hour and travels in `meta.windows`; the axis is still a
+  function of that window alone.)
   `clip` is the clock-dependent part: the newest key whose bucket had **begun**
   when the response was generated, which is where real data stops inside the
   window. `today` resolves to a whole local day, so its hour axis runs to
@@ -252,7 +314,10 @@ batch itself still succeeds, and never returns wrong numbers.
   rate. Both respect the surrounding site/range/filters (so "journeys of
   visitors from HN" is just a filter). Because they scope *sessions*, a filter
   only the events table can answer (`path`, `event_category`, …) cannot honestly
-  narrow them and yields the same per-query `unsupported`.
+  narrow them and yields the same per-query `unsupported`. Both kinds collapse
+  consecutive identical labels into one step, so a `transitions` edge never runs
+  from a node to itself and no `flows` signature repeats a label back to back
+  (see 03 § Journeys).
 - **Time on page** is its own kind for the same reason — it counts page legs,
   not rows: `{ "id": "dwell", "kind": "dwell", "limit": 10 }` → rows of
   `{ path, views_measured, avg_page_ms, max_page_ms }` ranked by average dwell,
@@ -266,9 +331,10 @@ batch itself still succeeds, and never returns wrong numbers.
   a `filters` entry and re-issues the same batch.
 - **Caching**: response ETag = hash(max event rowid, schema version,
   canonicalized request body, resolved per-site windows *including their
-  timezones* — so a preset like `today` expires at site-local midnight even when
-  no data changed, and re-zoning a site expires an explicit `from`/`to` range
-  whose bounds did not move but whose hour axis did).
+  timezones and any rolling instants* — so a preset like `today` expires at
+  site-local midnight even when no data changed, `24h` expires when the site's
+  local hour turns and is stable in between, and re-zoning a site expires an
+  explicit `from`/`to` range whose bounds did not move but whose hour axis did).
   Unchanged data → 304 with zero queries executed. Realtime SSE tells the
   client *when* to revalidate, so there's no polling loop.
 - **Rate limit.** A stored dashboard is a client-authored query plan executed
