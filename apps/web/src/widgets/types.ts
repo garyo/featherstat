@@ -35,11 +35,18 @@ export interface RealtimeEnv {
   visitorTimes: readonly RealtimeEngagement[];
 }
 
-/** A highlight a composing page shares between its realtime widgets (tally ↔ feed). */
+/**
+ * A highlight a composing page shares between its realtime widgets (tally ↔ feed).
+ *
+ * Carries the visitor's opaque `ref`, never the alias (CLAUDE.md invariant 8).
+ * 384 two-word names serve any number of visitors, so hovering one row of a
+ * collided pair would light both — and a keyed `{#each}` over names would give
+ * two rows the same key. The name is for reading; this is for matching.
+ */
 export interface Highlight {
-  /** The alias under the cursor, if any. */
-  name: string | undefined;
-  onhover: (name: string | undefined) => void;
+  /** The `ref` of the visitor under the cursor, if any. */
+  ref: string | undefined;
+  onhover: (ref: string | undefined) => void;
 }
 
 /**

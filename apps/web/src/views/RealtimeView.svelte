@@ -24,6 +24,7 @@ interface Props {
 let { app, site }: Props = $props();
 
 /** Alias under the cursor — its every row lights up, feed and tally alike. */
+/** The hovered visitor's `ref`, the key both realtime widgets match on. */
 let hover = $state<string | undefined>(undefined);
 
 /** Clock for the `ago` labels and the tally window — ticks while the view is up. */
@@ -50,7 +51,7 @@ const env = $derived<WidgetEnv>({
   now,
   onfilter: null,
   headless: false,
-  highlight: { name: hover, onhover: (name) => (hover = name) },
+  highlight: { ref: hover, onhover: (ref) => (hover = ref) },
 });
 
 /** Spec stand-ins: on this page the arrangement is the page's, not a document's

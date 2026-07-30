@@ -214,10 +214,20 @@ export function countryTally(
 }
 
 /** A hit's place, as the feed prints it: `City, CC`, else the country, else Unknown. */
+export function placeOf(place: {
+  city?: string | undefined;
+  country?: string | undefined;
+}): string | undefined {
+  if (place.city !== undefined && place.country !== undefined) {
+    return `${place.city}, ${place.country}`;
+  }
+  if (place.city !== undefined) return place.city;
+  return place.country !== undefined ? countryName(place.country) : undefined;
+}
+
+/** The same place, for a row that must print something rather than omit it. */
 export function placeLabel(hit: RealtimeHit): string {
-  if (hit.city !== undefined && hit.country !== undefined) return `${hit.city}, ${hit.country}`;
-  if (hit.country !== undefined) return countryName(hit.country);
-  return 'Unknown';
+  return placeOf(hit) ?? 'Unknown';
 }
 
 /** What the visitor did: an event reads `category · action`, anything else its path. */

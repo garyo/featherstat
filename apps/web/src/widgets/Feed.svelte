@@ -12,9 +12,10 @@ import type { WidgetProps } from './types.ts';
  */
 let { spec, env }: WidgetProps = $props();
 
-/** Own highlight when standalone; a composing page can share one instead. */
+/** Own highlight when standalone; a composing page can share one instead. Both
+ * hold the visitor's `ref` — the alias collides (invariant 8). */
 let localHover = $state<string | undefined>(undefined);
-const hover = $derived(env.highlight === null ? localHover : env.highlight.name);
+const hover = $derived(env.highlight === null ? localHover : env.highlight.ref);
 
 const limit = $derived(feedLimit(spec.options.limit));
 const shown = $derived(scopedHits(env.realtime, env.scope).slice(0, limit));
@@ -29,9 +30,9 @@ $effect(() => {
   return () => clearInterval(timer);
 });
 
-function setHover(name: string | undefined): void {
-  if (env.highlight === null) localHover = name;
-  else env.highlight.onhover(name);
+function setHover(ref: string | undefined): void {
+  if (env.highlight === null) localHover = ref;
+  else env.highlight.onhover(ref);
 }
 
 function feedLimit(raw: unknown): number {

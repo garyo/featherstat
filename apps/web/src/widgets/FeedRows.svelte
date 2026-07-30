@@ -23,8 +23,9 @@ interface Props {
   scope: SiteScope;
   /** The site directory, or null on a page that has none. */
   sites: ReadonlyMap<number, SiteInfo> | null;
+  /** The `ref` under the cursor — never the alias (invariant 8). */
   hover?: string | undefined;
-  onhover?: (name: string | undefined) => void;
+  onhover?: (ref: string | undefined) => void;
 }
 
 let { hits, now, scope, sites, hover, onhover }: Props = $props();
@@ -38,8 +39,8 @@ const siteNameOf = (id: number): string => sites?.get(id)?.name ?? `Site ${id}`;
     <div
       class="feed-row"
       role="listitem"
-      class:hl={hover === hit.visitor.name}
-      onmouseenter={() => onhover?.(hit.visitor.name)}
+      class:hl={hover === hit.visitor.ref}
+      onmouseenter={() => onhover?.(hit.visitor.ref)}
       onmouseleave={() => onhover?.(undefined)}
     >
       <span class="ago">{relativeAgo(hit.ts, now)}</span>

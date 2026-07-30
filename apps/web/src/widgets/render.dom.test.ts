@@ -357,6 +357,22 @@ describe('the realtime widgets read the stream the page holds', () => {
     expect(text(root.querySelector('.bar-row'))).toBe('🇳🇿 New Zealand 2');
   });
 
+  it('draws two rows for two visitors who drew the same alias', () => {
+    // Invariant 8, in the layer the derivation tests do not reach. 384 names
+    // serve any number of visitors, so a collision is ordinary — and the tally
+    // used to key its `{#each}`, its expand state and its hover on the NAME, so
+    // a collided pair shared one key and merged into each other's row.
+    const twins = [
+      hit({ visitor: { name: 'Amiable Aardvark', color: 0, ref: 'ref-a' } }),
+      hit({ visitor: { name: 'Amiable Aardvark', color: 0, ref: 'ref-b' } }),
+    ];
+    const root = render(grid, {
+      results: {},
+      env: { ...APP_PAGE, realtime: { active: { 1: 2 }, recent: twins, visitorTimes: [] } },
+    });
+    expect(root.querySelectorAll('.visitor-row')).toHaveLength(2);
+  });
+
   it('scopes to the site on screen and counts every site at "all"', () => {
     const root = render(grid, {
       results: {},

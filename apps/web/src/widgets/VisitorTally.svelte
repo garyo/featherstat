@@ -1,14 +1,13 @@
 <script lang="ts">
 import {
+  placeOf,
   relativeAgo,
   scopedHits,
-  type VisitorCount,
   visitorMeta,
   visitorRows,
   visitorTrail,
 } from '../lib/realtime.ts';
 import { dotColor } from './alias-colors.ts';
-import { countryName } from './geo.ts';
 import type { WidgetProps } from './types.ts';
 
 /**
@@ -22,32 +21,26 @@ let opened = $state<string | undefined>(undefined);
 
 const scoped = $derived(scopedHits(env.realtime, env.scope));
 const visitors = $derived(visitorRows(env.realtime, env.scope, env.now));
-const hover = $derived(env.highlight?.name);
+const hover = $derived(env.highlight?.ref);
 const siteNameOf = (id: number): string => env.sites?.get(id)?.name ?? `Site ${id}`;
 
-function placeOf(row: VisitorCount): string | undefined {
-  if (row.city !== undefined && row.country !== undefined) return `${row.city}, ${row.country}`;
-  if (row.city !== undefined) return row.city;
-  return row.country !== undefined ? countryName(row.country) : undefined;
-}
-
-const toggle = (name: string): void => {
-  opened = opened === name ? undefined : name;
+const toggle = (ref: string): void => {
+  opened = opened === ref ? undefined : ref;
 };
 </script>
 
 {#if visitors.length > 0}
   <p class="tally-label">Visitors · last 30 min</p>
   <div class="visitor-tally" role="list">
-    {#each visitors as row (row.name)}
-      {@const isOpen = opened === row.name}
-      <div class="visitor-row" role="listitem" class:hl={hover === row.name}>
+    {#each visitors as row (row.ref)}
+      {@const isOpen = opened === row.ref}
+      <div class="visitor-row" role="listitem" class:hl={hover === row.ref}>
         <button
           class="visitor-open"
           type="button"
           aria-expanded={isOpen}
-          onclick={() => toggle(row.name)}
-          onmouseenter={() => env.highlight?.onhover(row.name)}
+          onclick={() => toggle(row.ref)}
+          onmouseenter={() => env.highlight?.onhover(row.ref)}
           onmouseleave={() => env.highlight?.onhover(undefined)}
         >
           <span class="caret" class:open={isOpen}>▸</span>
