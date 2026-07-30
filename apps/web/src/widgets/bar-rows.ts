@@ -1,6 +1,12 @@
 import type { ResultRow } from '@featherstat/shared';
 import { num } from './series.ts';
 
+/** One labeled line of a row's tooltip; the value arrives already written. */
+export interface TipLine {
+  value: string;
+  label: string;
+}
+
 /** One ranked display row of a bar-list. */
 export interface BarRow {
   name: string;
@@ -17,6 +23,19 @@ export interface BarRow {
   filterValue: string | null | undefined;
   /** The untrimmed value when display shortened it (an outbound URL's protocol). */
   full?: string;
+  /**
+   * The number as printed, when a plain count is the wrong writing of it — the
+   * time-on-page card prints a duration. A count when omitted.
+   */
+  text?: string;
+  /** A quieter second line: the dwell card's longest view and measured count. */
+  sub?: string;
+  /**
+   * The tooltip, in order. Omitted, the rows build the ordinary one from the
+   * list's own units (`BarRows`) — a row states its tooltip only when its
+   * numbers are not the metric and its second metric.
+   */
+  tips?: readonly TipLine[];
 }
 
 export interface BarRowOptions {

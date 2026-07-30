@@ -7,13 +7,12 @@ import {
   type ResultRow,
 } from '@featherstat/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createSite, type Db, openDb, withWriteTransaction } from '../../src/db/index.ts';
-import { parseMatomoRequest } from '../../src/ingest/matomo.ts';
-import { createPipeline } from '../../src/pipeline/index.ts';
+import type { Db } from '../../src/db/index.ts';
 import { measureOf, preferredTable } from '../../src/query/compiler.ts';
 import { executeQueryRequest } from '../../src/query/executor.ts';
 import { resultOf } from '../rows.ts';
-import { type Corpus, generateCorpus, REPLAY_HITS_PER_FLUSH, toMatomoQuery } from './generate.ts';
+import { generateCorpus } from './generate.ts';
+import { openReplayDb } from './harness.ts';
 
 /**
  * Invariants over the replay corpus: statements that must hold for ANY corpus and
@@ -41,32 +40,12 @@ const corpus = generateCorpus();
 let db: Db;
 
 beforeAll(() => {
-  db = openDb(':memory:');
-  withWriteTransaction(db, () => {
-    for (const site of corpus.sites) createSite(db, site);
-  });
-  replay(db, corpus);
+  db = openReplayDb(corpus);
 }, 120_000);
 
 afterAll(() => {
   db.close();
 });
-
-/** Bench-style replay: a huge batch interval and explicit flushes — no fake timers needed. */
-function replay(target: Db, source: Corpus): void {
-  const pipeline = createPipeline(target, { batchIntervalMs: 3_600_000 });
-  let queued = 0;
-  for (const entry of source.hits) {
-    const { hits } = parseMatomoRequest({ query: toMatomoQuery(entry) });
-    pipeline.sink(hits, entry.ctx);
-    queued += 1;
-    if (queued === REPLAY_HITS_PER_FLUSH) {
-      queued = 0;
-      pipeline.flush();
-    }
-  }
-  pipeline.shutdown();
-}
 
 // ---------------------------------------------------------------------------
 // The sweep

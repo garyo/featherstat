@@ -4,18 +4,11 @@ import {
   SESSION_TIMEOUT_MS,
 } from '@featherstat/shared';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createSite, type Db, openDb, withWriteTransaction } from '../../src/db/index.ts';
+import type { Db } from '../../src/db/index.ts';
 import { parseMatomoRequest } from '../../src/ingest/matomo.ts';
 import { isBotUserAgent } from '../../src/pipeline/enrich.ts';
-import { createPipeline } from '../../src/pipeline/index.ts';
-import {
-  BOT_AGENTS,
-  type Corpus,
-  type DayTotals,
-  generateCorpus,
-  REPLAY_HITS_PER_FLUSH,
-  toMatomoQuery,
-} from './generate.ts';
+import { BOT_AGENTS, type DayTotals, generateCorpus, toMatomoQuery } from './generate.ts';
+import { openReplayDb } from './harness.ts';
 
 /**
  * The M0 acceptance instrument (docs/08 WP6): 90 days of synthetic traffic for six
@@ -34,32 +27,19 @@ beforeAll(() => {
   // corpus. The fake clock is what makes the 200 ms batch timer deterministic.
   vi.useFakeTimers();
   vi.setSystemTime(corpus.startMs);
-  db = openDb(':memory:');
-  withWriteTransaction(db, () => {
-    for (const site of corpus.sites) createSite(db, site);
+  // The one suite that lets the REAL 200 ms batch timer do the flushing — the
+  // batcher's own scheduling is part of what it asserts, so it advances the
+  // clock where its siblings just call flush().
+  db = openReplayDb(corpus, {
+    batchIntervalMs: BATCH_INTERVAL_MS,
+    onBatch: () => vi.advanceTimersByTime(BATCH_INTERVAL_MS),
   });
-  replay(db, corpus);
 }, 120_000);
 
 afterAll(() => {
   db.close();
   vi.useRealTimers();
 });
-
-function replay(target: Db, source: Corpus): void {
-  const pipeline = createPipeline(target, { batchIntervalMs: BATCH_INTERVAL_MS });
-  let sinceTick = 0;
-  for (const entry of source.hits) {
-    const { hits } = parseMatomoRequest({ query: toMatomoQuery(entry) });
-    pipeline.sink(hits, entry.ctx);
-    sinceTick += 1;
-    if (sinceTick === REPLAY_HITS_PER_FLUSH) {
-      sinceTick = 0;
-      vi.advanceTimersByTime(BATCH_INTERVAL_MS);
-    }
-  }
-  pipeline.shutdown(); // stops the timer and flushes the tail
-}
 
 /** Rebuilds the generator's DayTotals shape from SQL alone. */
 function totalsFromDb(target: Db): DayTotals[] {

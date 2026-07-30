@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { createSite, openDb, withWriteTransaction } from '../../src/db/index.ts';
 import { parseMatomoRequest } from '../../src/ingest/matomo.ts';
 import { createPipeline } from '../../src/pipeline/index.ts';
-import { generateCorpus, REPLAY_HITS_PER_FLUSH, toMatomoQuery } from './generate.ts';
+import { generateCorpus, REPLAY_GEO, REPLAY_HITS_PER_FLUSH, toMatomoQuery } from './generate.ts';
 
 /**
  * The perf gate (docs/02 § Performance budget, docs/08 WP6): replays the whole
@@ -61,7 +61,12 @@ function measure(): Measurement {
     withWriteTransaction(db, () => {
       for (const site of corpus.sites) createSite(db, site);
     });
-    const pipeline = createPipeline(db, { batchIntervalMs: MANUAL_FLUSH_INTERVAL_MS });
+    // Same geo the test replays use (`harness.ts`): the storage figure below
+    // must describe the rows the suite actually asserts against, geo included.
+    const pipeline = createPipeline(db, {
+      geo: REPLAY_GEO,
+      batchIntervalMs: MANUAL_FLUSH_INTERVAL_MS,
+    });
     const flushMs: number[] = [];
     let queued = 0;
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dwellRows } from './dwell.ts';
+import { dwellBars, dwellRows } from './dwell.ts';
 
 describe('dwellRows', () => {
   it('ranks pages by average dwell and scales the wash bar against the longest', () => {
@@ -30,5 +30,35 @@ describe('dwellRows', () => {
 
   it('handles an empty answer', () => {
     expect(dwellRows([])).toEqual([]);
+  });
+});
+
+describe('dwellBars', () => {
+  const rows = dwellBars(
+    dwellRows([
+      { path: '/blog', views_measured: 1_400, avg_page_ms: 92_400, max_page_ms: 740_000 },
+    ]),
+  );
+
+  it('writes the average as a duration and says what it rests on', () => {
+    expect(rows[0]).toMatchObject({
+      name: '/blog',
+      value: 92_400,
+      pct: '100.0',
+      text: '1m 32s',
+      sub: 'max 12m 20s · 1,400 measured',
+    });
+  });
+
+  it('carries its own tooltip, because its numbers are not a metric and its second metric', () => {
+    expect(rows[0]?.tips).toEqual([
+      { value: '92,400 ms', label: 'average' },
+      { value: '740,000 ms', label: 'longest' },
+      { value: '1,400', label: 'measured views' },
+    ]);
+  });
+
+  it('renders no row as a filter: a session-scoped query cannot honour a path filter', () => {
+    expect(rows[0]?.filterValue).toBeUndefined();
   });
 });

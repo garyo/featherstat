@@ -1,36 +1,10 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { actionLabel, placeLabel } from '../lib/realtime.ts';
 
-const SRC = fileURLToPath(new URL('..', import.meta.url));
-
-function sourceFiles(dir: string): string[] {
-  return readdirSync(dir).flatMap((name) => {
-    const path = join(dir, name);
-    if (statSync(path).isDirectory()) return sourceFiles(path);
-    // Tests quote markup to assert on it; only renderers count.
-    return /\.(svelte|ts)$/.test(name) && !name.endsWith('.test.ts') ? [path] : [];
-  });
-}
-
 /**
- * The guard behind the rule in CLAUDE.md: one rendering per thing rendered.
- * The realtime feed lived inline in the Realtime view for a month before the
- * dashboard wanted one too, and copying it cost four commits of fixing the
- * same bug twice. If this fails, extract into the shared component rather than
- * teaching a second file the markup.
+ * What a feed row says. That only ONE file draws the row is held by
+ * `src/ownership.test.ts`, along with every other shared rendering.
  */
-describe('feed rows have exactly one implementation', () => {
-  it('only FeedRows.svelte renders a feed row', () => {
-    const owners = sourceFiles(SRC)
-      .filter((path) => readFileSync(path, 'utf8').includes('class="feed-row"'))
-      .map((path) => path.slice(SRC.length));
-    expect(owners).toEqual(['widgets/FeedRows.svelte']);
-  });
-});
-
 describe('feed row labels', () => {
   const hit = (over: Record<string, unknown> = {}) =>
     ({

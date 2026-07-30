@@ -7,6 +7,8 @@ import {
   SESSION_REVIVAL_MS,
   SESSION_TIMEOUT_MS,
 } from '@featherstat/shared';
+import { DevGeoProvider } from '../../src/dev/geo.ts';
+import type { GeoProvider } from '../../src/pipeline/geo.ts';
 
 /**
  * Deterministic synthetic traffic for the replay harness (WP6, docs/08): 90 days
@@ -57,12 +59,22 @@ export interface DayTotals {
   botDrops: number;
 }
 
+/** Independently counted page views for one site from one place, whole corpus. */
+export interface PlaceTotals {
+  siteId: number;
+  /** ISO 3166-1 alpha-2, or null for the address the fixture leaves unlocated. */
+  country: string | null;
+  pageviews: number;
+}
+
 export interface Corpus {
   sites: ReplaySite[];
   /** Ascending by `ctx.receivedAt`; hits of one session keep their emitted order. */
   hits: ReplayHit[];
   /** Sorted by site id then local date; a day appears only if something happened. */
   totals: DayTotals[];
+  /** Sorted by site id then country; the null group last. */
+  places: PlaceTotals[];
   /** The exact number of `events` rows a replay must produce. */
   storedHits: number;
   /** Heartbeats with no visit to continue: never stored, never counted (docs/03). */
@@ -82,6 +94,23 @@ export interface GenerateOptions {
 
 /** Hits accepted between batch flushes in the replay and bench loops — one shared knob. */
 export const REPLAY_HITS_PER_FLUSH = 500;
+
+/**
+ * Where the corpus's visitors are.
+ *
+ * The corpus addresses are RFC 5737 documentation blocks, which no real mmdb can
+ * place, so every replay ran with a `NullProvider` and `country` was NULL for
+ * all 137k stored rows. Every geo breakdown in the suite therefore passed
+ * against a single null row — including the `dim: 'country'` query in
+ * `query.test.ts`, which asserted only that it got a row back.
+ *
+ * The same deterministic map the seeded dev database uses, for the same reason
+ * and out of one table: an address hashes to a city, and a slice stays unlocated
+ * so the null group is exercised rather than assumed away. It is a fixture — an
+ * INPUT to the replay — and the accounting below re-derives the aggregation from
+ * it independently, exactly as it does for every other figure here.
+ */
+export const REPLAY_GEO: GeoProvider = new DevGeoProvider();
 
 // ---------------------------------------------------------------------------
 // Fixtures. IPs are RFC 5737 documentation addresses: real ones never appear in
@@ -628,6 +657,7 @@ interface CountedSession {
 
 interface Accounted {
   totals: DayTotals[];
+  places: PlaceTotals[];
   storedHits: number;
   droppedPings: number;
   revivedPings: number;
@@ -638,6 +668,8 @@ function account(hits: readonly ReplayHit[]): Accounted {
   const buckets = new Map<string, DayBucket>();
   const open = new Map<string, CountedSession>();
   const sessions: CountedSession[] = [];
+  /** `siteId|country` → page views, the null group keyed with an empty country. */
+  const places = new Map<string, number>();
   let storedHits = 0;
   let droppedPings = 0;
   let revivedPings = 0;
@@ -695,6 +727,12 @@ function account(hits: readonly ReplayHit[]): Accounted {
     if (hit.type === 'pageview') {
       session.pageviews += 1;
       bucket.pageviews += 1;
+      // The lookup the pipeline makes, made again here from the transport
+      // context alone: the geo a row carries is the geo of the request it
+      // arrived on, never of the session it joined.
+      const country = REPLAY_GEO.lookup(ctx.ip)?.country ?? '';
+      const key = `${hit.siteId}|${country}`;
+      places.set(key, (places.get(key) ?? 0) + 1);
     } else if (hit.type === 'event') {
       session.events += 1;
     }
@@ -713,7 +751,21 @@ function account(hits: readonly ReplayHit[]): Accounted {
   const totals = [...buckets.values()]
     .map(({ visitors, ...bucket }) => ({ ...bucket, visitors: visitors.size }))
     .sort((a, b) => a.siteId - b.siteId || a.localDate.localeCompare(b.localDate));
-  return { totals, storedHits, droppedPings, revivedPings };
+  return { totals, places: placeTotals(places), storedHits, droppedPings, revivedPings };
+}
+
+/** The null group sorts last, as SQLite's `ORDER BY count DESC, country` leaves it. */
+function placeTotals(counts: ReadonlyMap<string, number>): PlaceTotals[] {
+  return [...counts.entries()]
+    .map(([key, pageviews]) => {
+      const [siteId, country] = key.split('|');
+      return {
+        siteId: Number(siteId),
+        country: country === '' ? null : (country ?? null),
+        pageviews,
+      };
+    })
+    .sort((a, b) => a.siteId - b.siteId || (a.country ?? '￿').localeCompare(b.country ?? '￿'));
 }
 
 function bucketFor(buckets: Map<string, DayBucket>, siteId: number, localDate: string): DayBucket {

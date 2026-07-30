@@ -1,11 +1,10 @@
 import type { QueryRequest, ResultRow } from '@featherstat/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createSite, type Db, openDb, withWriteTransaction } from '../../src/db/index.ts';
-import { parseMatomoRequest } from '../../src/ingest/matomo.ts';
-import { createPipeline } from '../../src/pipeline/index.ts';
+import type { Db } from '../../src/db/index.ts';
 import { executeQueryRequest } from '../../src/query/executor.ts';
 import { resultOf } from '../rows.ts';
-import { type Corpus, generateCorpus, REPLAY_HITS_PER_FLUSH, toMatomoQuery } from './generate.ts';
+import { generateCorpus, type PlaceTotals } from './generate.ts';
+import { openReplayDb } from './harness.ts';
 
 /**
  * WP7 acceptance (docs/08): the 90-day replay corpus answers the docs/04
@@ -35,35 +34,20 @@ const FULL_RANGE = { from: '2026-02-14', to: '2026-05-17' } as const;
 let db: Db;
 
 beforeAll(() => {
-  db = openDb(':memory:');
-  withWriteTransaction(db, () => {
-    for (const site of corpus.sites) createSite(db, site);
-  });
-  replay(db, corpus);
+  db = openReplayDb(corpus);
 }, 120_000);
 
 afterAll(() => {
   db.close();
 });
 
-/** Bench-style replay: a huge batch interval and explicit flushes — no fake timers needed. */
-function replay(target: Db, source: Corpus): void {
-  const pipeline = createPipeline(target, { batchIntervalMs: 3_600_000 });
-  let queued = 0;
-  for (const entry of source.hits) {
-    const { hits } = parseMatomoRequest({ query: toMatomoQuery(entry) });
-    pipeline.sink(hits, entry.ctx);
-    queued += 1;
-    if (queued === REPLAY_HITS_PER_FLUSH) {
-      queued = 0;
-      pipeline.flush();
-    }
-  }
-  pipeline.shutdown();
-}
-
 function byDate(rows: ResultRow[]): Map<string, ResultRow> {
   return new Map(rows.map((row) => [String(row.bucket), row]));
+}
+
+/** One order for both sides, so the comparison is about counts and not ranking. */
+function sortPlaces(places: readonly PlaceTotals[]): PlaceTotals[] {
+  return [...places].sort((a, b) => (a.country ?? '').localeCompare(b.country ?? ''));
 }
 
 describe('query engine on the replay corpus', () => {
@@ -124,6 +108,52 @@ describe('query engine on the replay corpus', () => {
       }
       expect(checkedDays).toBeGreaterThanOrEqual(90);
     }
+  });
+
+  it('breaks down by country against the generator, unlocated group included', () => {
+    // Until the replay path had a geo provider, `country` was NULL for all 137k
+    // stored rows, so every geo breakdown in this suite — this one included —
+    // agreed with the oracle about a single null row and asserted nothing.
+    for (const site of corpus.sites) {
+      const response = executeQueryRequest(db, {
+        site: site.id,
+        range: FULL_RANGE,
+        queries: [{ id: 'geo', metrics: ['pageviews'], dim: 'country' }],
+      });
+      const expected = corpus.places.filter((place) => place.siteId === site.id);
+      const actual = resultOf(response, 'geo').rows.map((row) => ({
+        siteId: site.id,
+        country: row.country === null ? null : String(row.country),
+        pageviews: Number(row.pageviews),
+      }));
+      expect(sortPlaces(actual), site.name).toEqual(sortPlaces(expected));
+      // The slack that keeps the equality from passing vacuously: several
+      // countries AND an unlocated group, on every site.
+      expect(expected.length, site.name).toBeGreaterThan(5);
+      expect(
+        expected.some((place) => place.country === null),
+        `${site.name} has an unlocated group`,
+      ).toBe(true);
+    }
+  });
+
+  it('answers region and city, so the whole geo triple is real and not just the code', () => {
+    const response = executeQueryRequest(db, {
+      site: 'all',
+      range: FULL_RANGE,
+      queries: [
+        { id: 'region', metrics: ['pageviews'], dim: 'region', limit: 20 },
+        { id: 'city', metrics: ['pageviews'], dim: 'city', limit: 20 },
+      ],
+    });
+    const named = (id: string): string[] =>
+      resultOf(response, id)
+        .rows.map((row) => row[id])
+        .filter((value): value is string => typeof value === 'string');
+    expect(named('city')).toContain('Boston');
+    expect(named('region')).toContain('Massachusetts');
+    // Non-ASCII place names survive ingest, storage and the compiler intact.
+    expect(named('city')).toContain('São Paulo');
   });
 
   it("groups site 'all' per site with each site's own totals", () => {

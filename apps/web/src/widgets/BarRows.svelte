@@ -1,15 +1,21 @@
 <script lang="ts">
 import type { Dimension, Filter } from '@featherstat/shared';
-import type { BarRow } from './bar-rows.ts';
+import type { BarRow, TipLine } from './bar-rows.ts';
 import { compactNumber, exactNumber } from './format.ts';
 import { countryName, flagEmoji } from './geo.ts';
 
 /**
- * The ranked rows of a bar-list — shared between the standalone bar-list card
- * and composites like the devices card. Rows are click-to-filter when a
- * dimension and handler are wired (docs/05: every breakdown row filters), and
- * every row is keyboard-reachable with a focus/hover tooltip for exact values.
+ * The ranked rows of a bar-list — THE bar row, rendered by the standalone
+ * bar-list card, by composites like the devices card, by the realtime country
+ * tally and by time-on-page. Rows are click-to-filter when a dimension and
+ * handler are wired (docs/05: every breakdown row filters), and every row is
+ * keyboard-reachable with a focus/hover tooltip for exact values.
  * All labels are visitor-controlled strings: text interpolation only.
+ *
+ * A caller whose row needs a different number (a duration), an extra line, or a
+ * tooltip of its own says so per row (`text`, `sub`, `tips`) — it does not grow
+ * its own `.bar-row`. Time on page did exactly that, and `ownership.test.ts`
+ * now fails if a second file tries again.
  */
 interface Props {
   rows: readonly BarRow[];
@@ -17,7 +23,7 @@ interface Props {
   unit: string;
   /** Tooltip unit for `extra` when a row carries one (`value`). */
   extraUnit?: string;
-  /** Row names are ISO country codes: prepend the flag, display the region name. */
+  /** Row NAMES are ISO country codes: prepend the flag, display the region name. */
   flags?: boolean;
   /** The dimension rows filter on; omitted, rows are informational only. */
   dim?: Dimension;
@@ -68,12 +74,25 @@ function showTip(row: HTMLElement, index: number, clientX?: number): void {
 }
 
 const tipRow = $derived(tip === undefined ? undefined : rows[tip.index]);
+
+/** The ordinary tooltip: the row's own metric, and the second one where it has one. */
+function tipsOf(row: BarRow): readonly TipLine[] {
+  if (row.tips !== undefined) return row.tips;
+  const lines: TipLine[] = [{ value: exactNumber(row.value), label: unit }];
+  if (row.extra > 0) lines.push({ value: exactNumber(row.extra), label: extraUnit });
+  return lines;
+}
 </script>
 
 <div class="rows-pane" bind:this={pane}>
   <div class="bar-list">
     {#each rows as row, i (row.name)}
       {@const clickable = filterable && row.filterValue !== undefined}
+      <!-- The flag is read off what the row IS, not off what it filters into:
+           keyed on `filterValue`, the realtime country tally asked for flags and
+           silently drew bare codes, because a stream row has nothing to filter
+           into. A name that is not a country code falls through ("Unknown"). -->
+      {@const flag = flags ? flagEmoji(row.name) : undefined}
       <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_static_element_interactions --
            docs/05 accessibility: every mark keyboard-reachable with a focus/hover
            tooltip; rows with a filter target additionally act as buttons -->
@@ -91,17 +110,18 @@ const tipRow = $derived(tip === undefined ? undefined : rows[tip.index]);
       >
         <span class="bar" style="width: {row.pct}%"></span>
         <span class="name">
-          {#if flags && typeof row.filterValue === 'string'}
-            {@const flag = flagEmoji(row.filterValue)}
-            {#if flag !== undefined}<span class="flag">{flag}</span>{/if}
-            {countryName(row.filterValue)}
+          {#if flag !== undefined}
+            <span class="flag">{flag}</span>
+            {countryName(row.name)}
           {:else}
             {row.name}
           {/if}
         </span>
-        <!-- Count only: a second unlabeled number breaks the tabular column and
-             reads as a glitch; the value sum lives in the tooltip, labeled. -->
-        <span class="num">{compactNumber(row.value)}</span>
+        <!-- One number, then at most one labeled aside: a second unlabeled
+             figure breaks the tabular column and reads as a glitch; the value
+             sum lives in the tooltip, labeled. -->
+        <span class="num">{row.text ?? compactNumber(row.value)}</span>
+        {#if row.sub !== undefined}<span class="num sub">{row.sub}</span>{/if}
       </div>
     {/each}
   </div>
@@ -112,16 +132,12 @@ const tipRow = $derived(tip === undefined ? undefined : rows[tip.index]);
         ? '0'
         : '-100%'});"
     >
-      <div class="tip-row">
-        <span class="tip-val">{exactNumber(tipRow.value)}</span>
-        <span class="tip-name">{unit}</span>
-      </div>
-      {#if tipRow.extra > 0}
+      {#each tipsOf(tipRow) as line, n (n)}
         <div class="tip-row">
-          <span class="tip-val">{exactNumber(tipRow.extra)}</span>
-          <span class="tip-name">{extraUnit}</span>
+          <span class="tip-val">{line.value}</span>
+          <span class="tip-name">{line.label}</span>
         </div>
-      {/if}
+      {/each}
       <!-- A shortened label (an outbound URL's protocol) says its whole value here. -->
       {#if tipRow.full !== undefined}
         <div class="tip-full">{tipRow.full}</div>

@@ -1,6 +1,6 @@
 <script lang="ts">
-import { dwellRows } from './dwell.ts';
-import { compactNumber, exactNumber, formatDuration } from './format.ts';
+import BarRows from './BarRows.svelte';
+import { dwellBars, dwellRows } from './dwell.ts';
 import { sliceOf, type WidgetProps } from './types.ts';
 
 /**
@@ -9,13 +9,14 @@ import { sliceOf, type WidgetProps } from './types.ts';
  * alongside — the card says what its average rests on, because views nothing
  * followed are excluded rather than counted as zero.
  *
- * Rows are deliberately NOT click-to-filter: the query is session-scoped and
- * cannot honestly take a `path` filter, so a click would break the card.
+ * The rows are `BarRows`, the same component every other ranking renders; this
+ * card is a frame around it. Rows are deliberately NOT click-to-filter: the
+ * query is session-scoped and cannot honestly take a `path` filter.
  */
 let { spec, env }: WidgetProps = $props();
 
 const slice = $derived(sliceOf(env.data, 'main'));
-const rows = $derived(slice.kind === 'ready' ? dwellRows(slice.result.rows) : []);
+const rows = $derived(slice.kind === 'ready' ? dwellBars(dwellRows(slice.result.rows)) : []);
 </script>
 
 <h2>{spec.title ?? spec.id}</h2>
@@ -29,22 +30,6 @@ const rows = $derived(slice.kind === 'ready' ? dwellRows(slice.result.rows) : []
       No measured views — pages need a heartbeat or a next click to be timed.
     </p>
   {:else}
-    <div class="bar-list">
-      {#each rows as row (row.path)}
-        <div
-          class="bar-row"
-          title="{exactNumber(Math.round(row.avgMs))} ms average · {exactNumber(
-            Math.round(row.maxMs),
-          )} ms longest · {exactNumber(row.views)} measured views"
-        >
-          <span class="bar" style="width: {row.pct}%"></span>
-          <span class="name">{row.path}</span>
-          <span class="num">{formatDuration(row.avgMs)}</span>
-          <span class="num dwell-sub"
-            >max {formatDuration(row.maxMs)} · {compactNumber(row.views)} measured</span
-          >
-        </div>
-      {/each}
-    </div>
+    <BarRows {rows} unit="average" onfilter={null} />
   {/if}
 </div>

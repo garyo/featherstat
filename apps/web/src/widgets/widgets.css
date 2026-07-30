@@ -151,8 +151,8 @@
   cursor: pointer;
 }
 
-/* Time on page: the average leads, its honesty numbers follow, recessive. */
-.bar-row .dwell-sub {
+/* A row's aside (time on page: the average leads, its honesty numbers follow). */
+.bar-row .sub {
   color: var(--muted);
   font-size: 12px;
   min-width: 124px;
@@ -160,7 +160,7 @@
 }
 
 @media (max-width: 599px) {
-  .bar-row .dwell-sub {
+  .bar-row .sub {
     min-width: 0;
   }
 }
