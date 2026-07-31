@@ -1,6 +1,6 @@
 <script lang="ts">
 import type { RealtimeHit, SiteInfo } from '@featherstat/shared';
-import { actionLabel, placeLabel, relativeAgo } from '../lib/realtime.ts';
+import { actionLabel, collapseRuns, placeLabel, relativeAgo } from '../lib/realtime.ts';
 import type { SiteScope } from '../lib/state.ts';
 import { dotColor } from './alias-colors.ts';
 import { displayDuration } from './format.ts';
@@ -15,8 +15,14 @@ import { countryName, flagEmoji } from './geo.ts';
  * Anything a feed row should show belongs here. A caller that renders
  * `.feed-row` itself has forked the feed — see feed-rows.test.ts, which fails
  * if a second file grows that markup.
+ *
+ * A row is a RUN: one page, and every hit that landed on it. The wire carries
+ * raw hits including heartbeats, and collapsing them here is what turns them
+ * into time on that page (`collapseRuns`). A run of one hit renders as an
+ * ordinary row, so there is exactly one markup for both cases.
  */
 interface Props {
+  /** Raw hits, newest first — collapsed into runs here, never by the caller. */
   hits: readonly RealtimeHit[];
   now: number;
   /** Site badges appear only when the view is mixing sites. */
@@ -31,11 +37,13 @@ interface Props {
 let { hits, now, scope, sites, hover, onhover }: Props = $props();
 
 const siteNameOf = (id: number): string => sites?.get(id)?.name ?? `Site ${id}`;
+const runs = $derived(collapseRuns(hits));
 </script>
 
 <div class="feed" role="list">
-  {#each hits as hit, i (i)}
-    {@const spent = displayDuration(hit.engagedMs)}
+  {#each runs as run, i (i)}
+    {@const hit = run.latest}
+    {@const spent = displayDuration(run.pageMs)}
     <div
       class="feed-row"
       role="listitem"
@@ -46,7 +54,7 @@ const siteNameOf = (id: number): string => sites?.get(id)?.name ?? `Site ${id}`;
       <span class="ago">{relativeAgo(hit.ts, now)}</span>
       <span class="vdot" style="background: {dotColor(hit.visitor.color)}"></span>
       <span class="vname">{hit.visitor.name}</span>
-      {#if spent !== undefined}<span class="vtime">{spent}</span>{/if}
+      {#if spent !== undefined}<span class="vtime" title="time on this page">{spent}</span>{/if}
       {#if hit.country !== undefined}
         {@const flag = flagEmoji(hit.country)}
         {#if flag !== undefined}<span class="flag" title={countryName(hit.country)}>{flag}</span
@@ -56,6 +64,11 @@ const siteNameOf = (id: number): string => sites?.get(id)?.name ?? `Site ${id}`;
       <span class="path">
         {#if hit.type === 'event'}<span class="evt-dot"></span>{/if}{actionLabel(hit)}
       </span>
+      <!-- Heartbeats fold into the time silently; anything the visitor DID is
+           news, so it is counted rather than absorbed. -->
+      {#if run.actions > 0}<span class="acts" title="{run.actions} action{run.actions === 1
+            ? ''
+            : 's'} on this page">+{run.actions}</span>{/if}
       {#if scope === 'all'}<span class="fsite">{siteNameOf(hit.siteId)}</span>{/if}
     </div>
   {/each}

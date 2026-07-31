@@ -3,6 +3,7 @@ import {
   DAY_MS,
   MAX_ENGAGEMENT_ENTRIES,
   PING_CLAMP_MS,
+  type RealtimeHit,
   SESSION_TIMEOUT_MS,
   TALLY_WINDOW_MS,
 } from '@featherstat/shared';
@@ -64,10 +65,14 @@ describe('RealtimeHub feed', () => {
     });
   });
 
-  it('keeps pings out of the feed but still counts them as active', () => {
+  // Reversed deliberately: pings used to be dropped here as noise. They are what
+  // MEASURES a page, and dropping them forced the feed to carry a figure derived
+  // elsewhere — which is how a row came to mean one thing live and another after
+  // a restart. The feed is the raw stream; the client collapses it.
+  it('carries pings in the feed AND counts them as active', () => {
     const hub = new RealtimeHub();
     hub.record(event({ ts: T0, type: 'ping', visitor_id: OTHER }));
-    expect(hub.recent(50)).toEqual([]);
+    expect(hub.recent(50).map((hit) => hit.type)).toEqual(['ping']);
     expect(hub.activeCounts(T0)).toEqual({ 1: 1 });
   });
 
@@ -397,7 +402,7 @@ describe('RealtimeHub feed seeding', () => {
   const store = (rows: Parameters<typeof insertEvents>[1]) =>
     withWriteTransaction(db, () => insertEvents(db, rows));
 
-  it('refills the ring from stored events, oldest first, pings excluded', () => {
+  it('refills the ring from stored events, oldest first, pings included', () => {
     store([
       event({ ts: T0 - 3_000, path: '/a' }),
       event({ ts: T0 - 2_000, type: 'ping', path: '/a' }),
@@ -405,8 +410,9 @@ describe('RealtimeHub feed seeding', () => {
     ]);
     const hub = createRealtimeHub(db);
     const recent = hub.recent(10);
-    expect(recent.map((hit) => hit.path)).toEqual(['/a', '/b']);
-    expect(recent.map((hit) => hit.type)).toEqual(['pageview', 'pageview']);
+    // Same rows the live path would have pushed — that sameness is the point.
+    expect(recent.map((hit) => hit.path)).toEqual(['/a', '/a', '/b']);
+    expect(recent.map((hit) => hit.type)).toEqual(['pageview', 'ping', 'pageview']);
   });
 
   it('seeded hits wear the same alias a live hit gets within the day', () => {
@@ -440,29 +446,46 @@ describe('RealtimeHub feed seeding', () => {
   });
 });
 
-describe('RealtimeHub hit-carried engagement', () => {
-  it('gives each row the visit length as of that hit, and nothing at its start', () => {
+describe('RealtimeHub feed is the raw hit stream', () => {
+  it('carries every hit, heartbeats included — they are what measures a page', () => {
     const hub = new RealtimeHub();
     hub.record(event({ ts: T0, visitor_id: VISITOR, path: '/first' }));
-    hub.record(event({ ts: T0 + 15_000, type: 'ping', visitor_id: VISITOR }));
+    hub.record(event({ ts: T0 + 15_000, type: 'ping', visitor_id: VISITOR, path: '/first' }));
     hub.record(event({ ts: T0 + 30_000, visitor_id: VISITOR, path: '/second' }));
 
-    const rows = hub.recent(10);
-    // The opening hit has no elapsed time behind it: no figure at all, not 0s.
-    expect(rows[0]?.engagedMs).toBeUndefined();
-    // The ping's 15 s is behind the second row even though the ping is not a row.
-    expect(rows[1]?.engagedMs).toBe(30_000);
+    // The ping is a row. The client collapses the run; the wire hides nothing,
+    // so time on page is recoverable rather than something the server ships.
+    expect(hub.recent(10).map((hit) => hit.type)).toEqual(['pageview', 'ping', 'pageview']);
   });
 
-  it('restores a seeded row′s figure from its stored session', () => {
+  /**
+   * The bug this design deletes: a row used to carry the visit length as of that
+   * hit, which the boot path could not reconstruct, so it substituted the
+   * visit's TOTAL — and a row meant one thing live and another after a deploy.
+   * With nothing derived on a row the two paths cannot disagree, and this test
+   * is the statement of that rather than a check of any one field.
+   */
+  it('gives a seeded row exactly what the live path would have given it', () => {
     withWriteTransaction(db, () => {
       upsertSessions(db, [
         session({ id: Uint8Array.of(9), visitor_id: VISITOR, engaged_ms: 42_000 }),
       ]);
       insertEvents(db, [event({ ts: T0, session_id: Uint8Array.of(9), path: '/restored' })]);
     });
-    const hub = createRealtimeHub(db);
-    expect(hub.recent(10)[0]).toMatchObject({ path: '/restored', engagedMs: 42_000 });
+    const seeded = createRealtimeHub(db).recent(10)[0];
+
+    const live = new RealtimeHub();
+    live.record(
+      event({ ts: T0, session_id: Uint8Array.of(9), visitor_id: VISITOR, path: '/restored' }),
+    );
+
+    // `ref` is minted per process, so two hubs never share one; everything a
+    // row actually carries must match.
+    const withoutRef = (hit: RealtimeHit | undefined) =>
+      hit === undefined ? undefined : { ...hit, visitor: { ...hit.visitor, ref: '' } };
+    expect(withoutRef(seeded)).toEqual(withoutRef(live.recent(10)[0]));
+    // Specifically: the session's 42 s is nowhere on the row, live or restored.
+    expect(JSON.stringify(seeded)).not.toContain('42000');
   });
 
   it('caps the live map at MAX_ENGAGEMENT_ENTRIES, keeping the newest', () => {

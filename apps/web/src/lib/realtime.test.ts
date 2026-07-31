@@ -1,6 +1,13 @@
-import type { RealtimeEngagement, RealtimeHit } from '@featherstat/shared';
+import {
+  PING_CLAMP_MS,
+  type RealtimeEngagement,
+  type RealtimeHit,
+  SESSION_TIMEOUT_MS,
+  TALLY_WINDOW_MS,
+} from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
 import {
+  collapseRuns,
   countryTally,
   engagementByName,
   placeOf,
@@ -74,7 +81,7 @@ describe('visitorTally', () => {
       hit({ ts: now - 3_000, visitor: visitor('Bashful Badger', 1), city: 'Hue', country: 'VN' }),
       hit({ ts: now - 4_000, visitor: visitor('Zesty Zebra', 2, 3), country: 'DE', siteId: 3 }),
       // Outside the window: same visitor, still not counted.
-      hit({ ts: now - 31 * 60_000, visitor: visitor('Zesty Zebra', 2, 3), siteId: 3 }),
+      hit({ ts: now - TALLY_WINDOW_MS - 1, visitor: visitor('Zesty Zebra', 2, 3), siteId: 3 }),
     ];
     expect(visitorTally(hits, now)).toEqual([
       {
@@ -194,7 +201,7 @@ describe('visitor engagement', () => {
       hit({ ts: now - 3_000, siteId: 1, visitor: visitor('Observant Ocelot'), path: '/older' }),
       // Outside the tally window the row is counted over.
       hit({
-        ts: now - 45 * 60_000,
+        ts: now - TALLY_WINDOW_MS - 1,
         siteId: 1,
         visitor: visitor('Observant Ocelot'),
         path: '/ages',
@@ -234,11 +241,121 @@ describe('countryTally', () => {
       hit({ ts: now - 2_000, country: 'US' }),
       hit({ ts: now - 3_000, country: 'DE' }),
       hit({ ts: now - 3_000 }), // no geo
-      hit({ ts: now - 31 * 60_000, country: 'JP' }), // outside the 30-min window
+      hit({ ts: now - TALLY_WINDOW_MS - 1, country: 'JP' }), // outside the 30-min window
     ];
     expect(countryTally(hits, now)).toEqual([
       { country: 'US', count: 2, pct: '100.0' },
       { country: 'DE', count: 1, pct: '50.0' },
     ]);
+  });
+});
+
+describe('collapseRuns', () => {
+  const S = 1_000;
+  /** The feed's order: newest first. */
+  const feed = (...chrono: RealtimeHit[]): RealtimeHit[] => [...chrono].reverse();
+  const v = visitor('Merry Magpie');
+
+  /**
+   * The visit that prompted all of this: one page view and six heartbeats over
+   * 90 s, which the old feed rendered as a single row saying `1m 30s` with no
+   * sign of where the time came from — and, after a restart, said the same
+   * thing for a reason that had nothing to do with this page.
+   */
+  it('turns a page view and its heartbeats into one row worth 90 s', () => {
+    const hits = feed(
+      hit({ ts: 0, visitor: v, path: '/era' }),
+      ...Array.from({ length: 6 }, (_, i) =>
+        hit({ ts: (i + 1) * 15 * S, type: 'ping', visitor: v, path: '/era' }),
+      ),
+    );
+    const runs = collapseRuns(hits);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.pageMs).toBe(90 * S);
+    expect(runs[0]?.hits).toHaveLength(7);
+    expect(runs[0]?.actions).toBe(0);
+  });
+
+  /**
+   * The number a run shows must be the number `query/dwell.ts` would attribute,
+   * or the feed and the time-on-page card describe the same visit differently.
+   * The load-bearing half is the LAST hit of a run: the gap it opens is closed
+   * by the next page's hit, and belongs to the page being left.
+   */
+  it('gives the leaving gap to the page being left, as dwell does', () => {
+    const runs = collapseRuns(
+      feed(
+        hit({ ts: 0, visitor: v, path: '/a' }),
+        hit({ ts: 5 * S, visitor: v, path: '/b' }),
+        hit({ ts: 9 * S, visitor: v, path: '/c' }),
+      ),
+    );
+    // 5 s on /a, 4 s on /b, and /c unmeasured — nothing has followed it yet.
+    expect(runs.map((run) => run.pageMs)).toEqual([undefined, 4 * S, 5 * S]);
+  });
+
+  it('clamps a gap, so wandering off banks one heartbeat and not the absence', () => {
+    const runs = collapseRuns(
+      feed(
+        hit({ ts: 0, visitor: v, path: '/a' }),
+        hit({ ts: 10 * 60 * S, type: 'ping', visitor: v, path: '/a' }),
+        hit({ ts: 10 * 60 * S + S, visitor: v, path: '/b' }),
+      ),
+    );
+    expect(runs.at(-1)?.pageMs).toBe(PING_CLAMP_MS + S);
+  });
+
+  // The newest row of a live visit is being measured, not brief: a run reads as
+  // having no time rather than 0 s, the same honesty `measured_sessions` keeps.
+  it('leaves the newest run unmeasured rather than calling it zero', () => {
+    const runs = collapseRuns(feed(hit({ ts: 0, visitor: v, path: '/only' })));
+    expect(runs[0]?.pageMs).toBeUndefined();
+  });
+
+  it('counts what the visitor did, so an action never folds into the time', () => {
+    const runs = collapseRuns(
+      feed(
+        hit({ ts: 0, visitor: v, path: '/post' }),
+        hit({ ts: 15 * S, type: 'ping', visitor: v, path: '/post' }),
+        hit({ ts: 20 * S, type: 'event', visitor: v, path: '/post', eventAction: 'subscribe' }),
+        hit({ ts: 25 * S, type: 'outlink', visitor: v, path: '/post' }),
+        hit({ ts: 30 * S, visitor: v, path: '/next' }),
+      ),
+    );
+    expect(runs.at(-1)?.actions).toBe(2);
+    // A hit type this code has never seen is an action by default, not absorbed.
+    const future = collapseRuns(
+      feed(
+        hit({ ts: 0, visitor: v, path: '/post' }),
+        hit({ ts: S, type: 'download', visitor: v, path: '/post' }),
+      ),
+    );
+    expect(future[0]?.actions).toBe(1);
+  });
+
+  it('breaks a run on the visitor, the site, the page, or a new visit', () => {
+    const other = visitor('Brisk Bittern');
+    const runs = collapseRuns(
+      feed(
+        hit({ ts: 0, visitor: v, path: '/a' }),
+        hit({ ts: S, visitor: other, path: '/a' }), // different visitor
+        hit({ ts: 2 * S, visitor: v, path: '/a', siteId: 2 }), // different site
+        hit({ ts: 3 * S, visitor: v, path: '/b' }), // different page
+        hit({ ts: 3 * S + SESSION_TIMEOUT_MS + S, visitor: v, path: '/b' }), // new visit
+      ),
+    );
+    expect(runs).toHaveLength(5);
+  });
+
+  it('keeps a returning reader′s two stays on one page apart', () => {
+    const runs = collapseRuns(
+      feed(
+        hit({ ts: 0, visitor: v, path: '/a' }),
+        hit({ ts: 5 * S, visitor: v, path: '/b' }),
+        hit({ ts: 10 * S, visitor: v, path: '/a' }),
+      ),
+    );
+    expect(runs).toHaveLength(3);
+    expect(runs.map((run) => run.latest.path)).toEqual(['/a', '/b', '/a']);
   });
 });

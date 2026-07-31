@@ -1,6 +1,5 @@
 import {
   ACTIVE_WINDOW_MS,
-  isHeartbeat,
   MAX_ENGAGEMENT_ENTRIES,
   PING_CLAMP_MS,
   type RealtimeEngagement,
@@ -12,7 +11,6 @@ import {
 } from '@featherstat/shared';
 import { type Db, type EventRow, listSites, stmt } from '../db/index.ts';
 import type { FlushSummary } from '../pipeline/batcher.ts';
-import { populationWhere } from '../query/population.ts';
 import { VisitorAliaser } from './alias.ts';
 
 /**
@@ -31,8 +29,14 @@ import { VisitorAliaser } from './alias.ts';
  * Visitor identity).
  */
 
-/** Hits retained for `Last-Event-ID` resume; a slower reconnect gets what is left. */
-const RING_CAPACITY = 500;
+/**
+ * Hits retained for `Last-Event-ID` resume; a slower reconnect gets what is
+ * left. Sized in HITS, and a hit is now every heartbeat too — an engaged reader
+ * spends four a minute — so this is 4× what it held when pings were dropped, to
+ * reach as far back in TIME as it did before. The feed's whole value is how far
+ * back you can look; paying for that in memory is the cheap side of the trade.
+ */
+const RING_CAPACITY = 2_000;
 
 export interface RealtimeEntry {
   /** Monotonic within the process: the SSE `id:` field and the resume cursor. */
@@ -64,23 +68,27 @@ export class RealtimeHub {
   }
 
   /**
-   * Post-enrichment hook: called for every stored hit as it happens. Pings keep
-   * their visitor active and accrue engaged time, but are not feed items
-   * (docs/04 § 4) — the heartbeat is precisely what makes the time honest.
+   * Post-enrichment hook: called for every stored hit as it happens. Every hit
+   * is a feed item, pings included (docs/04 § 4) — the feed is the raw stream,
+   * and the client collapses a page's run of them into one line whose span is
+   * the time on that page.
    *
-   * "Active now" therefore counts the `presence` population — every stored hit —
-   * while the `visitors` KPI counts `actions`. That difference is deliberate and
-   * not an inconsistency: a reader holding a tab open IS here now, and did not
-   * act today. `isHeartbeat` is the same definition the compiler's `actions`
-   * population is built from, imported rather than respelled.
+   * Pings used to be dropped here as noise. They are what MEASURES a page, so
+   * dropping them meant the feed could only ever show a figure computed
+   * somewhere else — which is how it came to show one thing live and another
+   * after a restart. Cheaper to send the heartbeat than to derive its meaning
+   * twice.
+   *
+   * "Active now" counts the `presence` population — every stored hit — while
+   * the `visitors` KPI counts `actions`. That difference is deliberate and not
+   * an inconsistency: a reader holding a tab open IS here now, and did not act
+   * today.
    */
   record(event: EventRow): void {
     const visitor = this.aliaser.alias(event.visitor_id, event.ts);
     this.active.touch(event.site_id, event.visitor_id, event.ts);
-    // Touch first: the figure the row carries includes the gap this hit closes.
-    const engagedMs = this.engagement.touch(event.site_id, event.visitor_id, event.ts, visitor);
-    if (isHeartbeat(event.type)) return;
-    this.emit({ kind: 'hit', entry: this.ring.push(toRealtimeHit(event, visitor, engagedMs)) });
+    this.engagement.touch(event.site_id, event.visitor_id, event.ts, visitor);
+    this.emit({ kind: 'hit', entry: this.ring.push(toRealtimeHit(event, visitor)) });
   }
 
   /** One tick per site whose data changed in a batch — dashboards revalidate on it. */
@@ -159,19 +167,23 @@ export class RealtimeHub {
   }
 
   /**
-   * Boot seeding of the feed itself: the newest stored non-ping events refill
-   * the ring, so a restart (every deploy) no longer blanks the realtime view.
-   * Same projection and aliaser as the live path — within a UTC day, seeded
-   * hits wear the same names live ones did. Pushed oldest-first so ring ids
-   * stay monotonic; pre-restart resume cursors keep the documented
-   * "gets what's left" semantics (docs/04 § 4).
+   * Boot seeding of the feed itself: the newest stored events refill the ring,
+   * so a restart (every deploy) no longer blanks the realtime view. Same
+   * projection and aliaser as the live path — within a UTC day, seeded hits
+   * wear the same names live ones did. Pushed oldest-first so ring ids stay
+   * monotonic; pre-restart resume cursors keep the documented "gets what's
+   * left" semantics (docs/04 § 4).
+   *
+   * "Same projection" is now literally true, and that is the point. This path
+   * used to substitute the visit's TOTAL engaged time for the per-hit figure it
+   * could not reconstruct, so a row meant one thing live and another after a
+   * deploy — invisible until someone restarted the server and read the feed. A
+   * row carries nothing derived any more, so there is nothing here to diverge.
    */
   seedRecent(db: Db, limit = SEED_RECENT_LIMIT): void {
-    const rows = stmt<SeededEventRow>(db, SQL_RECENT_EVENTS).all(limit);
+    const rows = stmt<EventRow>(db, SQL_RECENT_EVENTS).all(limit);
     for (const row of rows.reverse()) {
-      this.ring.push(
-        toRealtimeHit(row, this.aliaser.alias(row.visitor_id, row.ts), row.engaged_ms ?? undefined),
-      );
+      this.ring.push(toRealtimeHit(row, this.aliaser.alias(row.visitor_id, row.ts)));
     }
   }
 
@@ -188,20 +200,10 @@ export function createRealtimeHub(db: Db, options: RealtimeHubOptions = {}): Rea
   return hub;
 }
 
-const SEED_RECENT_LIMIT = 50;
+/** Rows a restart restores. Scaled with the ring for the same reason. */
+const SEED_RECENT_LIMIT = 400;
 
-/**
- * The visit's length rides along from `sessions`: a restored row carries its
- * visit's total rather than the moment (the moment is not reconstructable), and
- * for the last row of a finished visit those are the same number.
- */
-const SQL_RECENT_EVENTS = `SELECT e.*, s.engaged_ms FROM events e
-LEFT JOIN sessions s ON s.id = e.session_id
-WHERE ${populationWhere('actions', 'e')}
-ORDER BY e.id DESC
-LIMIT ?`;
-
-type SeededEventRow = EventRow & { engaged_ms: number | null };
+const SQL_RECENT_EVENTS = `SELECT * FROM events ORDER BY id DESC LIMIT ?`;
 
 interface RecentSessionRow {
   site_id: number;
@@ -224,14 +226,12 @@ FROM sessions WHERE last_seen_at >= ? GROUP BY site_id, visitor_id`;
  * than spreading the row — is what keeps the IP-derived visitor id, and anything
  * else added to `events` later, off the wire. Undefined members vanish in JSON.
  */
-function toRealtimeHit(event: EventRow, visitor: RealtimeVisitor, engagedMs?: number): RealtimeHit {
+function toRealtimeHit(event: EventRow, visitor: RealtimeVisitor): RealtimeHit {
   return {
     siteId: event.site_id,
     ts: event.ts,
     type: event.type,
     visitor,
-    // 0 is "no time on the clock yet" — a row says nothing rather than `0s`.
-    engagedMs: engagedMs !== undefined && engagedMs > 0 ? engagedMs : undefined,
     path: event.path ?? undefined,
     eventCategory: event.event_category ?? undefined,
     eventAction: event.event_action ?? undefined,

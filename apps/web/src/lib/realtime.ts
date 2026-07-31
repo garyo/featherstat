@@ -1,4 +1,10 @@
-import { type RealtimeEngagement, type RealtimeHit, TALLY_WINDOW_MS } from '@featherstat/shared';
+import {
+  PING_CLAMP_MS,
+  type RealtimeEngagement,
+  type RealtimeHit,
+  SESSION_TIMEOUT_MS,
+  TALLY_WINDOW_MS,
+} from '@featherstat/shared';
 import type { BarRow } from '../widgets/bar-rows.ts';
 import { displayDuration } from '../widgets/format.ts';
 import { countryName, subdivisionCode } from '../widgets/geo.ts';
@@ -62,6 +68,105 @@ export function relativeAgo(ts: number, now: number): string {
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m`;
   return `${Math.floor(minutes / 60)}h`;
+}
+
+/** A hit that is something the visitor DID, as opposed to time passing. */
+export function isAction(hit: RealtimeHit): boolean {
+  return hit.type !== 'ping' && hit.type !== 'pageview';
+}
+
+/**
+ * One page, and everything that happened on it: the feed's unit of display.
+ * A run of one hit is just a row, which is why `FeedRows` renders only these
+ * and there is no second markup for the uncollapsed case (invariant 7).
+ */
+export interface FeedRun {
+  /** Newest hit — the row's clock, place and site read from it. */
+  latest: RealtimeHit;
+  /** Every hit in the run, newest first: what an expanded row lists. */
+  hits: readonly RealtimeHit[];
+  /** Time on this page; absent until a gap closes, never 0 (see below). */
+  pageMs?: number;
+  /** Events, outlinks and downloads in the run — the row's `+N`. */
+  actions: number;
+}
+
+/**
+ * Collapse the raw feed into one run per page visited.
+ *
+ * The wire carries every hit, heartbeats included, because a heartbeat is what
+ * MEASURES a page — so time on page is not a figure the server has to compute
+ * and ship, it is the span of a run, recovered here. That is the whole reason
+ * the feed became raw: a derived figure on a row had to be reconstructed on
+ * restart, and silently wasn't.
+ *
+ * Two rules make it agree with the time-on-page card (`query/dwell.ts`) rather
+ * than merely resemble it:
+ *
+ * - Every gap is clamped at `PING_CLAMP_MS`, so a reader who wandered off
+ *   mid-page banks one heartbeat's worth, not the whole absence.
+ * - A run's LAST hit credits its gap to the run it ends, even though the hit
+ *   that closes that gap belongs to the next page. Leaving a page is time spent
+ *   on the page being left.
+ *
+ * The newest hit in the feed has nothing after it, so its gap is unmeasured and
+ * its run reads as having no time yet rather than 0 s — the same honesty
+ * `measured_sessions` keeps for a visit that is one instant old. A moment later
+ * the ping lands and the row says 15 s.
+ *
+ * Pings leave no other mark: they are time passing, not news. Anything the
+ * visitor DID is counted into `actions` and surfaced, because "read for 90 s"
+ * and "read for 90 s and hit subscribe" must not render identically — and that
+ * holds for hit types this code has never heard of, which are actions by
+ * default rather than silently absorbed.
+ */
+export function collapseRuns(
+  hits: readonly RealtimeHit[],
+  clampMs: number = PING_CLAMP_MS,
+): FeedRun[] {
+  const chrono = [...hits].reverse(); // the feed is newest-first; gaps run forwards
+  const runs: Array<{
+    latest: RealtimeHit;
+    hits: RealtimeHit[];
+    pageMs: number;
+    actions: number;
+  }> = [];
+  let current: (typeof runs)[number] | undefined;
+
+  for (const [index, hit] of chrono.entries()) {
+    const previous = chrono[index - 1];
+    if (current === undefined || previous === undefined || breaksRun(previous, hit)) {
+      current = { latest: hit, hits: [], pageMs: 0, actions: 0 };
+      runs.push(current);
+    }
+    current.hits.push(hit);
+    current.latest = hit;
+    if (isAction(hit)) current.actions += 1;
+
+    // Credited to the run this hit ENDS, not the one the next hit starts.
+    const next = chrono[index + 1];
+    if (next !== undefined) current.pageMs += Math.min(Math.max(next.ts - hit.ts, 0), clampMs);
+  }
+
+  // Newest first, and each run's own hits newest first, matching the feed.
+  return runs
+    .map((run) => ({
+      latest: run.latest,
+      hits: [...run.hits].reverse(),
+      actions: run.actions,
+      pageMs: run.pageMs > 0 ? run.pageMs : undefined,
+    }))
+    .reverse();
+}
+
+/** A run ends when the visitor changes, the page changes, or the visit does. */
+function breaksRun(previous: RealtimeHit, hit: RealtimeHit): boolean {
+  return (
+    previous.visitor.ref !== hit.visitor.ref ||
+    previous.siteId !== hit.siteId ||
+    previous.path !== hit.path ||
+    hit.ts - previous.ts > SESSION_TIMEOUT_MS
+  );
 }
 
 export interface CountryCount {
@@ -150,7 +255,10 @@ export function visitorTally(
       };
       byName.set(key, row);
     }
-    row.count += 1;
+    // Actions, not raw hits: the feed carries heartbeats now, and counting them
+    // would make the reader who sat perfectly still look busier than the one who
+    // clicked around. `hits` here means "things they did", as the label says.
+    if (isAction(hit) || hit.type === 'pageview') row.count += 1;
     // First LOCATED hit wins (the newest, given the order) — an unlocated one
     // must not blank a visitor an older hit can still place.
     if (row.city === undefined && row.country === undefined && hit.country !== undefined) {
@@ -252,12 +360,15 @@ export function actionLabel(hit: RealtimeHit): string {
   return hit.eventCategory !== undefined ? `${hit.eventCategory} · ${action}` : action;
 }
 
-/** One step of a visitor's trail: what they did, when, and how deep in they were. */
+/** One step of a visitor's trail: what they did, when, and how long it held them. */
 export interface TrailStep {
   ts: number;
   label: string;
   isEvent: boolean;
-  engagedMs?: number;
+  /** Time on that page — the run's span, absent while it is still being measured. */
+  pageMs?: number;
+  /** Actions taken on it, so a step that did something does not read like idling. */
+  actions: number;
 }
 
 /**
@@ -273,22 +384,19 @@ export function visitorTrail(
   windowMs = TALLY_WINDOW_MS,
   limit = TRAIL_STEPS,
 ): TrailStep[] {
-  const steps: TrailStep[] = [];
-  for (const hit of hits) {
-    // The same window the row's own counts use — a trail longer than the row
-    // says 'N hits' is the tell that they disagree about who or when.
-    if (now - hit.ts > windowMs) continue;
-    if (hit.visitor.ref !== row.ref) continue;
-    steps.push({
-      ts: hit.ts,
-      label: actionLabel(hit),
-      isEvent: hit.type === 'event',
-      engagedMs: hit.engagedMs,
-    });
-    if (steps.length >= limit) break;
-  }
-  // Newest first, like the feed above it.
-  return steps;
+  // The same window the row's own counts use — a trail longer than the row says
+  // 'N hits' is the tell that they disagree about who or when. Collapsed by the
+  // same rule as the feed, so a step and a feed row mean the same thing.
+  const mine = hits.filter((hit) => hit.visitor.ref === row.ref && now - hit.ts <= windowMs);
+  return collapseRuns(mine)
+    .slice(0, limit)
+    .map((run) => ({
+      ts: run.latest.ts,
+      label: actionLabel(run.latest),
+      isEvent: run.latest.type === 'event',
+      pageMs: run.pageMs,
+      actions: run.actions,
+    }));
 }
 
 export const TRAIL_STEPS = 12;

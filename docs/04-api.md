@@ -439,11 +439,28 @@ fails closed, never widening to every site.
   and is the ONLY identity-shaped field on the wire — the visitor id itself
   never appears, and there is still no visitor dimension in the query
   vocabulary.
-- Then: one `hit` event per ingested non-ping hit, same shape, emitted
-  post-enrichment rather than post-flush — the feed never waits for a batch.
-  A ping keeps its visitor active but is not a feed item. `active` recounts on
-  a 10 s tick; `version` carries `{siteId, version}` for each site whose data
-  landed in a flush — the tick every dashboard view revalidates on (see 02).
+- Then: one `hit` event per ingested hit — **every** hit, heartbeats included —
+  emitted post-enrichment rather than post-flush, so the feed never waits for a
+  batch. `active` recounts on a 10 s tick; `version` carries
+  `{siteId, version}` for each site whose data landed in a flush — the tick
+  every dashboard view revalidates on (see 02).
+- **The feed is the raw stream, and a row carries nothing derived.** Pings were
+  once dropped here as noise, and a row instead carried "how long the visit had
+  been going when this landed". That figure could not be summed (4 s, 6 s and
+  8 s under a tally of 54 s reads as a contradiction), and the boot path could
+  not reconstruct it, so it silently substituted the visit's TOTAL — a row meant
+  one thing live and another after a restart. Sending the heartbeat is cheaper
+  than deriving its meaning twice.
+- **Time on page is recovered by collapsing, in the client**
+  (`lib/realtime.ts` `collapseRuns`): consecutive hits from one visitor on one
+  page are one row, and the row's figure is the run's span. It agrees with the
+  time-on-page card by construction — same `PING_CLAMP_MS` on every gap, and a
+  run's last hit credits its gap to the page being left, exactly as
+  `query/dwell.ts` attributes it. The newest run is unmeasured rather than 0 s
+  until a hit closes its gap. Heartbeats leave no other mark; anything the
+  visitor DID is counted and shown as `+N`, because "read for 90 s" and "read
+  for 90 s and hit subscribe" must not render identically — and an unfamiliar
+  hit type counts as an action rather than being absorbed.
 - Only `hit` events carry an SSE `id`, so `Last-Event-ID` always names a ring
   entry: a resuming client gets a `snapshot` with an empty `recent` plus its
   missed hits replayed as `hit` events. A heartbeat comment every 25 s keeps

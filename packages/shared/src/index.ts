@@ -43,10 +43,28 @@ export const ACTIVE_WINDOW_MS = 5 * 60_000;
 export const ACTIVE_TICK_MS = 10_000;
 /** Cadence of the keep-alive comment that stops proxies reaping the stream. */
 export const HEARTBEAT_MS = 25_000;
-/** Hits a fresh connection's `snapshot` is seeded with. */
-export const SNAPSHOT_HITS = 50;
-/** Window the realtime view's per-visitor tally covers — and how long the hub retains a visitor's engaged time. */
-export const TALLY_WINDOW_MS = 30 * 60_000;
+/**
+ * Hits a fresh connection's `snapshot` is seeded with. Raw hits, so pings count
+ * against it: after the client collapses each page's run into one line, 200 of
+ * these is a feed of far fewer rows than the number suggests.
+ */
+export const SNAPSHOT_HITS = 200;
+/**
+ * Window the realtime view's per-visitor tally covers — and how long the hub
+ * retains a visitor's engaged time.
+ *
+ * It matches how far back the feed itself reaches, and that is the whole point:
+ * a tally that expired sooner than the rows left most of the list unanswerable,
+ * with visitors on screen whose engagement had already been forgotten. The two
+ * are the same information — by visitor, and by visitor-and-page — so they
+ * cover the same span or one of them is furniture.
+ */
+export const TALLY_WINDOW_MS = 8 * 3_600_000;
+/**
+ * How that window reads in a title. Derived, because it was written out by hand
+ * in two widgets and became wrong the moment the number moved.
+ */
+export const TALLY_WINDOW_LABEL = `last ${TALLY_WINDOW_MS / 3_600_000}h`;
 /**
  * Bound on the live engagement map (and so on the frame that ships it): a busy
  * half hour must not grow either without limit. Newest visitors win.
@@ -676,14 +694,23 @@ export const RealtimeSitesSchema = z.union([
     .transform((raw) => raw.split(',').map(Number)),
 ]);
 
+/**
+ * One hit, as it happened. The feed is the raw stream now — pings included —
+ * and a row carries no derived figure at all.
+ *
+ * That absence is the design. A row used to carry "how long the visit had been
+ * going when this landed", which could not be summed (4 s, 6 s and 8 s under a
+ * tally of 54 s read as a contradiction) and which the boot path could not
+ * reconstruct, so it silently substituted the visit's TOTAL and a row meant one
+ * thing live and another after a restart. With nothing derived on the wire,
+ * seeding from storage is the same rows as the live path and cannot drift.
+ *
+ * Time on page is recovered by collapsing consecutive hits on one page
+ * (`lib/realtime.ts`), where it is the span of the run — the same clamped-gap
+ * attribution `query/dwell.ts` makes, so the feed and the time-on-page card
+ * cannot disagree.
+ */
 export interface RealtimeHit {
-  /**
-   * How long this visit had been going when this hit landed — the feed's own
-   * copy, so a row keeps its figure for as long as the ring keeps the row and
-   * no lookup is needed. The live tally answers the other question ("how long
-   * is it NOW"); a row is a moment, and reads as one.
-   */
-  engagedMs?: number;
   siteId: number;
   ts: number;
   type: HitType;

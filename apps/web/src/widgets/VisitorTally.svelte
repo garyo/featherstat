@@ -1,4 +1,5 @@
 <script lang="ts">
+import { TALLY_WINDOW_LABEL } from '@featherstat/shared';
 import {
   placeOf,
   relativeAgo,
@@ -30,7 +31,7 @@ const toggle = (ref: string): void => {
 </script>
 
 {#if visitors.length > 0}
-  <p class="tally-label">Visitors · last 30 min</p>
+  <p class="tally-label">Visitors · {TALLY_WINDOW_LABEL}</p>
   <div class="visitor-tally" role="list">
     {#each visitors as row (row.ref)}
       {@const isOpen = opened === row.ref}

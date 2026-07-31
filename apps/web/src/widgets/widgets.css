@@ -654,6 +654,15 @@
   white-space: nowrap;
 }
 
+/* Actions taken on the page this row collapses. Quiet, but not silent: time
+   folds away invisibly, doing something must not. */
+.feed-row .acts {
+  color: var(--s1);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 /* A card heading that navigates: heading weight, link affordance, no chrome. */
 .h2link {
   appearance: none;
