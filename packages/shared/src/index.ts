@@ -122,6 +122,12 @@ export const HitSchema = z.object({
   uid: z.string().max(200).optional(),
   /** Matomo `cip` — accepted and carried, consumed by nothing until authenticated server-side senders exist (docs/04). */
   clientIpOverride: z.string().max(45).optional(),
+  /**
+   * How far down the page the reader had got when this hit was sent, 0–100
+   * (docs/04 § 2). Rides pings, because the heartbeat is what re-measures a
+   * page; absent means unmeasured, which is not the same as 0.
+   */
+  scrollPct: z.number().int().min(0).max(100).optional(),
 });
 export type Hit = z.infer<typeof HitSchema>;
 
@@ -144,6 +150,7 @@ export const CollectHitSchema = z.object({
   value: z.number().optional().catch(undefined),
   screen: z.string().max(20).optional().catch(undefined),
   lang: z.string().max(35).optional().catch(undefined),
+  scroll: z.number().int().min(0).max(100).optional().catch(undefined),
 });
 export type CollectHit = z.infer<typeof CollectHitSchema>;
 

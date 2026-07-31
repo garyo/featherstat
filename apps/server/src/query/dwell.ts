@@ -59,6 +59,22 @@ export const DWELL_MEASURES: Measures = {
     of: { denominator: 'views_measured' },
   },
   max_page_ms: { unit: 'ms', population: 'measured_pageviews', aggregate: 'max' },
+  /**
+   * How far down the page they got. Its own population, because a page view can
+   * be timed and still carry no reading — so `views_scrolled` says what the
+   * average rests on, exactly as `views_measured` does for the time.
+   *
+   * A `rate`, not a new unit: `rate` is a 0–1 fraction the client scales once
+   * (`widgets/format.ts`), which is why the SQL divides by 100 rather than
+   * teaching the tree a second spelling of "percentage".
+   */
+  views_scrolled: { unit: 'count', population: 'scrolled_pageviews', aggregate: 'sum' },
+  avg_scroll_pct: {
+    unit: 'rate',
+    population: 'scrolled_pageviews',
+    aggregate: 'ratio',
+    of: { denominator: 'views_scrolled' },
+  },
 };
 
 export function compileDwellQuery(
@@ -75,6 +91,7 @@ export function compileDwellQuery(
     `${scope.sql},`,
     'ordered AS (',
     '  SELECT e.session_id AS sid, e.ts AS ts, e.type AS type, e.path AS path,',
+    '    e.scroll_pct AS scroll_pct,',
     `    SUM(CASE WHEN ${populationWhere('pageviews', 'e')} THEN 1 ELSE 0 END) OVER w AS page_idx,`,
     '    LEAD(e.ts) OVER w AS next_ts',
     '  FROM events e JOIN scoped ON e.session_id = scoped.sid',
@@ -84,15 +101,33 @@ export function compileDwellQuery(
     '  SELECT sid, page_idx, SUM(MIN(next_ts - ts, ?)) AS ms',
     '  FROM ordered WHERE next_ts IS NOT NULL AND page_idx > 0',
     '  GROUP BY sid, page_idx',
+    '),',
+    // Deliberately NOT filtered on next_ts, unlike `dwell` above. A page's
+    // deepest reading arrives on its exit ping, which is the session's LAST row
+    // and so has no next_ts; reading scroll under dwell's filter would return
+    // the second-deepest reading of every page, every time — a bias that is
+    // silent, systematic and always downward. Depth is a high-water mark, not a
+    // gap: there is nothing unmeasurable about the last row's own reading.
+    'scroll AS (',
+    '  SELECT sid, page_idx, MAX(scroll_pct) AS pct',
+    '  FROM ordered WHERE page_idx > 0 AND scroll_pct IS NOT NULL',
+    '  GROUP BY sid, page_idx',
     ')',
     // NULL never labels a page: a title-only pageview (no URL) reads as '' — the
     // sequence kinds' convention, so one client rule covers both.
     "SELECT COALESCE(page.path, '') AS path,",
     '  COUNT(*) AS views_measured,',
     '  AVG(dwell.ms) AS avg_page_ms,',
-    '  MAX(dwell.ms) AS max_page_ms',
+    '  MAX(dwell.ms) AS max_page_ms,',
+    // COUNT(expr) counts non-NULLs, and SQLite's AVG skips them — so a page leg
+    // with no reading is left out of the average rather than dragging it toward
+    // zero, and a corpus with no readings at all yields NULL instead of 0 %.
+    '  COUNT(scroll.pct) AS views_scrolled,',
+    '  AVG(scroll.pct) / 100.0 AS avg_scroll_pct',
     'FROM dwell JOIN ordered page',
     `  ON page.sid = dwell.sid AND page.page_idx = dwell.page_idx AND ${populationWhere('pageviews', 'page')}`,
+    // Grouped, so at most one row per leg: it cannot fan out the counts above.
+    'LEFT JOIN scroll ON scroll.sid = dwell.sid AND scroll.page_idx = dwell.page_idx',
     'GROUP BY 1',
     // Path breaks ties so a limited ranking is deterministic, like every other kind.
     'ORDER BY avg_page_ms DESC, path',

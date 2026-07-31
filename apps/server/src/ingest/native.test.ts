@@ -76,6 +76,29 @@ describe('events, outlinks and downloads', () => {
   });
 });
 
+describe('scroll depth', () => {
+  it('lifts a reading onto the hit', () => {
+    expect(one({ type: 'ping', url: 'https://a.test/', scroll: 73 })).toEqual([
+      { siteId: 4, type: 'ping', url: 'https://a.test/', scrollPct: 73 },
+    ]);
+  });
+
+  // Absent means unmeasured. It must not arrive as 0, which would read as a
+  // visitor who saw none of the page (docs/04 § 2).
+  it('leaves an absent reading unset rather than zero', () => {
+    const [hit] = one({ type: 'ping', url: 'https://a.test/' });
+    expect(hit?.scrollPct).toBeUndefined();
+  });
+
+  it('drops a reading outside 0–100, keeping the hit', () => {
+    for (const scroll of [-1, 101, 1.5, 'lots']) {
+      const [hit] = one({ type: 'ping', url: 'https://a.test/', scroll });
+      expect(hit?.type, String(scroll)).toBe('ping');
+      expect(hit?.scrollPct, String(scroll)).toBeUndefined();
+    }
+  });
+});
+
 describe('never rejects, only records less (invariant 4)', () => {
   it('yields nothing for a body that is missing, empty or not JSON', () => {
     for (const input of [undefined, '', '   ', 'not json', '<html>', 'null', '[]']) {

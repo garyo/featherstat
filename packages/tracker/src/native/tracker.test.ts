@@ -335,3 +335,94 @@ function hide(hidden: boolean): void {
     configurable: true,
   });
 }
+
+describe('scroll depth', () => {
+  /** happy-dom has no layout, so the page's geometry is stated outright. */
+  const layout = (viewportH: number, documentH: number, scrollY = 0): void => {
+    Object.defineProperty(window, 'innerHeight', { value: viewportH, configurable: true });
+    Object.defineProperty(window, 'scrollY', { value: scrollY, configurable: true });
+    Object.defineProperty(document.documentElement, 'scrollHeight', {
+      value: documentH,
+      configurable: true,
+    });
+  };
+  const scrollTo = (y: number): void => {
+    Object.defineProperty(window, 'scrollY', { value: y, configurable: true });
+    document.dispatchEvent(new Event('scroll'));
+    vi.advanceTimersByTime(20); // let the rAF throttle land
+  };
+  const pings = (): Record<string, unknown>[] => sent().filter((hit) => hit.type === 'ping');
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    // happy-dom has no rAF under fake timers; a timeout is the same shape here.
+    vi.stubGlobal('requestAnimationFrame', (fn: FrameRequestCallback) => {
+      setTimeout(() => fn(0), 0);
+      return 0;
+    });
+  });
+
+  it('reports the deepest point reached, not the last one', () => {
+    layout(1_000, 4_000);
+    start();
+    scrollTo(3_000); // 100%
+    scrollTo(0); // back to the top — the page was still read to the end
+    vi.advanceTimersByTime(15_000);
+    expect(pings()[0]?.scroll).toBe(100);
+  });
+
+  it('carries the running depth on every ping', () => {
+    layout(1_000, 4_000);
+    start();
+    vi.advanceTimersByTime(15_000);
+    expect(pings()[0]?.scroll).toBe(25); // the viewport's share, unscrolled
+    scrollTo(1_000);
+    vi.advanceTimersByTime(15_000);
+    expect(pings()[1]?.scroll).toBe(50);
+  });
+
+  // A reading of 0 means the page could not be measured, not that nobody saw
+  // anything — sending it would fabricate a bounce off the header.
+  it('sends no reading at all for a page it could not measure', () => {
+    layout(0, 0);
+    start();
+    vi.advanceTimersByTime(15_000);
+    expect(pings()[0]).not.toHaveProperty('scroll');
+  });
+
+  it('reports passing the read threshold once, as an ordinary event', () => {
+    layout(1_000, 4_000);
+    start();
+    scrollTo(2_600); // 90%
+    const reads = sent().filter((hit) => hit.type === 'event');
+    expect(reads).toHaveLength(1);
+    expect(reads[0]).toMatchObject({ category: 'scroll', action: 'read', url: location.href });
+    scrollTo(3_000); // deeper still — the milestone is not news twice
+    scrollTo(3_500);
+    expect(sent().filter((hit) => hit.type === 'event')).toHaveLength(1);
+  });
+
+  it('starts a new page at nothing, so an SPA route does not inherit a depth', () => {
+    layout(1_000, 4_000);
+    start();
+    scrollTo(3_000); // read the first page to the end
+    expect(sent().filter((hit) => hit.type === 'event')).toHaveLength(1);
+    layout(1_000, 8_000, 0);
+    page('https://deep-timeline.org/era/ordovician');
+    vi.advanceTimersByTime(15_000);
+    // 12.5% of the new page, and its own read event still to be earned.
+    expect(pings().at(-1)?.scroll).toBe(13);
+    expect(sent().filter((hit) => hit.type === 'event')).toHaveLength(1);
+  });
+
+  it('notices a page that grew after load without anyone scrolling', () => {
+    layout(1_000, 1_000); // fits the viewport: fully read
+    start();
+    vi.advanceTimersByTime(15_000);
+    expect(pings()[0]?.scroll).toBe(100);
+    layout(1_000, 5_000); // lazy content landed; the end moved away
+    vi.advanceTimersByTime(15_000);
+    // Still 100: depth is a high-water mark, and they HAD seen the whole page.
+    expect(pings()[1]?.scroll).toBe(100);
+  });
+});

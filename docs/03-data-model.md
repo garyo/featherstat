@@ -52,7 +52,11 @@ CREATE TABLE events (
                                           --   the Matomo importer a code ("MA");
                                           --   the dashboard codes US/CA for display
   city        TEXT,
-  lat REAL, lon REAL
+  lat REAL, lon REAL,
+  scroll_pct  INTEGER                     -- 0-100, native tracker only (v5).
+                                          --   NULL is UNMEASURED, never 0: the
+                                          --   shim, the importer and every row
+                                          --   before v5 have no reading.
 );
 
 CREATE INDEX ix_events_site_ts   ON events (site_id, ts);

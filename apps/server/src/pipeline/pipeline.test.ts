@@ -207,7 +207,15 @@ describe('a reader who comes back to an open tab', () => {
       'q',
     ).rows;
     expect(dwell).toEqual([
-      { path: '/a', views_measured: 1, avg_page_ms: ENGAGED_MS, max_page_ms: ENGAGED_MS },
+      {
+        path: '/a',
+        views_measured: 1,
+        avg_page_ms: ENGAGED_MS,
+        max_page_ms: ENGAGED_MS,
+        // The matomo.js shim sends no scroll reading, so this visit has none.
+        views_scrolled: 0,
+        avg_scroll_pct: null,
+      },
     ]);
   });
 

@@ -2,6 +2,7 @@ import type { HitType } from '@featherstat/shared';
 import { isExitPingWorthwhile } from '../exit.ts';
 import { classifyLink } from '../links.ts';
 import { isRepeatView } from '../repeat.ts';
+import { documentHeight, READ_THRESHOLD_PCT, scrollDepthPct } from '../scroll.ts';
 import { send } from '../send.ts';
 
 /** The native tracker for new sites (docs/04 § 2): `POST /api/collect`, JSON, ESM. */
@@ -37,6 +38,8 @@ interface NativeHit {
   value?: number;
   screen?: string;
   lang?: string;
+  /** How far down this page the reader has got, 0–100 (scroll.ts). Pings only. */
+  scroll?: number;
 }
 
 interface Runtime {
@@ -48,6 +51,12 @@ interface Runtime {
   viewAt: number;
   /** When a hit last went out — what the exit ping credits from (exit.ts). */
   lastHitAt: number;
+  /** Deepest point reached on the CURRENT page; reset by `page()`. */
+  maxScroll: number;
+  /** Whether this page view has already reported passing the read threshold. */
+  read: boolean;
+  /** Re-read the depth now; `page()` calls it so a new page starts measured. */
+  measure: () => void;
   stop: () => void;
 }
 
@@ -57,6 +66,9 @@ const DEFAULT_HEARTBEAT_SECONDS = 15;
 const DEFAULT_IDLE_SECONDS = 60;
 /** `track('signup')` with no category still needs one server-side. */
 const DEFAULT_EVENT_CATEGORY = 'custom';
+/** The reserved category/action the read milestone lands under (docs/04 § 2). */
+const SCROLL_CATEGORY = 'scroll';
+const READ_ACTION = 'read';
 const INPUT_EVENTS = ['pointerdown', 'pointermove', 'keydown', 'scroll', 'touchstart'];
 const INPUT_OPTIONS = { capture: true, passive: true } as const;
 
@@ -98,10 +110,48 @@ export function init(config: TrackerConfig): () => void {
     if (exited || !runtime) return;
     if (!isExitPingWorthwhile(runtime.lastHitAt, Date.now(), heartbeatMs)) return;
     exited = true;
-    emit({ type: 'ping', url: location.href });
+    measure();
+    emit({ type: 'ping', url: location.href, scroll: reading() });
+  };
+  /**
+   * Re-read the depth. Cheap enough to run on input, but `documentHeight` forces
+   * layout, so it is throttled to a frame — the reading only has to be right by
+   * the next heartbeat, not on every pixel of a scroll.
+   */
+  let framePending = false;
+  const measure = (): void => {
+    if (!runtime) return;
+    const pct = scrollDepthPct(window.scrollY, window.innerHeight, documentHeight(document));
+    if (pct > runtime.maxScroll) runtime.maxScroll = pct;
+    // One event per page view, the first time the threshold is passed. An
+    // ordinary custom event on purpose: it needs no new hit type, and so counts,
+    // filters and shows up in the live feed exactly like any other (docs/04 § 2).
+    if (!runtime.read && runtime.maxScroll >= READ_THRESHOLD_PCT) {
+      runtime.read = true;
+      emit({ type: 'event', url: location.href, category: SCROLL_CATEGORY, action: READ_ACTION });
+    }
+  };
+  /**
+   * The depth to report, or nothing. `scrollDepthPct` returns 0 only for a page
+   * it could not measure — no layout yet, a zero-height document — and any real
+   * page gives at least the viewport's share, so 0 means "unknown" rather than
+   * "saw nothing". Sending it would be the measurement gap passed off as a
+   * reader who bounced off the header.
+   */
+  const reading = (): number | undefined =>
+    runtime !== undefined && runtime.maxScroll > 0 ? runtime.maxScroll : undefined;
+  const throttledMeasure = (): void => {
+    if (framePending) return;
+    framePending = true;
+    requestAnimationFrame(() => {
+      framePending = false;
+      measure();
+    });
   };
   const onInput = (): void => {
     lastInput = Date.now();
+    // `scroll` is already one of INPUT_EVENTS, so this needs no listener of its own.
+    throttledMeasure();
   };
   const onNavigate = (): void => {
     if (location.href !== runtime?.url) page();
@@ -121,7 +171,11 @@ export function init(config: TrackerConfig): () => void {
 
   const heartbeat = setInterval(() => {
     if (focused && visible && Date.now() - lastInput < idleMs) {
-      emit({ type: 'ping', url: location.href });
+      // Measure first: a page that grew after load — lazy images, deferred
+      // content — moves the end away without the reader touching anything, and
+      // only a fresh reading notices.
+      measure();
+      emit({ type: 'ping', url: location.href, scroll: reading() });
     }
   }, heartbeatMs);
 
@@ -140,6 +194,9 @@ export function init(config: TrackerConfig): () => void {
     url: '',
     viewAt: 0,
     lastHitAt: 0,
+    maxScroll: 0,
+    read: false,
+    measure,
     stop: () => {
       clearInterval(heartbeat);
       window.removeEventListener('focus', onFocus);
@@ -176,6 +233,10 @@ export function page(url: string = location.href, title: string = document.title
   const referrer = runtime.url || document.referrer;
   runtime.url = url;
   runtime.viewAt = at;
+  // A new page is a new measurement, so an SPA route change does not inherit
+  // the depth of the page before it.
+  runtime.maxScroll = 0;
+  runtime.read = false;
   emit({
     type: 'pageview',
     url,
@@ -184,6 +245,10 @@ export function page(url: string = location.href, title: string = document.title
     screen: `${screen.width}x${screen.height}`,
     lang: navigator.language,
   });
+  // Read the opening depth straight away, so the first ping carries a real
+  // figure rather than the 0 of a page nobody has scrolled yet — on a page that
+  // fits the viewport, that opening figure is the whole answer.
+  runtime.measure();
 }
 
 /** Record a custom event: `track('copy-link', { category: 'share' })`. */

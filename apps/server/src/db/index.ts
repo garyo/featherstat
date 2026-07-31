@@ -72,6 +72,8 @@ export interface EventRow {
   city?: string | null;
   lat?: number | null;
   lon?: number | null;
+  /** 0–100 from the native tracker's pings; null is unmeasured, never 0 (docs/04 § 2). */
+  scroll_pct?: number | null;
 }
 
 export interface SessionRow {
@@ -132,6 +134,7 @@ const EVENT_NULLS: NullFill<EventRow> = {
   city: null,
   lat: null,
   lon: null,
+  scroll_pct: null,
 };
 
 const SESSION_NULLS: NullFill<SessionRow> = {
@@ -324,14 +327,14 @@ const SQL_INSERT_EVENT = `INSERT INTO events (
   ref_domain, ref_type, utm_source, utm_medium, utm_campaign,
   event_category, event_action, event_name, event_value,
   browser, browser_version, os, device_type, screen, lang,
-  country, region, city, lat, lon
+  country, region, city, lat, lon, scroll_pct
 ) VALUES (
   @site_id, @ts, @local_date, @local_hour, @type, @visitor_id, @session_id, @seq,
   @hostname, @path, @title, @target_url,
   @ref_domain, @ref_type, @utm_source, @utm_medium, @utm_campaign,
   @event_category, @event_action, @event_name, @event_value,
   @browser, @browser_version, @os, @device_type, @screen, @lang,
-  @country, @region, @city, @lat, @lon
+  @country, @region, @city, @lat, @lon, @scroll_pct
 )`;
 
 /** Counters and exit state are re-sent in full by the sessionizer; first-touch columns stick. */

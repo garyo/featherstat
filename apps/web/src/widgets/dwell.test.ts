@@ -8,8 +8,24 @@ describe('dwellRows', () => {
       { path: '/', views_measured: 210, avg_page_ms: 23_000, max_page_ms: 180_000 },
     ]);
     expect(rows).toEqual([
-      { path: '/blog', views: 37, avgMs: 92_000, maxMs: 740_000, pct: '100.0' },
-      { path: '/', views: 210, avgMs: 23_000, maxMs: 180_000, pct: '25.0' },
+      {
+        path: '/blog',
+        views: 37,
+        avgMs: 92_000,
+        maxMs: 740_000,
+        scroll: undefined,
+        scrolled: 0,
+        pct: '100.0',
+      },
+      {
+        path: '/',
+        views: 210,
+        avgMs: 23_000,
+        maxMs: 180_000,
+        scroll: undefined,
+        scrolled: 0,
+        pct: '25.0',
+      },
     ]);
   });
 

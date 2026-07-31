@@ -35,6 +35,16 @@ import {
   upsertSessions,
   withWriteTransaction,
 } from './index.ts';
+import { MIGRATIONS } from './migrations/index.ts';
+
+/**
+ * The shipped migrations as no-ops, plus the version after them. `openDb` has
+ * already applied the real list, so a fake migration must sit past its tail or
+ * `migrate` skips it — and hard-coding that number is what made these tests
+ * fail on every schema bump.
+ */
+const alreadyApplied = MIGRATIONS.map((m) => ({ ...m, sql: 'SELECT 1' }));
+const NEXT_VERSION = MIGRATIONS.length + 1;
 
 function tableNames(db: Db): string[] {
   return db
@@ -57,13 +67,12 @@ describe('migrate', () => {
       'share_tokens',
       'sites',
     ]);
-    expect(schemaVersion(db)).toBe(4);
-    expect(db.prepare('SELECT version, name FROM schema_migrations').all()).toEqual([
-      { version: 1, name: 'init' },
-      { version: 2, name: 'admin-sessions' },
-      { version: 3, name: 'dashboards' },
-      { version: 4, name: 'visitor-covering-index' },
-    ]);
+    // Spelled from MIGRATIONS rather than repeated: the list is the fact, and
+    // this asserts they were all applied in order, not what the newest one is.
+    expect(schemaVersion(db)).toBe(MIGRATIONS.length);
+    expect(db.prepare('SELECT version, name FROM schema_migrations').all()).toEqual(
+      MIGRATIONS.map((m) => ({ version: m.version, name: m.name })),
+    );
     db.close();
   });
 
@@ -90,7 +99,7 @@ describe('migrate', () => {
   it('is a no-op when re-run on an already-migrated database', () => {
     const db = openDb(':memory:');
     const applied = db.prepare('SELECT applied_at FROM schema_migrations').pluck().all();
-    expect(migrate(db)).toBe(4);
+    expect(migrate(db)).toBe(MIGRATIONS.length);
     expect(db.prepare('SELECT applied_at FROM schema_migrations').pluck().all()).toEqual(applied);
     db.close();
   });
@@ -116,16 +125,13 @@ describe('migrate', () => {
     const db = openDb(':memory:');
     expect(
       migrate(db, [
-        { version: 1, name: 'init', sql: 'SELECT 1' },
-        { version: 2, name: 'admin-sessions', sql: 'SELECT 1' },
-        { version: 3, name: 'dashboards', sql: 'SELECT 1' },
-        { version: 4, name: 'visitor-covering-index', sql: 'SELECT 1' },
-        { version: 5, name: 'later', sql: 'CREATE TABLE later (a INTEGER)' },
+        ...alreadyApplied,
+        { version: NEXT_VERSION, name: 'later', sql: 'CREATE TABLE later (a INTEGER)' },
       ]),
-    ).toBe(5);
+    ).toBe(NEXT_VERSION);
     expect(tableNames(db)).toContain('later');
     expect(db.prepare('SELECT name FROM schema_migrations ORDER BY version').pluck().all()).toEqual(
-      ['init', 'admin-sessions', 'dashboards', 'visitor-covering-index', 'later'],
+      [...MIGRATIONS.map((m) => m.name), 'later'],
     );
     db.close();
   });
@@ -134,15 +140,12 @@ describe('migrate', () => {
     const db = openDb(':memory:');
     expect(() =>
       migrate(db, [
-        { version: 1, name: 'init', sql: 'SELECT 1' },
-        { version: 2, name: 'admin-sessions', sql: 'SELECT 1' },
-        { version: 3, name: 'dashboards', sql: 'SELECT 1' },
-        { version: 4, name: 'visitor-covering-index', sql: 'SELECT 1' },
-        { version: 5, name: 'broken', sql: 'CREATE TABLE half (a INTEGER); NOT SQL;' },
+        ...alreadyApplied,
+        { version: NEXT_VERSION, name: 'broken', sql: 'CREATE TABLE half (a INTEGER); NOT SQL;' },
       ]),
     ).toThrow();
     expect(tableNames(db)).not.toContain('half');
-    expect(schemaVersion(db)).toBe(4);
+    expect(schemaVersion(db)).toBe(MIGRATIONS.length);
     db.close();
   });
 });
@@ -170,8 +173,10 @@ describe('openDb on a file', () => {
     first.close();
 
     const second = openDb(path);
-    expect(schemaVersion(second)).toBe(4);
-    expect(second.prepare('SELECT count(*) FROM schema_migrations').pluck().get()).toBe(4);
+    expect(schemaVersion(second)).toBe(MIGRATIONS.length);
+    expect(second.prepare('SELECT count(*) FROM schema_migrations').pluck().get()).toBe(
+      MIGRATIONS.length,
+    );
     expect(getSite(second, site.id)).toEqual(site);
     second.close();
   });

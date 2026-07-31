@@ -106,6 +106,26 @@ the `pagehide` arriving milliseconds after a hide from sending a second one.
 Hiding rather than unloading is deliberate: it is where attention actually
 stops, and on mobile Safari it is the last callback that reliably runs at all.
 
+**Scroll depth (native only).** Time on page says a visitor stayed; it cannot
+say they read. `packages/tracker/src/scroll.ts` keeps a per-page-view
+high-water mark — `(scrollY + viewportH) / documentHeight`, whole percent,
+re-measured on every reading rather than cached at load, which is the
+lazy-loading trap that otherwise reports a reader as having finished an article
+they are a third of the way through. The viewport is in the numerator on
+purpose: without it the figure can never reach 100 and reads 0 on a page with
+no scrollbar, so a page that fits is 100 — they did see all of it.
+
+It rides the pings that already fly rather than becoming a hit type of its own,
+and is **absent rather than 0** when the page could not be measured, because
+0 would read as a visitor who saw nothing. `page()` resets it, so an SPA route
+change starts a fresh measurement.
+
+Passing 90 % emits **one ordinary custom event** (`scroll` / `read`), once per
+page view. Ordinary on purpose: a new hit type costs eleven touch points across
+the vocabulary, the populations, the corpus and the replay generator, while a
+custom event already counts, filters by `event_category`/`event_action`, and
+shows in the live feed — for a milestone that is exactly an event.
+
 ### Compatibility contract
 
 The golden corpus in `apps/server/test/fixtures/matomo/` (real access-log
@@ -143,7 +163,8 @@ differently, that's a failing test, not an opinion.
 
 - `packages/tracker` ships `tracker.js` (< 2 KB gz, ESM):
   `init({site, endpoint})`, auto pageviews with a `history` hook (opt-out),
-  auto outlink/download, focus-gated engagement pings, `track(name, props?)`.
+  auto outlink/download, focus-gated engagement pings, `track(name, props?)`,
+  and scroll depth (below).
   CORS: `Access-Control-Allow-Origin: *` on collect only — belt and braces,
   since `send.ts` keeps every beacon CORS-safelisted (`text/plain` body,
   `no-cors` fetch fallback) and so never triggers a preflight at all.
@@ -362,13 +383,27 @@ batch itself still succeeds, and never returns wrong numbers.
   (see 03 § Journeys).
 - **Time on page** is its own kind for the same reason — it counts page legs,
   not rows: `{ "id": "dwell", "kind": "dwell", "limit": 10 }` → rows of
-  `{ path, views_measured, avg_page_ms, max_page_ms }` ranked by average dwell,
+  `{ path, views_measured, avg_page_ms, max_page_ms, views_scrolled,
+  avg_scroll_pct }` ranked by average dwell,
   over the same session-scoped envelope (and the same honest refusal of
   event-level filters). Semantics live in 03: every event, **pings included**,
   credits `min(gap to the next event, 20 s)` to the most recent pageview. Views
   that nothing followed are **excluded, never zeroed** — `views_measured` is the
   count the average rests on, so a card can say "37 measured" instead of
   implying it timed every view.
+- **Scroll depth rides the same rows** (native tracker only): the tracker keeps
+  a per-page-view high-water mark and puts it on the pings it already sends, so
+  `avg_scroll_pct` is the average of those maxima per page — a `rate`, scaled to
+  a percentage once by the client. Its own count, `views_scrolled`, because a
+  page view can be timed and still carry no reading (the shim, the importer,
+  anything before schema v5), and a page with none is left OUT of the average
+  rather than averaged in at 0 %.
+  **The aggregation deliberately does not share dwell's row filter.** Dwell
+  skips each session's last hit, whose gap is unmeasurable — but that hit is
+  usually the exit ping, which carries the page's deepest reading. Reading
+  scroll under that filter returns the second-deepest reading of every page,
+  every time: silent, systematic, and always low. Depth is a high-water mark,
+  not a gap, so it is aggregated over all of a leg's rows.
 - **Click-to-filter falls out for free**: clicking a row in any breakdown adds
   a `filters` entry and re-issues the same batch.
 - **Caching**: response ETag = hash(max event rowid, schema version,

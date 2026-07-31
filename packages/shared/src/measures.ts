@@ -68,7 +68,8 @@ export type Population =
   | 'downloads'
   | 'sessions'
   | 'measured_sessions'
-  | 'measured_pageviews';
+  | 'measured_pageviews'
+  | 'scrolled_pageviews';
 
 export interface PopulationSpec {
   /** Which stored rows it draws from: hit rows (`events`) or visits (`sessions`). */
@@ -120,6 +121,19 @@ export const POPULATIONS: Record<Population, PopulationSpec> = {
     hitTypes: ['pageview'],
     measured: true,
     describes: 'page views something followed, so the gap to it could be timed',
+  },
+  /**
+   * Deliberately not `measured_pageviews`. A page view can be timed and still
+   * have no scroll reading — every imported Matomo row, every hit from the
+   * matomo.js shim, and everything stored before schema v5 — so the two counts
+   * differ for a real reason. Sharing one population would pass that difference
+   * off as an accident.
+   */
+  scrolled_pageviews: {
+    rows: 'hits',
+    hitTypes: ['pageview'],
+    measured: true,
+    describes: 'page views a scroll reading reached — no reading is unknown, not 0 %',
   },
 };
 

@@ -140,6 +140,8 @@ interface DwellRow {
   views_measured: number;
   avg_page_ms: number;
   max_page_ms: number;
+  views_scrolled: number;
+  avg_scroll_pct: number | null;
 }
 
 function expectedDwell(scoped: readonly OracleSession[], limit: number): DwellRow[] {
@@ -156,6 +158,14 @@ function expectedDwell(scoped: readonly OracleSession[], limit: number): DwellRo
   return [...byPath.entries()]
     .map(([path, entry]) => ({
       path,
+      // Constant, and honestly so: scroll depth is native-tracker-only and this
+      // corpus is Matomo-shaped (`generate.ts` encodes every hit back into
+      // matomo params), so no row here can carry a reading. That makes this an
+      // assertion that the corpus reports NO scroll rather than a fabricated 0 %
+      // — the exit-ping attribution it cannot exercise is pinned by a
+      // hand-built fixture in `query/dwell.test.ts` instead.
+      views_scrolled: 0,
+      avg_scroll_pct: null,
       views_measured: entry.count,
       avg_page_ms: entry.total / entry.count,
       max_page_ms: entry.max,

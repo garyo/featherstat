@@ -160,6 +160,9 @@ export class Sessionizer {
       city: input.geo?.city ?? null,
       lat: input.geo?.lat ?? null,
       lon: input.geo?.lon ?? null,
+      // `scroll_pct` is optional on EventRow, so nothing here is type-checked:
+      // forget this line and the column silently stays null forever.
+      scroll_pct: hit.scrollPct ?? null,
     };
     return { event, session: row };
   }

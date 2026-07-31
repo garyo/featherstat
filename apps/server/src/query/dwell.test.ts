@@ -1,6 +1,6 @@
 import { type HitType, PING_CLAMP_MS, type QueryRequest } from '@featherstat/shared';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { binId, event, resultOf, session, T0 } from '../../test/rows.ts';
+import { binId, event, openTestDb, resultOf, session, T0 } from '../../test/rows.ts';
 import {
   createSite,
   type Db,
@@ -10,7 +10,7 @@ import {
   upsertSessions,
   withWriteTransaction,
 } from '../db/index.ts';
-import { compileDwellQuery } from './dwell.ts';
+import { compileDwellQuery, DWELL_MEASURES } from './dwell.ts';
 import { executeQueryRequest } from './executor.ts';
 
 /**
@@ -27,6 +27,8 @@ let db: Db;
 interface DwellHit {
   type?: HitType;
   path?: string;
+  /** Scroll depth this hit reported, 0–100; absent is unmeasured. */
+  scroll?: number;
   /** Milliseconds after the visit's first hit — the gaps ARE the fixture. */
   at: number;
   /** Local date of this one row; a session can cross midnight (docs/03). */
@@ -54,6 +56,7 @@ function seedVisit(visit: Visit): void {
       type: hit.type ?? 'pageview',
       seq: index + 1,
       path: hit.path ?? null,
+      scroll_pct: hit.scroll ?? null,
     }),
   );
   insertEvents(db, rows);
@@ -158,13 +161,48 @@ describe('dwell attribution', () => {
     const response = run({ queries: dwell() });
     expect(resultOf(response, 'q').rows).toEqual([
       // A's 3 × 15 s and B's clamped 20 s, averaged over two measured views.
-      { path: '/a', views_measured: 2, avg_page_ms: 32_500, max_page_ms: 45_000 },
+      {
+        path: '/a',
+        views_measured: 2,
+        avg_page_ms: 32_500,
+        max_page_ms: 45_000,
+        views_scrolled: 0,
+        avg_scroll_pct: null,
+      },
       // E's second page: a 30 s gap to its ping, clamped.
-      { path: '/after', views_measured: 1, avg_page_ms: 20_000, max_page_ms: 20_000 },
-      { path: '/d', views_measured: 1, avg_page_ms: 10_000, max_page_ms: 10_000 },
-      { path: '/late', views_measured: 1, avg_page_ms: 10_000, max_page_ms: 10_000 },
+      {
+        path: '/after',
+        views_measured: 1,
+        avg_page_ms: 20_000,
+        max_page_ms: 20_000,
+        views_scrolled: 0,
+        avg_scroll_pct: null,
+      },
+      {
+        path: '/d',
+        views_measured: 1,
+        avg_page_ms: 10_000,
+        max_page_ms: 10_000,
+        views_scrolled: 0,
+        avg_scroll_pct: null,
+      },
+      {
+        path: '/late',
+        views_measured: 1,
+        avg_page_ms: 10_000,
+        max_page_ms: 10_000,
+        views_scrolled: 0,
+        avg_scroll_pct: null,
+      },
       // /b was timed only by the outlink that followed it.
-      { path: '/b', views_measured: 1, avg_page_ms: 5_000, max_page_ms: 5_000 },
+      {
+        path: '/b',
+        views_measured: 1,
+        avg_page_ms: 5_000,
+        max_page_ms: 5_000,
+        views_scrolled: 0,
+        avg_scroll_pct: null,
+      },
     ]);
   });
 
@@ -182,6 +220,8 @@ describe('dwell attribution', () => {
       views_measured: 2,
       avg_page_ms: (45_000 + PING_CLAMP_MS) / 2,
       max_page_ms: 45_000,
+      views_scrolled: 0,
+      avg_scroll_pct: null,
     });
   });
 
@@ -203,7 +243,14 @@ describe('dwell attribution', () => {
 
   it('scopes by site, and site "all" merges every site', () => {
     expect(resultOf(run({ site: 2, queries: dwell() }), 'q').rows).toEqual([
-      { path: '/x', views_measured: 1, avg_page_ms: 5_000, max_page_ms: 5_000 },
+      {
+        path: '/x',
+        views_measured: 1,
+        avg_page_ms: 5_000,
+        max_page_ms: 5_000,
+        views_scrolled: 0,
+        avg_scroll_pct: null,
+      },
     ]);
     const all = resultOf(run({ site: 'all', queries: dwell() }), 'q').rows;
     expect(all).toContainEqual({
@@ -211,12 +258,16 @@ describe('dwell attribution', () => {
       views_measured: 1,
       avg_page_ms: 5_000,
       max_page_ms: 5_000,
+      views_scrolled: 0,
+      avg_scroll_pct: null,
     });
     expect(all).toContainEqual({
       path: '/a',
       views_measured: 2,
       avg_page_ms: 32_500,
       max_page_ms: 45_000,
+      views_scrolled: 0,
+      avg_scroll_pct: null,
     });
   });
 
@@ -227,6 +278,8 @@ describe('dwell attribution', () => {
       views_measured: 1,
       avg_page_ms: 5_000,
       max_page_ms: 5_000,
+      views_scrolled: 0,
+      avg_scroll_pct: null,
     });
   });
 
@@ -243,8 +296,22 @@ describe('dwell envelope filters', () => {
       queries: dwell(),
     });
     expect(resultOf(response, 'q').rows).toEqual([
-      { path: '/a', views_measured: 2, avg_page_ms: 32_500, max_page_ms: 45_000 },
-      { path: '/b', views_measured: 1, avg_page_ms: 5_000, max_page_ms: 5_000 },
+      {
+        path: '/a',
+        views_measured: 2,
+        avg_page_ms: 32_500,
+        max_page_ms: 45_000,
+        views_scrolled: 0,
+        avg_scroll_pct: null,
+      },
+      {
+        path: '/b',
+        views_measured: 1,
+        avg_page_ms: 5_000,
+        max_page_ms: 5_000,
+        views_scrolled: 0,
+        avg_scroll_pct: null,
+      },
     ]);
   });
 
@@ -270,5 +337,79 @@ describe('dwell envelope filters', () => {
       queries: dwell(),
     });
     expect(resultOf(response, 'q').rows).toEqual([]);
+  });
+});
+
+describe('scroll depth', () => {
+  const scrollDb = (): Db => {
+    const fresh = openTestDb();
+    const previous = db;
+    db = fresh;
+    try {
+      withWriteTransaction(fresh, () => {
+        seedVisit({
+          sess: 90,
+          hits: [
+            { path: '/long', at: 0 },
+            { path: '/long', type: 'ping', at: 15_000, scroll: 40 },
+            // The visit's LAST hit — its exit ping, carrying the deepest
+            // reading. `dwell` cannot see this row (no next_ts), which is
+            // exactly why scroll is aggregated separately.
+            { path: '/long', type: 'ping', at: 30_000, scroll: 95 },
+          ],
+        });
+        seedVisit({
+          sess: 91,
+          hits: [
+            { path: '/long', at: 0 },
+            { path: '/long', type: 'ping', at: 15_000, scroll: 55 },
+            { path: '/unread', at: 20_000 },
+            { path: '/unread', type: 'ping', at: 35_000 },
+          ],
+        });
+      });
+    } finally {
+      db = previous;
+    }
+    return fresh;
+  };
+
+  const rowsOf = (fresh: Db) =>
+    resultOf(executeQueryRequest(fresh, { site: 1, ...RANGE, queries: dwell() }), 'q').rows;
+
+  /**
+   * The regression this design exists to avoid. The deepest reading of a page
+   * arrives on the exit ping, which is the session's last row and has no
+   * `next_ts`; aggregating scroll under the dwell CTE's filter would report 40
+   * here — the second-deepest reading — silently, systematically, and always low.
+   */
+  it('reads the exit ping, which the dwell filter cannot see', () => {
+    const row = rowsOf(scrollDb()).find((r) => r.path === '/long');
+    // (95 + 55) / 2 / 100 — a rate, scaled once by the client.
+    expect(row?.avg_scroll_pct).toBeCloseTo(0.75, 5);
+    expect(row?.views_scrolled).toBe(2);
+  });
+
+  // A page view can be timed and still carry no reading — every imported row and
+  // every shim hit is one. Averaging it in as 0 % would invent a reader who saw
+  // nothing, which is the measurement gap passed off as a fact.
+  it('leaves a page with no reading out of the average, not in it at zero', () => {
+    const row = rowsOf(scrollDb()).find((r) => r.path === '/unread');
+    expect(row?.views_measured).toBe(1);
+    expect(row?.views_scrolled).toBe(0);
+    expect(row?.avg_scroll_pct).toBeNull();
+  });
+
+  /**
+   * Nothing ties `DWELL_MEASURES` to the SELECT's columns — they are declared in
+   * one place and spelled in another, and were three and three by hand until
+   * this change made them five and five.
+   */
+  it('declares exactly the columns it returns', () => {
+    const [row] = rowsOf(scrollDb());
+    const columns = Object.keys(row ?? {})
+      .filter((key) => key !== 'path')
+      .sort();
+    expect(columns).toEqual(Object.keys(DWELL_MEASURES).sort());
   });
 });
