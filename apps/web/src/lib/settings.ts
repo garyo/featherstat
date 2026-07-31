@@ -3,23 +3,19 @@ import type { AdminBotDrops } from '@featherstat/shared';
 /** Pure helpers behind the settings view — kept out of the component for tests. */
 
 /**
- * The Matomo-compatible tag for a site (docs/04 § 1) against this deployment.
- * The shim serves from `/matomo.js` and beacons to `/matomo.php` on `origin`.
+ * The native tag for a site (docs/04 § 2) against this deployment: `tracker.js`
+ * as ESM, beaconing to `/api/collect` on `origin`.
+ *
+ * The Matomo-compatible shim this deployment also serves is deliberately not
+ * offered here — it owns the `_paq` global, so it cannot run beside a real
+ * Matomo tag while an operator compares the two. That path is a migration
+ * step, documented in docs/06, not the way to start.
  */
 export function trackingSnippet(siteId: number, origin: string): string {
   const base = origin.endsWith('/') ? origin : `${origin}/`;
-  return `<script>
-  var _paq = window._paq = window._paq || [];
-  _paq.push(['trackPageView']);
-  _paq.push(['enableLinkTracking']);
-  _paq.push(['enableHeartBeatTimer']);
-  (function () {
-    var u = '${base}';
-    _paq.push(['setTrackerUrl', u + 'matomo.php']);
-    _paq.push(['setSiteId', '${siteId}']);
-    var d = document, g = d.createElement('script'), s = d.getElementsByTagName('script')[0];
-    g.async = true; g.src = u + 'matomo.js'; s.parentNode.insertBefore(g, s);
-  })();
+  return `<script type="module">
+  import { init } from '${base}tracker.js';
+  init({ site: ${siteId}, endpoint: '${base}api/collect' });
 </${'script'}>`;
 }
 

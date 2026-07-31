@@ -4,16 +4,25 @@ import { botDropTotals, formatBytes, parseDomains, trackingSnippet } from './set
 describe('trackingSnippet', () => {
   it('targets this deployment and the chosen site', () => {
     const snippet = trackingSnippet(7, 'https://analytics.example.com');
-    expect(snippet).toContain("var u = 'https://analytics.example.com/'");
-    expect(snippet).toContain("_paq.push(['setSiteId', '7'])");
-    expect(snippet).toContain("u + 'matomo.php'");
-    expect(snippet).toContain("u + 'matomo.js'");
-    expect(snippet.startsWith('<script>')).toBe(true);
+    expect(snippet).toContain("import { init } from 'https://analytics.example.com/tracker.js'");
+    expect(snippet).toContain(
+      "init({ site: 7, endpoint: 'https://analytics.example.com/api/collect' })",
+    );
+    expect(snippet.startsWith('<script type="module">')).toBe(true);
     expect(snippet.endsWith('</script>')).toBe(true);
   });
 
+  // The shim owns `_paq`, so it cannot run beside a real Matomo tag during a
+  // comparison; offering it here would steer new sites into the one path that
+  // cannot dual-run (docs/06 § Already running Matomo?).
+  it('is the native tag, never the matomo.js shim', () => {
+    const snippet = trackingSnippet(7, 'https://analytics.example.com');
+    expect(snippet).not.toContain('_paq');
+    expect(snippet).not.toContain('matomo');
+  });
+
   it('never doubles the slash when the origin already ends with one', () => {
-    expect(trackingSnippet(1, 'https://a.test/')).toContain("var u = 'https://a.test/'");
+    expect(trackingSnippet(1, 'https://a.test/')).toContain("from 'https://a.test/tracker.js'");
     expect(trackingSnippet(1, 'https://a.test/')).not.toContain('a.test//');
   });
 });

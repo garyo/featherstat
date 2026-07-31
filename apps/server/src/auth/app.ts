@@ -30,7 +30,7 @@ import { type Auth, type AuthEnv, type AuthOptions, createAuth } from './auth.ts
  * reachable without a session; everything else under `/api/` needs one.
  */
 // `/api/collect` is the native tracking endpoint (docs/04 § 2): beacons never
-// bounce (invariant 4), so it stays public even before the route exists.
+// bounce (invariant 4), so it is public despite living under the gated prefix.
 const PUBLIC_API_PATHS = new Set([
   '/api/admin/me',
   '/api/admin/setup',

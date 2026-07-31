@@ -51,8 +51,16 @@ were lost.
 
 ### `GET /matomo.js` (alias `/piwik.js`)
 
-A compatibility shim, **not** Matomo's 200 KB tracker — target < 3 KB gz. It
-processes the standard `_paq` queue and implements exactly the used surface:
+A compatibility shim, **not** Matomo's 200 KB tracker — target < 3 KB gz. Ours
+throughout: reimplementing the `_paq` interface is what keeps this MIT, where
+vendoring Matomo's GPLv3 tracker would not.
+
+It is a **migration path, not the way to start** — Settings offers the native
+tag (§ 2) only, because the shim claims `window._paq` and therefore cannot run
+beside a real Matomo tag while an operator compares the two (docs/06 § Already
+running Matomo?).
+
+It processes the standard `_paq` queue and implements exactly the used surface:
 
 `trackPageView`, `trackEvent`, `trackLink`, `enableLinkTracking`,
 `enableHeartBeatTimer`, `disableCookies` (no-op — always cookieless),
@@ -80,6 +88,24 @@ trackers assert the timeout case end to end. Events, outlinks, downloads and
 pings are untouched. A suppressed hit is never sent, so invariant 4 (beacons
 never bounce) is not in play: the collector refuses nothing.
 
+**Leaving is a hit (both trackers).** Engagement accrues *between* hits — the
+sessionizer credits each arrival with the gap since the last one, clamped at
+`PING_CLAMP_MS` — so a session is only ever credited up to its **last** hit.
+With a 15 s heartbeat and nothing sent at the end, every visit silently lost
+its final partial interval: uniform on [0, heartbeat), 7.5 s on average, a
+quarter of a 30-second read. Both trackers now send a final `ping` on
+`visibilitychange → hidden`, with `pagehide` as a backstop, and
+`packages/tracker/src/exit.ts` owns the rule.
+
+Two bounds keep it honest rather than merely generous. Below `EXIT_MIN_GAP_MS`
+(1 s) there is nothing worth a beacon. Past `EXIT_MAX_HEARTBEATS` (2) intervals
+of silence the heartbeat had already stopped — blurred, hidden or idle — so the
+gap is absence, not attention, and a tab backgrounded for five minutes earns
+nothing. Sending the exit ping updates the last-hit time, which is what stops
+the `pagehide` arriving milliseconds after a hide from sending a second one.
+Hiding rather than unloading is deliberate: it is where attention actually
+stops, and on mobile Safari it is the last callback that reliably runs at all.
+
 ### Compatibility contract
 
 The golden corpus in `apps/server/test/fixtures/matomo/` (real access-log
@@ -101,10 +127,26 @@ differently, that's a failing test, not an opinion.
 }
 ```
 
+  The wire format is flatter than the normalized `Hit`: event fields ride at
+  the top level and `ingest/native.ts` lifts them into `Hit.event`. The
+  vocabulary is `CollectHitSchema` in `packages/shared` — the wire cannot
+  declare `visitorId`, `uid` or `clientIpOverride`, because identity and geo
+  are the server's to decide (invariant 3).
+
+- **Degradation is per hit, never per request** (invariant 4). A malformed
+  entry is dropped and the rest of its batch recorded; an optional field the
+  schema rejects costs itself and not the hit carrying it; a batch longer than
+  `MAX_COLLECT_HITS` (50) is truncated rather than refused. The endpoint
+  answers **204 whether or not it understood anything**, and it is public
+  despite living under the otherwise-gated `/api/` prefix — the auth route
+  matrix in `auth/app.test.ts` holds it that way.
+
 - `packages/tracker` ships `tracker.js` (< 2 KB gz, ESM):
   `init({site, endpoint})`, auto pageviews with a `history` hook (opt-out),
   auto outlink/download, focus-gated engagement pings, `track(name, props?)`.
-  CORS: `Access-Control-Allow-Origin: *` on collect only.
+  CORS: `Access-Control-Allow-Origin: *` on collect only — belt and braces,
+  since `send.ts` keeps every beacon CORS-safelisted (`text/plain` body,
+  `no-cors` fetch fallback) and so never triggers a preflight at all.
 - **Idle gating (native tracker only):** focus alone overstates engagement —
   a tab left focused on a second monitor pings forever. The native tracker
   additionally stops pinging when there has been no input signal (pointer,

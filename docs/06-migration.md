@@ -1,7 +1,46 @@
 # 06 — Migration from Matomo
 
+Two audiences, and they want opposite things. Everything below "Importer" is
+the record of *this* deployment's cutover — a specific migration, mostly a bake
+log. The section immediately following is the general one: what any operator
+arriving with a running Matomo should do.
+
 Goal: zero tag changes, zero data gap, and a cutover that is boring. Matomo
 stays untouched until the new system has proven itself on live traffic.
+
+## Already running Matomo? (any operator)
+
+There are two ways in, and the choice is not about taste — the paths have
+different capabilities.
+
+**Dual-run (default).** Add the native snippet from Settings and leave Matomo
+exactly as it is. Both collect; compare for as long as you like; delete the
+Matomo tag when convinced. This is the only path that lets you compare, and it
+is why Settings offers the native tag and nothing else.
+
+**Repoint (when editing the tag is expensive).** Change `setTrackerUrl` to
+`https://<your-featherstat>/matomo.php` and the script `src` to
+`.../matomo.js`. One string in one place, so this wins when the tag lives in a
+tag manager, a CMS theme you don't control, or across dozens of sites. The cost
+is that it is a **switch, not a comparison**: Matomo stops receiving the moment
+you repoint.
+
+**You cannot do both at once.** The compatibility shim claims `window._paq`,
+and so does real matomo.js — one global, two owners, and load order decides who
+loses. `browser.ts` guards against a second copy of *itself*; it cannot know
+about Matomo's. So dual-running means the native tracker, always.
+
+Expect the numbers to differ during any comparison. Visits read ~4 % below
+Matomo (a heartbeat does not start a visit), bounce rate reads lower
+(engagement-aware), average times read lower (accrued attention, not a span),
+and page views read below Matomo on SPAs by that site's double-fire rate. Each
+is a deliberate definitional divergence with its reasoning under "Changes made
+during the bake that move numbers" — none is an accounting error to chase.
+
+Historical data is a separate question from tagging; the importer below reads a
+Matomo MariaDB directly. This deployment ran it and then dropped the result on
+purpose ("History was dropped"), for reasons that do not generalize to a
+Matomo with years behind it.
 
 History was *also* a goal until 2026-07-30, when it was deliberately dropped —
 see "History was dropped" below. The importer still works and this document
@@ -197,6 +236,19 @@ metric *means* has to be logged here or the comparison silently drifts.
     counts every id exactly once. They shift by well under a percent because the
     day they cover now starts and ends where the site's clock says it does —
     which is the boundary Matomo uses too.
+- **2026-07-31 — leaving the page is a hit, so engagement rises.** Both
+  trackers now send a final `ping` when the page is hidden (docs/04 § 1,
+  `packages/tracker/src/exit.ts`). Every visit used to lose the interval
+  between its last heartbeat and its exit — uniform on [0, 15 s), so **7.5 s
+  per visit on average**, which is a quarter of a 30-second read. The prompting
+  observation was a live one: a ~30 s read of an article on oberbrunner.com
+  reported 14 s.
+  - Expect `engaged_ms` up by roughly 7.5 s × visits, `engaged_sessions` up as
+    short visits cross the threshold, and therefore **bounce rate down** — on
+    top of the downward divergence from Matomo already described above. Short
+    visits move proportionally most; a three-minute read moves ~4 %.
+  - Not an accounting change: the sessionizer is untouched and still clamps
+    every gap at `PING_CLAMP_MS`. What changed is that the tail now arrives.
 - **2026-07-30 — schema v4**: `ix_events_site_date (site_id, local_date, type)`
   was replaced by `ix_events_site_date_visitor (…, visitor_id)`, which covers
   the distinct-visitor count whole. No metric changes; the all-sites 90-day

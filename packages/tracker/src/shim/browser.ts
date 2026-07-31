@@ -1,3 +1,4 @@
+import { isExitPingWorthwhile } from '../exit.ts';
 import { classifyLink } from '../links.ts';
 import { send } from '../send.ts';
 import {
@@ -38,6 +39,10 @@ export function startShim(): () => void {
 
   let state: ShimState = INITIAL_STATE;
   let heartbeat: ReturnType<typeof setInterval> | undefined;
+  /** Interval the tag asked for; the exit ping measures its bounds in these. */
+  let heartbeatMs = 0;
+  /** When a beacon last went out — what the exit ping credits from (exit.ts). */
+  let lastHitAt = 0;
   let linkTracking = false;
   let focused = !document.hasFocus || document.hasFocus();
   let visible = document.visibilityState !== 'hidden';
@@ -50,6 +55,7 @@ export function startShim(): () => void {
   const run = (effect: Effect): void => {
     switch (effect.kind) {
       case 'beacon':
+        lastHitAt = Date.now();
         send(effect.beacon.url, effect.beacon.body);
         return;
       case 'heartbeat':
@@ -72,9 +78,21 @@ export function startShim(): () => void {
   // match Matomo's focus-only semantics during the bake (docs/04 § 2).
   const startHeartbeat = (seconds: number): void => {
     if (heartbeat !== undefined) clearInterval(heartbeat);
+    heartbeatMs = seconds * 1000;
     heartbeat = setInterval(() => {
       if (focused && visible) apply(ping(state, pageInfo()));
-    }, seconds * 1000);
+    }, heartbeatMs);
+  };
+
+  /**
+   * The visit's last hit, so the tail between the final heartbeat and leaving
+   * is credited instead of lost (exit.ts). Gated on the heartbeat running: a
+   * tag that never asked for engagement timing does not start getting pings.
+   */
+  const exitPing = (): void => {
+    if (heartbeat === undefined) return;
+    if (!isExitPingWorthwhile(lastHitAt, Date.now(), heartbeatMs)) return;
+    apply(ping(state, pageInfo()));
   };
 
   const startLinkTracking = (): void => {
@@ -99,11 +117,15 @@ export function startShim(): () => void {
   };
   const onVisibility = (): void => {
     visible = document.visibilityState !== 'hidden';
+    // Hiding is where attention actually stops, and on mobile it is the last
+    // callback that reliably runs at all — `pagehide` is only the backstop.
+    if (!visible) exitPing();
   };
 
   window.addEventListener('focus', onFocus);
   window.addEventListener('blur', onBlur);
   document.addEventListener('visibilitychange', onVisibility);
+  window.addEventListener('pagehide', exitPing);
 
   window._paq = window._paq ?? [];
   const queue = window._paq;
@@ -119,6 +141,7 @@ export function startShim(): () => void {
     window.removeEventListener('focus', onFocus);
     window.removeEventListener('blur', onBlur);
     document.removeEventListener('visibilitychange', onVisibility);
+    window.removeEventListener('pagehide', exitPing);
     document.removeEventListener('click', onClick, true);
     document.removeEventListener('auxclick', onClick, true);
     Reflect.deleteProperty(queue, 'push');

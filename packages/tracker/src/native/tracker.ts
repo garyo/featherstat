@@ -1,4 +1,5 @@
 import type { HitType } from '@featherstat/shared';
+import { isExitPingWorthwhile } from '../exit.ts';
 import { classifyLink } from '../links.ts';
 import { isRepeatView } from '../repeat.ts';
 import { send } from '../send.ts';
@@ -45,6 +46,8 @@ interface Runtime {
   url: string;
   /** When that pageview was taken; with `url` it is the repeat-view guard's memory (repeat.ts). */
   viewAt: number;
+  /** When a hit last went out — what the exit ping credits from (exit.ts). */
+  lastHitAt: number;
   stop: () => void;
 }
 
@@ -79,6 +82,14 @@ export function init(config: TrackerConfig): () => void {
   };
   const onVisibility = (): void => {
     visible = document.visibilityState !== 'hidden';
+    // Hiding is where attention actually stops, and on mobile it is the last
+    // callback that reliably runs at all — `pagehide` is only the backstop.
+    if (!visible) exitPing();
+  };
+  /** The visit's last hit, so the tail before leaving is credited (exit.ts). */
+  const exitPing = (): void => {
+    if (!runtime || !isExitPingWorthwhile(runtime.lastHitAt, Date.now(), heartbeatMs)) return;
+    emit({ type: 'ping', url: location.href });
   };
   const onInput = (): void => {
     lastInput = Date.now();
@@ -108,6 +119,7 @@ export function init(config: TrackerConfig): () => void {
   window.addEventListener('focus', onFocus);
   window.addEventListener('blur', onBlur);
   document.addEventListener('visibilitychange', onVisibility);
+  window.addEventListener('pagehide', exitPing);
   for (const event of INPUT_EVENTS) document.addEventListener(event, onInput, INPUT_OPTIONS);
   if (config.autoLinks !== false) document.addEventListener('click', onClick, true);
   if (autoPageviews) window.addEventListener('popstate', onNavigate);
@@ -118,11 +130,13 @@ export function init(config: TrackerConfig): () => void {
     endpoint: config.endpoint ?? DEFAULT_ENDPOINT,
     url: '',
     viewAt: 0,
+    lastHitAt: 0,
     stop: () => {
       clearInterval(heartbeat);
       window.removeEventListener('focus', onFocus);
       window.removeEventListener('blur', onBlur);
       document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', exitPing);
       for (const event of INPUT_EVENTS) document.removeEventListener(event, onInput, INPUT_OPTIONS);
       document.removeEventListener('click', onClick, true);
       window.removeEventListener('popstate', onNavigate);
@@ -181,6 +195,7 @@ export function track(action: string, props: EventProps = {}): void {
  */
 function emit(hit: NativeHit): void {
   if (!runtime) return;
+  runtime.lastHitAt = Date.now();
   send(runtime.endpoint, JSON.stringify({ site: runtime.site, hits: [hit] }));
 }
 

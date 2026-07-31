@@ -108,6 +108,16 @@ describe('route matrix — no session', () => {
     const beacon = await secured.app.request('/matomo.php?idsite=1&rec=1&send_image=0');
     expect(beacon.status).toBe(204); // beacons never bounce, session or not
 
+    // The native collector lives under /api/, where everything else is gated —
+    // it is public by the same rule and must not learn to 401 (invariant 4).
+    const collect = await secured.app.request('/api/collect', {
+      method: 'POST',
+      headers: { 'content-type': 'text/plain;charset=UTF-8' },
+      body: JSON.stringify({ site: 1, hits: [{ type: 'ping', url: 'https://one.test/' }] }),
+    });
+    expect(collect.status).toBe(204);
+    expect((await secured.app.request('/api/collect', { method: 'OPTIONS' })).status).toBe(204);
+
     const gated = ['/api/sites', '/api/realtime?sites=all', '/api/admin/diagnostics'];
     for (const path of gated) {
       expect((await secured.app.request(path)).status, path).toBe(401);

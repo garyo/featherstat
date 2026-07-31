@@ -40,6 +40,7 @@ function anchor(href: string, attributes: Record<string, string> = {}): HTMLAnch
 beforeEach(() => {
   document.body.innerHTML = '';
   document.title = 'Hello World';
+  hide(false); // `visibilityState` is a global property; a hidden test must not leak.
   window._paq = undefined;
   window.__analyticsShim = undefined;
   beacon = vi.fn(() => true);
@@ -193,6 +194,81 @@ describe('heartbeat', () => {
     stop();
     stop = undefined;
     vi.advanceTimersByTime(60_000);
+    expect(sent()).toHaveLength(1);
+  });
+});
+
+describe('exit ping', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  /** The read that prompted this: ~30 s on a page whose last heartbeat was at 15 s. */
+  it('credits the tail of a read the heartbeat never reached', () => {
+    queue(snippet());
+    stop = startShim();
+    vi.advanceTimersByTime(15_000); // pageview at 0, ping at 15
+    expect(sent()).toHaveLength(2);
+    vi.advanceTimersByTime(15_000 - 1); // leaves at ~30 s, before the next tick
+    hide(true);
+    document.dispatchEvent(new Event('visibilitychange'));
+    const exit = sent()[2];
+    expect(exit?.get('ping')).toBe('1');
+    expect(exit?.get('url')).toBe(location.href);
+  });
+
+  it('fires once, not again for the pagehide that follows', () => {
+    queue(snippet());
+    stop = startShim();
+    vi.advanceTimersByTime(5_000);
+    hide(true);
+    document.dispatchEvent(new Event('visibilitychange'));
+    window.dispatchEvent(new Event('pagehide'));
+    expect(sent()).toHaveLength(2);
+  });
+
+  // Mobile Safari often skips visibilitychange on the way out.
+  it('still fires when only pagehide arrives', () => {
+    queue(snippet());
+    stop = startShim();
+    vi.advanceTimersByTime(5_000);
+    window.dispatchEvent(new Event('pagehide'));
+    expect(sent()).toHaveLength(2);
+  });
+
+  it('credits nothing when a hit just went out', () => {
+    queue(snippet());
+    stop = startShim();
+    vi.advanceTimersByTime(15_000);
+    hide(true);
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(sent()).toHaveLength(2); // the ping, and no exit ping on its heels
+  });
+
+  it('refuses to credit a long-backgrounded tab for its absence', () => {
+    queue(snippet());
+    stop = startShim();
+    window.dispatchEvent(new Event('blur'));
+    vi.advanceTimersByTime(300_000); // blurred, so the heartbeat sent nothing
+    window.dispatchEvent(new Event('pagehide'));
+    expect(sent()).toHaveLength(1);
+  });
+
+  it('stays silent for a tag that never asked for engagement timing', () => {
+    queue([['trackPageView'], ['setTrackerUrl', TRACKER_URL], ['setSiteId', '2']]);
+    stop = startShim();
+    vi.advanceTimersByTime(5_000);
+    window.dispatchEvent(new Event('pagehide'));
+    expect(sent()).toHaveLength(1);
+  });
+
+  it('stops on teardown', () => {
+    queue(snippet());
+    stop = startShim();
+    vi.advanceTimersByTime(5_000);
+    stop();
+    stop = undefined;
+    window.dispatchEvent(new Event('pagehide'));
     expect(sent()).toHaveLength(1);
   });
 });

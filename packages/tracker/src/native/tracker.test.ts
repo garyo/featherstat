@@ -25,6 +25,7 @@ function sent(): Record<string, unknown>[] {
 beforeEach(() => {
   document.body.innerHTML = '';
   document.title = 'Cambrian';
+  hide(false); // `visibilityState` is a global property; a hidden test must not leak.
   beacon = vi.fn(() => true);
   Object.defineProperty(navigator, 'sendBeacon', { value: beacon, configurable: true });
 });
@@ -233,3 +234,76 @@ describe('engagement pings', () => {
     stop = undefined;
   });
 });
+
+describe('exit ping', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  /** The read that prompted this: ~30 s on a page whose last heartbeat was at 15 s. */
+  it('credits the tail of a read the heartbeat never reached', () => {
+    start();
+    vi.advanceTimersByTime(15_000); // pageview at 0, ping at 15
+    expect(sent()).toHaveLength(2);
+    vi.advanceTimersByTime(15_000 - 1); // leaves at ~30 s, before the next tick
+    hide(true);
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(sent()[2]).toEqual({ type: 'ping', url: location.href });
+  });
+
+  it('fires once, not again for the pagehide that follows', () => {
+    start();
+    vi.advanceTimersByTime(5_000);
+    hide(true);
+    document.dispatchEvent(new Event('visibilitychange'));
+    window.dispatchEvent(new Event('pagehide'));
+    expect(sent()).toHaveLength(2);
+  });
+
+  // Mobile Safari often skips visibilitychange on the way out.
+  it('still fires when only pagehide arrives', () => {
+    start();
+    vi.advanceTimersByTime(5_000);
+    window.dispatchEvent(new Event('pagehide'));
+    expect(sent()).toHaveLength(2);
+  });
+
+  it('credits nothing when a hit just went out', () => {
+    start();
+    vi.advanceTimersByTime(15_000);
+    window.dispatchEvent(new Event('pagehide'));
+    expect(sent()).toHaveLength(2);
+  });
+
+  it('refuses to credit an idle tab for its absence', () => {
+    start();
+    vi.advanceTimersByTime(300_000); // idle past 60 s, so the heartbeat stopped
+    const idle = sent().length;
+    window.dispatchEvent(new Event('pagehide'));
+    expect(sent()).toHaveLength(idle);
+  });
+
+  it('scales its window with a configured heartbeat', () => {
+    start({ heartbeatSeconds: 30 });
+    vi.advanceTimersByTime(45_000); // one ping at 30 s, 15 s of tail
+    expect(sent()).toHaveLength(2);
+    window.dispatchEvent(new Event('pagehide'));
+    expect(sent()).toHaveLength(3);
+  });
+
+  it('stops on teardown', () => {
+    start();
+    vi.advanceTimersByTime(5_000);
+    stop?.();
+    stop = undefined;
+    window.dispatchEvent(new Event('pagehide'));
+    expect(sent()).toHaveLength(1);
+  });
+});
+
+function hide(hidden: boolean): void {
+  Object.defineProperty(document, 'visibilityState', {
+    value: hidden ? 'hidden' : 'visible',
+    configurable: true,
+  });
+}

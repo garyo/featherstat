@@ -101,3 +101,84 @@ describe('responses', () => {
     expect(batches).toHaveLength(0);
   });
 });
+
+describe('the native collector (docs/04 § 2)', () => {
+  const collect = (payload: unknown, init: RequestInit = {}) => ({
+    method: 'POST',
+    // What `sendBeacon` actually sends: the safelisted content type, so no
+    // preflight is ever triggered from a tracked site's origin.
+    headers: { 'content-type': 'text/plain;charset=UTF-8' },
+    body: JSON.stringify(payload),
+    ...init,
+  });
+
+  it('accepts a batch and hands it to the same sink as matomo.php', async () => {
+    const { app, batches, contexts } = capture();
+    const res = await app.request(
+      '/api/collect',
+      collect({
+        site: 2,
+        hits: [
+          { type: 'pageview', url: 'https://oberbrunner.com/', title: 'Home' },
+          { type: 'event', category: 'share', action: 'copy-link' },
+        ],
+      }),
+    );
+    expect(res.status).toBe(204);
+    expect(batches[0]).toHaveLength(2);
+    expect(batches[0]?.[0]).toMatchObject({ siteId: 2, type: 'pageview' });
+    expect(contexts[0]?.receivedAt).toBeGreaterThan(0);
+  });
+
+  it('answers 204 for a body it understood nothing of, and calls no sink', async () => {
+    const { app, batches } = capture();
+    for (const body of ['', 'not json', '{"site":0,"hits":[]}', '{"hits":[{"type":"ping"}]}']) {
+      const res = await app.request('/api/collect', {
+        method: 'POST',
+        headers: { 'content-type': 'text/plain;charset=UTF-8' },
+        body,
+      });
+      expect(res.status, body).toBe(204);
+    }
+    expect(batches).toHaveLength(0);
+  });
+
+  it('discards an oversize body without bouncing it (invariant 4)', async () => {
+    const { app, batches } = capture();
+    const hits = Array.from({ length: 20_000 }, () => ({
+      type: 'pageview',
+      url: `https://a.test/${'x'.repeat(60)}`,
+    }));
+    const res = await app.request('/api/collect', collect({ site: 2, hits }));
+    expect(res.status).toBe(204);
+    expect(batches).toHaveLength(0);
+  });
+
+  it('answers the CORS preflight a non-safelisted sender would send', async () => {
+    const { app } = capture();
+    const res = await app.request('/api/collect', { method: 'OPTIONS' });
+    expect(res.status).toBe(204);
+    expect(res.headers.get('access-control-allow-origin')).toBe('*');
+    expect(res.headers.get('access-control-allow-methods')).toContain('POST');
+  });
+
+  // Invariant 9 from the collector's side: the vocabulary is fixed and no
+  // string on the wire reaches SQL. The matching live check is query.test.ts.
+  it('cannot be talked into anything outside the hit vocabulary', async () => {
+    const { app, batches } = capture();
+    const res = await app.request(
+      '/api/collect',
+      collect({
+        site: 2,
+        hits: [
+          { type: "'; DELETE FROM events; --", url: 'https://a.test/' },
+          { type: 'pageview', url: "https://a.test/'; DELETE FROM events; --" },
+        ],
+      }),
+    );
+    expect(res.status).toBe(204);
+    // The bogus type is dropped; the injection-shaped URL is just a URL string.
+    expect(batches[0]).toHaveLength(1);
+    expect(batches[0]?.[0]?.type).toBe('pageview');
+  });
+});

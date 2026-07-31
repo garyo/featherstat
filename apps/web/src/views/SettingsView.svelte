@@ -231,8 +231,9 @@ const nameOf = (id: number): string => sites?.find((s) => s.id === id)?.name ?? 
         {copied ? 'Copied ✓' : copyFailed ? 'Copy failed — select it manually' : 'Copy snippet'}
       </button>
       <p class="widget-note">
-        Paste before <code>&lt;/head&gt;</code>. Existing Matomo tags keep working — same beacon,
-        same bundle names.
+        Paste before <code>&lt;/head&gt;</code>. Safe to add while another analytics tag is still
+        running — it shares no globals, so you can compare the two before switching. Already on
+        Matomo? Existing tags keep working against this server unchanged.
       </p>
     {/if}
   </div>

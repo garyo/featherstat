@@ -2,9 +2,24 @@ import type { HitContext } from '@featherstat/shared';
 import { getConnInfo } from '@hono/node-server/conninfo';
 import { type Context, Hono } from 'hono';
 import { parseMatomoRequest } from '../ingest/matomo.ts';
+import { parseCollectRequest } from '../ingest/native.ts';
 import type { HitSink } from '../pipeline/index.ts';
 
 const TRACKING_PATHS = ['/matomo.php', '/piwik.php'];
+const COLLECT_PATH = '/api/collect';
+
+/**
+ * The collector is reached cross-origin from every tracked site. `send.ts`
+ * keeps its beacons CORS-safelisted (a `text/plain` body, a `no-cors` fetch
+ * fallback) so nothing here is load-bearing for the trackers — it is what lets
+ * a hand-rolled `fetch` sender work without one (docs/04 § 2).
+ */
+const COLLECT_CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'content-type',
+  'Access-Control-Max-Age': '86400',
+};
 
 const TRACKING_GIF = Uint8Array.from(
   atob('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'),
@@ -36,6 +51,15 @@ export function createTrackRoutes(sink: HitSink): Hono {
     if (hits.length > 0) sink(hits, hitContext(c));
     return sendImage ? c.body(TRACKING_GIF, 200, GIF_HEADERS) : c.body(null, 204, EMPTY_HEADERS);
   });
+
+  // The native collector (docs/04 § 2). Same sink, same context, same promise:
+  // it answers 204 whether it understood the body or not (invariant 4).
+  app.post(COLLECT_PATH, async (c) => {
+    const hits = parseCollectRequest(await readBody(c));
+    if (hits.length > 0) sink(hits, hitContext(c));
+    return c.body(null, 204, { ...EMPTY_HEADERS, ...COLLECT_CORS_HEADERS });
+  });
+  app.options(COLLECT_PATH, (c) => c.body(null, 204, COLLECT_CORS_HEADERS));
   return app;
 }
 

@@ -107,6 +107,45 @@ export const HitSchema = z.object({
 });
 export type Hit = z.infer<typeof HitSchema>;
 
+/**
+ * One hit as the native tracker puts it on the wire (docs/04 § 2). Flatter than
+ * `Hit`: the event fields ride at the top level because the tracker builds this
+ * by hand and `JSON.stringify` drops the absent ones — `ingest/native.ts` lifts
+ * them into `Hit.event`. Every optional field degrades on its own rather than
+ * failing the hit, so an over-long title costs the title, not the page view.
+ */
+export const CollectHitSchema = z.object({
+  type: HitTypeSchema,
+  url: z.string().max(2048).optional().catch(undefined),
+  title: z.string().max(512).optional().catch(undefined),
+  referrer: z.string().max(2048).optional().catch(undefined),
+  targetUrl: z.string().max(2048).optional().catch(undefined),
+  category: z.string().min(1).max(200).optional().catch(undefined),
+  action: z.string().min(1).max(200).optional().catch(undefined),
+  name: z.string().max(500).optional().catch(undefined),
+  value: z.number().optional().catch(undefined),
+  screen: z.string().max(20).optional().catch(undefined),
+  lang: z.string().max(35).optional().catch(undefined),
+});
+export type CollectHit = z.infer<typeof CollectHitSchema>;
+
+/**
+ * A page of beacons is the honest size of a collect body; past this the extra
+ * hits are dropped and the rest still recorded, because a beacon never bounces
+ * (CLAUDE.md invariant 4).
+ */
+export const MAX_COLLECT_HITS = 50;
+
+/**
+ * The collect envelope. Deliberately loose about `hits`: each one is validated
+ * separately by the parser, so one malformed entry costs itself and not the
+ * batch it travelled in.
+ */
+export const CollectRequestSchema = z.object({
+  site: z.number().int().positive(),
+  hits: z.array(z.unknown()),
+});
+
 /** Transport context consumed during enrichment and then discarded (CLAUDE.md invariant 3). */
 export interface HitContext {
   ip: string;
