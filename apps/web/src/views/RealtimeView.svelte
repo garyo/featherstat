@@ -74,6 +74,10 @@ const cardSpec = (id: string, viz: VizType, options: Record<string, unknown> = {
     <h2>Right now</h2>
     <ActiveNow spec={cardSpec('active', 'active-now')} {env} />
     <VisitorTally spec={cardSpec('tally', 'visitor-tally')} {env} />
+    <!-- The log had no heading, so nothing said it was ordered by time while
+         the list above it is ordered by hits — which is what made a visitor
+         appearing in one and not the other look like a fault. -->
+    <p class="tally-label">Activity · newest first · last {FEED_SHOW} pages</p>
     <!-- Headless: the card's heading is this page's, and the empty state is the
          widget's own — the view decides nothing the feed already decides. -->
     <Feed spec={cardSpec('feed', 'feed', { limit: FEED_SHOW })} env={{ ...env, headless: true }} />

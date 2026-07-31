@@ -24,6 +24,12 @@ import { countryName, flagEmoji } from './geo.ts';
 interface Props {
   /** Raw hits, newest first — collapsed into runs here, never by the caller. */
   hits: readonly RealtimeHit[];
+  /**
+   * Rows to show. Applied to RUNS, after collapsing: a caller that sliced the
+   * hits instead would both show a fraction of the rows it asked for and cut
+   * away the hit that measures the last one.
+   */
+  limit?: number;
   now: number;
   /** Site badges appear only when the view is mixing sites. */
   scope: SiteScope;
@@ -34,10 +40,12 @@ interface Props {
   onhover?: (ref: string | undefined) => void;
 }
 
-let { hits, now, scope, sites, hover, onhover }: Props = $props();
+let { hits, now, scope, sites, hover, onhover, limit }: Props = $props();
 
 const siteNameOf = (id: number): string => sites?.get(id)?.name ?? `Site ${id}`;
-const runs = $derived(collapseRuns(hits));
+const runs = $derived(
+  limit === undefined ? collapseRuns(hits) : collapseRuns(hits).slice(0, limit),
+);
 </script>
 
 <div class="feed" role="list">

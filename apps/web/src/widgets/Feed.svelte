@@ -18,7 +18,8 @@ let localHover = $state<string | undefined>(undefined);
 const hover = $derived(env.highlight === null ? localHover : env.highlight.ref);
 
 const limit = $derived(feedLimit(spec.options.limit));
-const shown = $derived(scopedHits(env.realtime, env.scope).slice(0, limit));
+// All of them: FeedRows collapses first and applies the limit to ROWS.
+const shown = $derived(scopedHits(env.realtime, env.scope));
 
 /** `8s`, `4m` need a finer clock than the page's: this card owns its own tick,
  * which is why the environment's coarser `now` stays for the charts. */
@@ -55,5 +56,13 @@ function feedLimit(raw: unknown): number {
 {#if shown.length === 0}
   <p class="widget-note">Waiting for the first hit…</p>
 {:else}
-  <FeedRows hits={shown} {now} scope={env.scope} sites={env.sites} {hover} onhover={setHover} />
+  <FeedRows
+    hits={shown}
+    {limit}
+    {now}
+    scope={env.scope}
+    sites={env.sites}
+    {hover}
+    onhover={setHover}
+  />
 {/if}

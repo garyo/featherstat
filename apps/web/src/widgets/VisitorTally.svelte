@@ -31,7 +31,10 @@ const toggle = (ref: string): void => {
 </script>
 
 {#if visitors.length > 0}
-  <p class="tally-label">Visitors · {TALLY_WINDOW_LABEL}</p>
+  <!-- The ordering is part of the label. Ranked by hits and capped, this list
+       legitimately omits someone who just arrived and outranks someone more
+       recent; unlabelled, both of those read as the feed losing hits. -->
+  <p class="tally-label">Visitors · most hits · {TALLY_WINDOW_LABEL}</p>
   <div class="visitor-tally" role="list">
     {#each visitors as row (row.ref)}
       {@const isOpen = opened === row.ref}

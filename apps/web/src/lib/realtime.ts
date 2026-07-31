@@ -16,8 +16,16 @@ import type { SiteScope } from './state.ts';
  * tally, both fed straight from the SSE stream — no queries (docs/05).
  */
 
-/** Rows the feed keeps in memory; also bounds the tally's input. */
-export const FEED_KEEP = 100;
+/**
+ * Hits the feed keeps in memory; also bounds the tally's input.
+ *
+ * Must not fall below `SNAPSHOT_HITS`, or a fresh connection throws away part
+ * of the snapshot it was just sent — and since these are RAW hits now, a
+ * hundred of them is minutes of a busy site, which would leave the tally's
+ * window covering hours it had no hits for. `realtime.test.ts` holds the
+ * relationship rather than the number.
+ */
+export const FEED_KEEP = 400;
 /** Rows the feed shows. */
 export const FEED_SHOW = 30;
 export const TALLY_ROWS = 8;
@@ -268,6 +276,10 @@ export function visitorTally(
     }
   }
   const rows = [...byName.values()];
+  // Busiest first, ties by name. Deliberately NOT the feed's order: this list
+  // answers "who is doing the most", the log answers "what just happened", and
+  // the two headings say which is which — a visitor who just arrived with one
+  // hit can rank below one from hours ago, and that is the ranking working.
   rows.sort((a, b) => b.count - a.count || (a.name < b.name ? -1 : 1));
   return rows.slice(0, VISITOR_ROWS);
 }

@@ -3,6 +3,7 @@ import {
   type RealtimeEngagement,
   type RealtimeHit,
   SESSION_TIMEOUT_MS,
+  SNAPSHOT_HITS,
   TALLY_WINDOW_MS,
 } from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
@@ -10,6 +11,7 @@ import {
   collapseRuns,
   countryTally,
   engagementByName,
+  FEED_KEEP,
   placeOf,
   pushFeed,
   relativeAgo,
@@ -66,9 +68,10 @@ describe('feed', () => {
 
   it('prepends live hits and stays bounded', () => {
     let feed = seedFeed([], 'all');
-    for (let i = 0; i < 150; i++) feed = pushFeed(feed, hit({ ts: i }));
-    expect(feed).toHaveLength(100);
-    expect(feed[0]?.ts).toBe(149);
+    const pushed = FEED_KEEP + 50;
+    for (let i = 0; i < pushed; i++) feed = pushFeed(feed, hit({ ts: i }));
+    expect(feed).toHaveLength(FEED_KEEP);
+    expect(feed[0]?.ts).toBe(pushed - 1);
   });
 });
 
@@ -357,5 +360,60 @@ describe('collapseRuns', () => {
     );
     expect(runs).toHaveLength(3);
     expect(runs.map((run) => run.latest.path)).toEqual(['/a', '/b', '/a']);
+  });
+});
+
+describe('the tally and the feed agree', () => {
+  /**
+   * The tally ranks by hits and the log by time, on purpose — so a visitor who
+   * just arrived CAN sit below one from hours ago, and can be cut entirely by
+   * the row cap. That is only honest while both headings say what they order
+   * by; it read as a bug when neither did.
+   */
+  it('ranks by hits, not recency — the newest visitor can lose to a busier one', () => {
+    const now = 8 * 60 * 60_000;
+    const busyOld = visitor('Aardvark Ancient');
+    const freshOne = visitor('Zebra Newest');
+    const hits = [
+      hit({ ts: now - 30_000, visitor: freshOne, path: '/just-arrived' }),
+      ...Array.from({ length: 5 }, (_, i) =>
+        hit({ ts: now - 6 * 60 * 60_000 - i * 1_000, visitor: busyOld, path: `/${i}` }),
+      ),
+    ];
+    const rows = visitorTally(hits, now);
+    expect(rows[0]?.name).toBe('Aardvark Ancient');
+    expect(rows[1]?.name).toBe('Zebra Newest');
+  });
+
+  /**
+   * The client must not discard part of the snapshot it was just handed. These
+   * are raw hits now, so the margin also has to cover heartbeats: a hundred of
+   * them is minutes of a busy site, and the tally's window is hours.
+   */
+  it('keeps at least a whole snapshot′s worth of hits', () => {
+    expect(FEED_KEEP).toBeGreaterThanOrEqual(SNAPSHOT_HITS);
+  });
+});
+
+describe('the feed limit counts rows', () => {
+  /**
+   * `limit` is rows, not hits. Slicing hits first would show a fraction of the
+   * rows asked for — a page with a long heartbeat run could fill the whole
+   * allowance by itself — and would cut away the hit that measures the last
+   * run, so the newest row would never get its time.
+   */
+  it('is unaffected by how many heartbeats a page collected', () => {
+    const v = visitor('Steady Starling');
+    const chrono = [
+      ...Array.from({ length: 40 }, (_, i) =>
+        hit({ ts: i * 15_000, type: i === 0 ? 'pageview' : 'ping', visitor: v, path: '/long' }),
+      ),
+      hit({ ts: 40 * 15_000, visitor: v, path: '/second' }),
+      hit({ ts: 41 * 15_000, visitor: v, path: '/third' }),
+    ];
+    const runs = collapseRuns([...chrono].reverse());
+    expect(runs.map((run) => run.latest.path)).toEqual(['/third', '/second', '/long']);
+    // 42 hits, 3 rows: a limit of 3 shows all three pages, not one page's pings.
+    expect(runs.slice(0, 3)).toHaveLength(3);
   });
 });
