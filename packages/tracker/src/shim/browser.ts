@@ -43,6 +43,12 @@ export function startShim(): () => void {
   let heartbeatMs = 0;
   /** When a beacon last went out — what the exit ping credits from (exit.ts). */
   let lastHitAt = 0;
+  /**
+   * Whether this departure has already been reported. Latched until the page
+   * comes back, because the time between hiding and a later `pagehide` is the
+   * visitor being elsewhere — a second exit ping would bank it as attention.
+   */
+  let exited = false;
   let linkTracking = false;
   let focused = !document.hasFocus || document.hasFocus();
   let visible = document.visibilityState !== 'hidden';
@@ -90,8 +96,9 @@ export function startShim(): () => void {
    * tag that never asked for engagement timing does not start getting pings.
    */
   const exitPing = (): void => {
-    if (heartbeat === undefined) return;
+    if (exited || heartbeat === undefined) return;
     if (!isExitPingWorthwhile(lastHitAt, Date.now(), heartbeatMs)) return;
+    exited = true;
     apply(ping(state, pageInfo()));
   };
 
@@ -119,7 +126,8 @@ export function startShim(): () => void {
     visible = document.visibilityState !== 'hidden';
     // Hiding is where attention actually stops, and on mobile it is the last
     // callback that reliably runs at all — `pagehide` is only the backstop.
-    if (!visible) exitPing();
+    if (visible) exited = false;
+    else exitPing();
   };
 
   window.addEventListener('focus', onFocus);

@@ -73,6 +73,8 @@ export function init(config: TrackerConfig): () => void {
   let focused = !document.hasFocus || document.hasFocus();
   let visible = document.visibilityState !== 'hidden';
   let lastInput = Date.now();
+  /** Whether this departure has already been reported; cleared when the page returns. */
+  let exited = false;
 
   const onFocus = (): void => {
     focused = true;
@@ -84,11 +86,18 @@ export function init(config: TrackerConfig): () => void {
     visible = document.visibilityState !== 'hidden';
     // Hiding is where attention actually stops, and on mobile it is the last
     // callback that reliably runs at all — `pagehide` is only the backstop.
-    if (!visible) exitPing();
+    if (visible) exited = false;
+    else exitPing();
   };
-  /** The visit's last hit, so the tail before leaving is credited (exit.ts). */
+  /**
+   * The visit's last hit, so the tail before leaving is credited (exit.ts).
+   * Latched until the page comes back: the time between hiding and a later
+   * `pagehide` is the visitor being elsewhere, not reading.
+   */
   const exitPing = (): void => {
-    if (!runtime || !isExitPingWorthwhile(runtime.lastHitAt, Date.now(), heartbeatMs)) return;
+    if (exited || !runtime) return;
+    if (!isExitPingWorthwhile(runtime.lastHitAt, Date.now(), heartbeatMs)) return;
+    exited = true;
     emit({ type: 'ping', url: location.href });
   };
   const onInput = (): void => {

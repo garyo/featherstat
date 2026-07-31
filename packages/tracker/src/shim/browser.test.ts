@@ -262,6 +262,36 @@ describe('exit ping', () => {
     expect(sent()).toHaveLength(1);
   });
 
+  // Found live: hiding, then closing the tab seconds later, used to send a
+  // second exit ping — banking time the visitor spent elsewhere as attention.
+  it('reports one departure, however many ways the page announces it', () => {
+    queue(snippet());
+    stop = startShim();
+    vi.advanceTimersByTime(5_000);
+    hide(true);
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(sent()).toHaveLength(2);
+    vi.advanceTimersByTime(3_000); // hidden all the while — not reading
+    window.dispatchEvent(new Event('pagehide'));
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(sent()).toHaveLength(2);
+  });
+
+  it('reports the next departure once the reader has come back', () => {
+    queue(snippet());
+    stop = startShim();
+    vi.advanceTimersByTime(5_000);
+    hide(true);
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(sent()).toHaveLength(2);
+    hide(false);
+    document.dispatchEvent(new Event('visibilitychange'));
+    vi.advanceTimersByTime(5_000);
+    hide(true);
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(sent()).toHaveLength(3); // one page view, one exit ping per departure
+  });
+
   it('stops on teardown', () => {
     queue(snippet());
     stop = startShim();
