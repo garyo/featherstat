@@ -16,6 +16,7 @@ import {
   pushFeed,
   relativeAgo,
   seedFeed,
+  VISITOR_ROWS,
   visitorMeta,
   visitorTally,
   visitorTrail,
@@ -130,10 +131,12 @@ describe('visitorTally', () => {
       'Keen Kiwi',
     ]);
     const capped = visitorTally(
-      Array.from({ length: 12 }, (_, i) => hit({ ts: now, visitor: visitor(`Visitor ${i}`) })),
+      Array.from({ length: VISITOR_ROWS + 4 }, (_, i) =>
+        hit({ ts: now, visitor: visitor(`Visitor ${i}`) }),
+      ),
       now,
     );
-    expect(capped).toHaveLength(8);
+    expect(capped).toHaveLength(VISITOR_ROWS);
   });
 });
 

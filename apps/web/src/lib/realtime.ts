@@ -29,8 +29,12 @@ export const FEED_KEEP = 400;
 /** Rows the feed shows. */
 export const FEED_SHOW = 30;
 export const TALLY_ROWS = 8;
-/** Per-visitor tally rows shown under the active-now hero. */
-export const VISITOR_ROWS = 8;
+/**
+ * Per-visitor tally rows shown under the active-now hero. Sized for the tally's
+ * window: at 8 rows over eight hours the cap bit routinely, cutting visitors
+ * who had only just arrived.
+ */
+export const VISITOR_ROWS = 10;
 
 /** Anything the stream scopes by site: a hit, an engagement row. */
 export function inScope(entry: { siteId: number }, site: SiteScope): boolean {
