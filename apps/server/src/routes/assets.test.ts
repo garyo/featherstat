@@ -35,6 +35,23 @@ describe('tracker bundles', () => {
     expect(await res.text()).toBe('export{a as init};');
   });
 
+  /**
+   * A module script is always fetched in CORS mode, so a bare 200 is not enough
+   * for `tracker.js`: without this header every site gets "Failed to fetch
+   * dynamically imported module" while curl of the same URL looks perfectly
+   * healthy. The 304 path carries it too, or the revalidated fetch fails.
+   */
+  it('lets another origin import the bundles, fresh and revalidated', async () => {
+    for (const path of ['/matomo.js', '/piwik.js', '/tracker.js']) {
+      const res = await app.request(path);
+      expect(res.headers.get('access-control-allow-origin'), path).toBe('*');
+      const etag = res.headers.get('etag') ?? '';
+      const revalidated = await app.request(path, { headers: { 'if-none-match': etag } });
+      expect(revalidated.status, path).toBe(304);
+      expect(revalidated.headers.get('access-control-allow-origin'), path).toBe('*');
+    }
+  });
+
   it('answers a matching If-None-Match with 304 and no body', async () => {
     const first = await app.request('/matomo.js');
     const etag = first.headers.get('etag') ?? '';

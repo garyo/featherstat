@@ -14,6 +14,15 @@ const DEFAULT_DIST = fileURLToPath(new URL('../../../../packages/tracker/dist/',
 const CACHE_CONTROL = 'public, max-age=86400';
 const CONTENT_TYPE = 'text/javascript; charset=utf-8';
 
+/**
+ * Every tracked site loads these from another origin, and `tracker.js` is an ES
+ * module: a module script is ALWAYS fetched in CORS mode, so without this the
+ * native tracker fails with "Failed to fetch dynamically imported module" while
+ * a plain GET of the same URL returns 200. The shim is a classic script and
+ * needs none of this, but it costs a header and the asymmetry would be a trap.
+ */
+const ALLOW_ORIGIN = { 'Access-Control-Allow-Origin': '*' };
+
 /** `/piwik.js` is the historical alias of `/matomo.js` (docs/04 § 1). */
 const ROUTES: Record<string, string> = {
   '/matomo.js': 'matomo.js',
@@ -43,7 +52,7 @@ export function createAssetRoutes({ dir = DEFAULT_DIST }: AssetRoutesOptions = {
     app.get(route, (c) => {
       const asset = load(cache, dir, file);
       if (asset === undefined) return c.text(`${file} has not been built`, 404);
-      const headers = { 'Cache-Control': CACHE_CONTROL, ETag: asset.etag };
+      const headers = { 'Cache-Control': CACHE_CONTROL, ETag: asset.etag, ...ALLOW_ORIGIN };
       if (matches(c.req.header('if-none-match'), asset.etag)) return c.body(null, 304, headers);
       return c.body(asset.body, 200, { ...headers, 'Content-Type': CONTENT_TYPE });
     });
