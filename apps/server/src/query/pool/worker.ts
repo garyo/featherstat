@@ -26,7 +26,14 @@ port.on('message', (job: PoolJob) => {
     reply =
       job.kind === 'ping'
         ? { id: job.id, ok: true, result: { threadId } }
-        : { id: job.id, ok: true, result: executeQueryRequest(db, job.request, { now: job.now }) };
+        : {
+            id: job.id,
+            ok: true,
+            result: executeQueryRequest(db, job.request, {
+              now: job.now,
+              allowedSites: job.allowedSites,
+            }),
+          };
   } catch (error) {
     reply = {
       id: job.id,

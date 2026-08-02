@@ -1,8 +1,17 @@
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { Context, MiddlewareHandler } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
-import { type Db, getSetting, setSetting, withWriteTransaction } from '../db/index.ts';
+import {
+  type Db,
+  getApiTokenByHash,
+  getSetting,
+  getViewer,
+  setSetting,
+  touchApiToken,
+  withWriteTransaction,
+} from '../db/index.ts';
 import { hashPassword } from './password.ts';
+import { type Principal, parseSiteScope } from './principal.ts';
 import {
   CSRF_COOKIE,
   CSRF_HEADER,
@@ -37,16 +46,29 @@ export interface AuthOptions {
   log?: (line: string) => void;
 }
 
-/** Hono context variables the gate provides to everything behind it. */
-export type AuthVariables = { sessionId: string };
+/**
+ * Hono context variables the gate provides to everything behind it.
+ * `principal` is always set; `sessionId` only for cookie principals (admin,
+ * viewer) — token requests carry no session, and the only readers of
+ * `sessionId` (logout, password change, rate keys) sit behind `requireAdmin`
+ * or fall back to another key.
+ */
+export type AuthVariables = { sessionId: string; principal: Principal };
 export type AuthEnv = { Variables: AuthVariables };
+
+/** `Authorization: Bearer fs_<43 base64url>` — shape-checked before any hash. */
+const BEARER_SHAPE = /^Bearer (fs_[A-Za-z0-9_-]{43})$/;
+/** last_used_at is a coarse audit column, written at most this often. */
+const TOKEN_TOUCH_INTERVAL_MS = 60 * 60 * 1000;
 
 export interface Auth {
   readonly disabled: boolean;
-  /** 401s anything without a live session; sets `sessionId` for handlers behind it. */
+  /** 401s anything without a live principal; sets `principal` for handlers behind it. */
   readonly gate: MiddlewareHandler<AuthEnv>;
   /** 403s mutations whose `x-csrf-token` header does not name the gated session. */
   readonly csrfGuard: MiddlewareHandler<AuthEnv>;
+  /** 403s everything but the admin — the write surface's second wall. */
+  readonly requireAdmin: MiddlewareHandler<AuthEnv>;
   now(): number;
   hasPassword(): boolean;
   /** The stored scrypt string, for verification; undefined until first-run setup. */
@@ -87,13 +109,61 @@ export function createAuth(db: Db, options: AuthOptions = {}): Auth {
 
   const sessionOf = (c: Context): string | undefined => {
     if (disabled) return DEV_SESSION_ID;
-    return verifySessionCookie(db, secret, getCookie(c, SESSION_COOKIE), now());
+    return verifySessionCookie(db, secret, getCookie(c, SESSION_COOKIE), now())?.id;
+  };
+
+  /** `Authorization: Bearer` → token principal, or undefined. */
+  const tokenPrincipalOf = (c: Context): Principal | undefined => {
+    const match = BEARER_SHAPE.exec(c.req.header('authorization') ?? '');
+    if (match === null) return undefined;
+    const hash = createHash('sha256')
+      .update(match[1] as string)
+      .digest();
+    const row = getApiTokenByHash(db, hash);
+    if (row === undefined || row.revoked_at !== null) return undefined;
+    if (row.last_used_at === null || now() - row.last_used_at > TOKEN_TOUCH_INTERVAL_MS) {
+      withWriteTransaction(db, () => touchApiToken(db, row.id, now()));
+    }
+    return { kind: 'token', tokenId: row.id, sites: parseSiteScope(row.site_scope) };
+  };
+
+  /** Session row → principal; a viewer session whose viewer was revoked dies here. */
+  const cookiePrincipalOf = (c: Context): Principal | undefined => {
+    const session = verifySessionCookie(db, secret, getCookie(c, SESSION_COOKIE), now());
+    if (session === undefined) return undefined;
+    if (session.principal_kind === 'admin') return { kind: 'admin', sessionId: session.id };
+    if (session.principal_kind === 'viewer' && session.viewer_id !== null) {
+      const viewer = getViewer(db, session.viewer_id);
+      if (viewer === undefined || viewer.revoked_at !== null) return undefined;
+      return {
+        kind: 'viewer',
+        sessionId: session.id,
+        viewerId: viewer.id,
+        sites: parseSiteScope(viewer.site_scope),
+      };
+    }
+    return undefined;
   };
 
   const gate: MiddlewareHandler<AuthEnv> = async (c, next) => {
-    const sessionId = sessionOf(c);
-    if (sessionId === undefined) return c.json({ error: 'unauthorized' }, 401);
-    c.set('sessionId', sessionId);
+    if (disabled) {
+      c.set('sessionId', DEV_SESSION_ID);
+      c.set('principal', { kind: 'admin', sessionId: DEV_SESSION_ID });
+      return next();
+    }
+    // A presented Bearer header is answered as one, never silently downgraded
+    // to the cookie — a wrong token with a live cookie beside it must 401, or
+    // scope mistakes hide behind the browser session during development.
+    if (c.req.header('authorization') !== undefined) {
+      const principal = tokenPrincipalOf(c);
+      if (principal === undefined) return c.json({ error: 'unauthorized' }, 401);
+      c.set('principal', principal);
+      return next();
+    }
+    const principal = cookiePrincipalOf(c);
+    if (principal === undefined) return c.json({ error: 'unauthorized' }, 401);
+    if (principal.kind !== 'token') c.set('sessionId', principal.sessionId);
+    c.set('principal', principal);
     await next();
   };
 
@@ -101,6 +171,9 @@ export function createAuth(db: Db, options: AuthOptions = {}): Auth {
     if (c.req.method === 'GET' || c.req.method === 'HEAD' || c.req.method === 'OPTIONS') {
       return next();
     }
+    // Bearer requests carry no ambient credential a third-party page could
+    // ride, so CSRF does not apply to them.
+    if (c.get('principal')?.kind === 'token') return next();
     if (!disabled) {
       const sessionId = c.get('sessionId');
       if (!verifyCsrfToken(secret, sessionId, c.req.header(CSRF_HEADER))) {
@@ -110,10 +183,19 @@ export function createAuth(db: Db, options: AuthOptions = {}): Auth {
     await next();
   };
 
+  const requireAdmin: MiddlewareHandler<AuthEnv> = async (c, next) => {
+    const principal = c.get('principal');
+    if (principal === undefined || principal.kind !== 'admin') {
+      return c.json({ error: 'admin only' }, 403);
+    }
+    await next();
+  };
+
   return {
     disabled,
     gate,
     csrfGuard,
+    requireAdmin,
     now,
     hasPassword: () => getSetting(db, PASSWORD_SETTING) !== undefined,
     passwordHash: () => getSetting(db, PASSWORD_SETTING),

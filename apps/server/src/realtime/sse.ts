@@ -9,6 +9,8 @@ import {
 } from '@featherstat/shared';
 import { Hono } from 'hono';
 import { type SSEMessage, type SSEStreamingApi, streamSSE } from 'hono/streaming';
+import type { AuthVariables } from '../auth/auth.ts';
+import { canReadSite } from '../auth/principal.ts';
 import type { RealtimeEntry, RealtimeHub } from './hub.ts';
 
 /** docs/04 § 4: the comment that keeps proxies from reaping us. */
@@ -33,13 +35,22 @@ type SiteFilter = ReadonlySet<number> | undefined;
  * Only `hit` frames carry an `id:`, so a client's `Last-Event-ID` always names a
  * ring-buffer entry.
  */
-export function createRealtimeRoutes(hub: RealtimeHub): Hono {
-  const app = new Hono();
+export function createRealtimeRoutes(
+  hub: RealtimeHub,
+): Hono<{ Variables: Partial<AuthVariables> }> {
+  const app = new Hono<{ Variables: Partial<AuthVariables> }>();
   app.get('/api/realtime', (c) => {
-    const sites = parseSites(c.req.query('sites'));
-    if (sites === null) {
+    const requested = parseSites(c.req.query('sites'));
+    if (requested === null) {
       return c.json({ error: "sites must be 'all' or a comma-separated list of site ids" }, 400);
     }
+    // A scoped principal's stream narrows to its readable sites: `all` means
+    // "all of mine", and naming someone else's site yields silence, not data.
+    const who = c.get('principal');
+    const sites =
+      who === undefined || who.kind === 'admin' || who.sites === 'all'
+        ? requested
+        : new Set([...(requested ?? who.sites)].filter((id) => canReadSite(who, id)));
     const resumeFrom = parseEventId(c.req.header('last-event-id'));
     return streamSSE(c, async (stream) => {
       const send = queuedWriter(stream);

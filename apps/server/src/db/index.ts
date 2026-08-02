@@ -601,18 +601,32 @@ export interface AdminSessionRow {
   id: string;
   created_at: number;
   expires_at: number;
+  /** 'admin' | 'viewer' — resolved to a Principal by the auth gate. */
+  principal_kind: string;
+  viewer_id: number | null;
 }
 
 const SQL_INSERT_ADMIN_SESSION =
-  'INSERT INTO admin_sessions (id, created_at, expires_at) VALUES (?, ?, ?)';
-const SQL_GET_ADMIN_SESSION = 'SELECT id, created_at, expires_at FROM admin_sessions WHERE id = ?';
+  'INSERT INTO admin_sessions (id, created_at, expires_at, principal_kind, viewer_id) VALUES (?, ?, ?, ?, ?)';
+const SQL_GET_ADMIN_SESSION =
+  'SELECT id, created_at, expires_at, principal_kind, viewer_id FROM admin_sessions WHERE id = ?';
 const SQL_DELETE_ADMIN_SESSION = 'DELETE FROM admin_sessions WHERE id = ?';
 const SQL_DELETE_ADMIN_SESSIONS_EXCEPT = 'DELETE FROM admin_sessions WHERE id <> ?';
 const SQL_DELETE_EXPIRED_ADMIN_SESSIONS = 'DELETE FROM admin_sessions WHERE expires_at <= ?';
 
-export function insertAdminSession(db: Db, row: AdminSessionRow): void {
+export function insertAdminSession(
+  db: Db,
+  row: Omit<AdminSessionRow, 'principal_kind' | 'viewer_id'> &
+    Partial<Pick<AdminSessionRow, 'principal_kind' | 'viewer_id'>>,
+): void {
   assertWritable(db);
-  stmt(db, SQL_INSERT_ADMIN_SESSION).run(row.id, row.created_at, row.expires_at);
+  stmt(db, SQL_INSERT_ADMIN_SESSION).run(
+    row.id,
+    row.created_at,
+    row.expires_at,
+    row.principal_kind ?? 'admin',
+    row.viewer_id ?? null,
+  );
 }
 
 export function getAdminSession(db: Db, id: string): AdminSessionRow | undefined {
@@ -633,4 +647,77 @@ export function deleteAdminSessionsExcept(db: Db, keepId: string): void {
 export function deleteExpiredAdminSessions(db: Db, now: number): void {
   assertWritable(db);
   stmt(db, SQL_DELETE_EXPIRED_ADMIN_SESSIONS).run(now);
+}
+
+// ---------------------------------------------------------------------------
+// API tokens & viewers (docs/04 § 5): scoped read-only principals
+// ---------------------------------------------------------------------------
+
+export interface ApiTokenRow {
+  id: number;
+  name: string;
+  /** sha256 of the raw token — the raw value exists only in the mint response. */
+  token_hash: Uint8Array;
+  /** `'all'` or a JSON array of site ids; parseSiteScope validates on read. */
+  site_scope: string;
+  created_at: number;
+  last_used_at: number | null;
+  revoked_at: number | null;
+}
+
+const API_TOKEN_COLUMNS = 'id, name, token_hash, site_scope, created_at, last_used_at, revoked_at';
+const SQL_INSERT_API_TOKEN =
+  'INSERT INTO api_tokens (name, token_hash, site_scope, created_at) VALUES (?, ?, ?, ?)';
+const SQL_GET_API_TOKEN = `SELECT ${API_TOKEN_COLUMNS} FROM api_tokens WHERE token_hash = ?`;
+const SQL_LIST_API_TOKENS = `SELECT ${API_TOKEN_COLUMNS} FROM api_tokens ORDER BY id`;
+const SQL_REVOKE_API_TOKEN =
+  'UPDATE api_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL';
+const SQL_TOUCH_API_TOKEN = 'UPDATE api_tokens SET last_used_at = ? WHERE id = ?';
+
+export function insertApiToken(
+  db: Db,
+  row: Pick<ApiTokenRow, 'name' | 'token_hash' | 'site_scope' | 'created_at'>,
+): number {
+  assertWritable(db);
+  const info = stmt(db, SQL_INSERT_API_TOKEN).run(
+    row.name,
+    row.token_hash,
+    row.site_scope,
+    row.created_at,
+  );
+  return Number(info.lastInsertRowid);
+}
+
+export function getApiTokenByHash(db: Db, tokenHash: Uint8Array): ApiTokenRow | undefined {
+  return stmt<ApiTokenRow>(db, SQL_GET_API_TOKEN).get(tokenHash);
+}
+
+export function listApiTokens(db: Db): ApiTokenRow[] {
+  return stmt<ApiTokenRow>(db, SQL_LIST_API_TOKENS).all() as ApiTokenRow[];
+}
+
+/** Revokes a live token; false if unknown or already revoked. */
+export function revokeApiToken(db: Db, id: number, now: number): boolean {
+  assertWritable(db);
+  return stmt(db, SQL_REVOKE_API_TOKEN).run(now, id).changes > 0;
+}
+
+export function touchApiToken(db: Db, id: number, now: number): void {
+  assertWritable(db);
+  stmt(db, SQL_TOUCH_API_TOKEN).run(now, id);
+}
+
+export interface ViewerRow {
+  id: number;
+  email: string;
+  site_scope: string;
+  created_at: number;
+  revoked_at: number | null;
+}
+
+const VIEWER_COLUMNS = 'id, email, site_scope, created_at, revoked_at';
+const SQL_GET_VIEWER = `SELECT ${VIEWER_COLUMNS} FROM viewers WHERE id = ?`;
+
+export function getViewer(db: Db, id: number): ViewerRow | undefined {
+  return stmt<ViewerRow>(db, SQL_GET_VIEWER).get(id);
 }

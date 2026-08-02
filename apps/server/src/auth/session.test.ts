@@ -30,7 +30,7 @@ describe('admin sessions', () => {
     const issued = issueSession(db, secret, T0);
     expect(issued.id).toMatch(/^[0-9a-f]{64}$/);
     expect(issued.expiresAt).toBe(T0 + SESSION_TTL_MS);
-    expect(verifySessionCookie(db, secret, issued.cookieValue, T0 + 1)).toBe(issued.id);
+    expect(verifySessionCookie(db, secret, issued.cookieValue, T0 + 1)?.id).toBe(issued.id);
     db.close();
   });
 
@@ -59,7 +59,7 @@ describe('admin sessions', () => {
     const secret = ensureAuthSecret(db);
     const issued = issueSession(db, secret, T0);
     const lastValid = T0 + SESSION_TTL_MS - 1;
-    expect(verifySessionCookie(db, secret, issued.cookieValue, lastValid)).toBe(issued.id);
+    expect(verifySessionCookie(db, secret, issued.cookieValue, lastValid)?.id).toBe(issued.id);
     expect(
       verifySessionCookie(db, secret, issued.cookieValue, T0 + SESSION_TTL_MS),
     ).toBeUndefined();

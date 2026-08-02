@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from 'node:crypto';
 import {
   AdminChangePasswordSchema,
   type AdminDiagnostics,
@@ -5,6 +6,9 @@ import {
   AdminSetupSchema,
   AdminSiteCreateSchema,
   AdminSitePatchSchema,
+  ApiTokenCreateSchema,
+  type ApiTokenInfo,
+  type ApiTokenMinted,
   DAY_MS,
   type SiteInfo,
 } from '@featherstat/shared';
@@ -12,14 +16,19 @@ import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { Auth, AuthEnv } from '../auth/auth.ts';
 import { verifyPassword } from '../auth/password.ts';
+import { parseSiteScope, serializeSiteScope } from '../auth/principal.ts';
 import { RateLimiter } from '../auth/ratelimit.ts';
 import {
+  type ApiTokenRow,
   countEvents,
   createSite,
   type Db,
   databaseSizeBytes,
   deleteAdminSessionsExcept,
+  insertApiToken,
+  listApiTokens,
   listBotDrops,
+  revokeApiToken,
   type Site,
   updateSite,
   withWriteTransaction,
@@ -139,6 +148,36 @@ export function createAdminRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
     return c.json(toSiteInfo(site));
   });
 
+  // --- API tokens (docs/04 § 5): mint shows the raw value exactly once ------
+
+  app.get('/api/admin/tokens', (c) => c.json(listApiTokens(db).map(toTokenInfo)));
+
+  app.post('/api/admin/tokens', async (c) => {
+    const body = await parseBody(c, ApiTokenCreateSchema);
+    if (body.ok === false) return body.response;
+    const raw = `fs_${randomBytes(32).toString('base64url')}`;
+    const row = {
+      name: body.data.name,
+      token_hash: createHash('sha256').update(raw).digest(),
+      site_scope: serializeSiteScope(body.data.sites),
+      created_at: auth.now(),
+    };
+    const id = withWriteTransaction(db, () => insertApiToken(db, row));
+    const minted: ApiTokenMinted = {
+      ...toTokenInfo({ id, ...row, last_used_at: null, revoked_at: null }),
+      token: raw,
+    };
+    return c.json(minted, 201);
+  });
+
+  app.delete('/api/admin/tokens/:id', (c) => {
+    const id = Number(c.req.param('id'));
+    if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'invalid token id' }, 400);
+    const revoked = withWriteTransaction(db, () => revokeApiToken(db, id, auth.now()));
+    if (!revoked) return c.json({ error: `no live token ${id}` }, 404);
+    return c.json({ ok: true });
+  });
+
   app.get('/api/admin/diagnostics', (c) => {
     // UTC approximation of the per-site local dates — fine for a health panel.
     const since = new Date(auth.now() - (BOT_DROP_DAYS - 1) * DAY_MS).toISOString().slice(0, 10);
@@ -186,4 +225,18 @@ async function parseBody<T>(c: Context, schema: SchemaLike<T>): Promise<Parsed<T
 
 function toSiteInfo({ id, name, domains, timezone }: Site): SiteInfo {
   return { id, name, domains, timezone };
+}
+
+function toTokenInfo(
+  row: Omit<ApiTokenRow, 'token_hash'> & { token_hash?: unknown },
+): ApiTokenInfo {
+  const scope = parseSiteScope(row.site_scope);
+  return {
+    id: row.id,
+    name: row.name,
+    sites: scope === 'all' ? 'all' : [...scope],
+    createdAt: row.created_at,
+    lastUsedAt: row.last_used_at,
+    revokedAt: row.revoked_at,
+  };
 }

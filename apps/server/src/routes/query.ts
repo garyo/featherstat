@@ -8,8 +8,9 @@ import {
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { AuthVariables } from '../auth/auth.ts';
+import { readableSites } from '../auth/principal.ts';
 import { RateLimiter } from '../auth/ratelimit.ts';
-import { type Db, dataVersion, schemaVersion } from '../db/index.ts';
+import { type Db, dataVersion, listSites, schemaVersion } from '../db/index.ts';
 import { executeQueryRequest, resolveSiteWindows, UnknownSiteError } from '../query/executor.ts';
 import { PoolSaturatedError } from '../query/pool/pool.ts';
 import { clientIp } from './track.ts';
@@ -57,6 +58,7 @@ type QueryEnv = { Variables: Partial<AuthVariables> };
 export type ExecuteQuery = (
   request: QueryRequest,
   now: number,
+  allowedSites?: readonly number[],
 ) => QueryResponse | Promise<QueryResponse>;
 
 export interface QueryRouteOptions {
@@ -65,7 +67,8 @@ export interface QueryRouteOptions {
 
 export function createQueryRoutes(db: Db, options: QueryRouteOptions = {}): Hono<QueryEnv> {
   const execute: ExecuteQuery =
-    options.execute ?? ((request, now) => executeQueryRequest(db, request, { now }));
+    options.execute ??
+    ((request, now, allowedSites) => executeQueryRequest(db, request, { now, allowedSites }));
   const app = new Hono<QueryEnv>();
   const sessionBatches = new RateLimiter(QUERY_BATCHES_PER_SESSION, QUERY_WINDOW_MS);
   const globalBatches = new RateLimiter(QUERY_BATCHES_GLOBAL, QUERY_WINDOW_MS);
@@ -83,9 +86,20 @@ export function createQueryRoutes(db: Db, options: QueryRouteOptions = {}): Hono
     }
 
     const now = Date.now();
+    // The one scoping chokepoint (docs/04 § 5): a non-admin principal's
+    // readable set bounds both the resolved windows (and so the ETag) and the
+    // execution itself; out-of-scope answers exactly like nonexistent.
+    const who = c.get('principal');
+    const allowedSites =
+      who === undefined || who.kind === 'admin'
+        ? undefined
+        : readableSites(
+            who,
+            listSites(db).map((site) => site.id),
+          );
     let windows: SiteWindow[];
     try {
-      windows = resolveSiteWindows(db, parsed.data.site, parsed.data.range, now);
+      windows = resolveSiteWindows(db, parsed.data.site, parsed.data.range, now, allowedSites);
     } catch (error) {
       if (error instanceof UnknownSiteError) return c.json({ error: error.message }, 404);
       throw error;
@@ -114,7 +128,7 @@ export function createQueryRoutes(db: Db, options: QueryRouteOptions = {}): Hono
 
     let response: QueryResponse;
     try {
-      response = await execute(parsed.data, now);
+      response = await execute(parsed.data, now, allowedSites);
     } catch (error) {
       // A full pool is load, not failure — same degraded path as the limiter.
       if (error instanceof PoolSaturatedError) {
@@ -147,6 +161,8 @@ export function createQueryRoutes(db: Db, options: QueryRouteOptions = {}): Hono
  * cannot collide.
  */
 function principal(c: Context<QueryEnv>): string {
+  const who = c.get('principal');
+  if (who?.kind === 'token') return `token:${who.tokenId}`;
   return c.get('sessionId') ?? clientIp(c);
 }
 

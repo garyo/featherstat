@@ -12,7 +12,14 @@ export interface WorkerInit {
 }
 
 export type PoolJob =
-  | { id: number; kind: 'query'; request: QueryRequest; now: number }
+  | {
+      id: number;
+      kind: 'query';
+      request: QueryRequest;
+      now: number;
+      /** The principal's readable sites — resolved on main, enforced in execution. */
+      allowedSites?: readonly number[];
+    }
   /** Test/diagnostic aid: proves execution happens off the main thread. */
   | { id: number; kind: 'ping' };
 

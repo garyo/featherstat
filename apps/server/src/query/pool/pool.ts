@@ -71,8 +71,18 @@ export class QueryPool {
     return this.slots.length;
   }
 
-  async execute(request: QueryRequest, now: number): Promise<QueryResponse> {
-    const reply = await this.submit({ id: this.nextId++, kind: 'query', request, now });
+  async execute(
+    request: QueryRequest,
+    now: number,
+    allowedSites?: readonly number[],
+  ): Promise<QueryResponse> {
+    const reply = await this.submit({
+      id: this.nextId++,
+      kind: 'query',
+      request,
+      now,
+      ...(allowedSites === undefined ? {} : { allowedSites }),
+    });
     if (!reply.ok) throw new Error(reply.error);
     return reply.result as QueryResponse;
   }

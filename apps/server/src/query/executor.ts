@@ -46,8 +46,9 @@ export function resolveSiteWindows(
   site: QueryRequest['site'],
   range: Range,
   now: number,
+  allowedSites?: readonly number[],
 ): SiteWindow[] {
-  return resolveSites(db, site).map((s) => ({
+  return resolveSites(db, site, allowedSites).map((s) => ({
     siteId: s.id,
     timezone: s.timezone,
     ...resolveWindow(range, s.timezone, now),
@@ -57,6 +58,13 @@ export function resolveSiteWindows(
 export interface ExecuteOptions {
   /** Clock used to resolve range presets — tests pin it. */
   now?: number;
+  /**
+   * The principal's readable sites (docs/04 § 5). `site: "all"` fans out over
+   * this list instead of the directory; absent means unrestricted (admin, or
+   * a bare app with no gate). Enforced HERE, inside execution, because the
+   * request that crosses to the worker pool carries no principal.
+   */
+  allowedSites?: readonly number[];
 }
 
 export function executeQueryRequest(
@@ -67,7 +75,7 @@ export function executeQueryRequest(
   const started = performance.now();
   const now = options.now ?? Date.now();
   return withReadSnapshot(db, () => {
-    const windows = resolveSiteWindows(db, request.site, request.range, now);
+    const windows = resolveSiteWindows(db, request.site, request.range, now, options.allowedSites);
     const compare = request.compare;
     const compareWindows =
       compare === undefined
@@ -139,10 +147,23 @@ function describeAxis(
   if (axis.every((site) => site !== undefined)) entry.axis = axis;
 }
 
-function resolveSites(db: Db, scope: QueryRequest['site']): Site[] {
-  if (scope === 'all') return listSites(db);
+function resolveSites(
+  db: Db,
+  scope: QueryRequest['site'],
+  allowedSites?: readonly number[],
+): Site[] {
+  if (scope === 'all') {
+    const sites = listSites(db);
+    if (allowedSites === undefined) return sites;
+    const allowed = new Set(allowedSites);
+    return sites.filter((site) => allowed.has(site.id));
+  }
   const site = getSite(db, scope);
-  if (site === undefined) throw new UnknownSiteError(`unknown site id ${scope}`);
+  // Out of scope answers exactly like nonexistent: a scoped principal must not
+  // be able to probe the site directory by the difference (docs/04 § 5).
+  if (site === undefined || (allowedSites !== undefined && !allowedSites.includes(scope))) {
+    throw new UnknownSiteError(`unknown site id ${scope}`);
+  }
   return [site];
 }
 

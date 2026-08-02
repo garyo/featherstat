@@ -545,6 +545,33 @@ export interface AdminDiagnostics {
 }
 
 // ---------------------------------------------------------------------------
+// API tokens (docs/04 § 5) — scoped read-only principals for scripts/MCP
+// ---------------------------------------------------------------------------
+
+export const ApiTokenCreateSchema = z.object({
+  name: z.string().min(1).max(64),
+  /** `'all'` or an explicit site-id list — never empty: a token that can read
+   * nothing is a mistake, not a configuration. */
+  sites: z.union([z.literal('all'), z.array(z.number().int().positive()).min(1).max(100)]),
+});
+export type ApiTokenCreate = z.infer<typeof ApiTokenCreateSchema>;
+
+/** The listing shape; the raw token appears only in the mint response. */
+export interface ApiTokenInfo {
+  id: number;
+  name: string;
+  sites: 'all' | number[];
+  createdAt: number;
+  lastUsedAt: number | null;
+  revokedAt: number | null;
+}
+
+/** `POST /api/admin/tokens` — `token` is shown once and never retrievable. */
+export interface ApiTokenMinted extends ApiTokenInfo {
+  token: string;
+}
+
+// ---------------------------------------------------------------------------
 // ntfy notifications (docs/01 R16) — configured through the settings table
 // ---------------------------------------------------------------------------
 

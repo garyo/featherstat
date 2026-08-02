@@ -1,6 +1,7 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { DAY_MS } from '@featherstat/shared';
 import {
+  type AdminSessionRow,
   type Db,
   deleteAdminSession,
   deleteExpiredAdminSessions,
@@ -45,12 +46,24 @@ export interface IssuedSession {
   expiresAt: number;
 }
 
-export function issueSession(db: Db, secret: Buffer, now: number): IssuedSession {
+export function issueSession(
+  db: Db,
+  secret: Buffer,
+  now: number,
+  /** Defaults to an admin session; viewer logins (magic links) pass theirs. */
+  principal: { kind: 'admin' } | { kind: 'viewer'; viewerId: number } = { kind: 'admin' },
+): IssuedSession {
   const id = randomBytes(SESSION_ID_BYTES).toString('hex');
   const expiresAt = now + SESSION_TTL_MS;
   withWriteTransaction(db, () => {
     deleteExpiredAdminSessions(db, now); // opportunistic sweep — no timer needed
-    insertAdminSession(db, { id, created_at: now, expires_at: expiresAt });
+    insertAdminSession(db, {
+      id,
+      created_at: now,
+      expires_at: expiresAt,
+      principal_kind: principal.kind,
+      viewer_id: principal.kind === 'viewer' ? principal.viewerId : null,
+    });
   });
   return {
     id,
@@ -60,13 +73,13 @@ export function issueSession(db: Db, secret: Buffer, now: number): IssuedSession
   };
 }
 
-/** Cookie → live session id, or undefined. Expired rows are deleted on sight. */
+/** Cookie → live session row, or undefined. Expired rows are deleted on sight. */
 export function verifySessionCookie(
   db: Db,
   secret: Buffer,
   cookieValue: string | undefined,
   now: number,
-): string | undefined {
+): AdminSessionRow | undefined {
   if (cookieValue === undefined) return undefined;
   const dot = cookieValue.lastIndexOf('.');
   if (dot <= 0) return undefined;
@@ -79,7 +92,7 @@ export function verifySessionCookie(
     withWriteTransaction(db, () => deleteAdminSession(db, id));
     return undefined;
   }
-  return id;
+  return session;
 }
 
 export function revokeSession(db: Db, id: string): void {

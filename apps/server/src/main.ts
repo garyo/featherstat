@@ -57,7 +57,10 @@ const { app } = createSecuredApp({
   db,
   hub,
   pipeline,
-  executeQuery: pool === undefined ? undefined : (request, now) => pool.execute(request, now),
+  executeQuery:
+    pool === undefined
+      ? undefined
+      : (request, now, allowedSites) => pool.execute(request, now, allowedSites),
 });
 
 // ntfy delivery turns on from the settings rows (docs/01 R16), editable at
