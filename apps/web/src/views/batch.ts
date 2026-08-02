@@ -1,8 +1,10 @@
 import {
   EVENT_ONLY_DIMENSIONS,
+  EVENT_ONLY_METRICS,
   type Filter,
   type Query,
   type QueryResponse,
+  SESSION_ONLY_DIMENSIONS,
   SESSION_ONLY_METRICS,
   type WidgetSpec,
 } from '@featherstat/shared';
@@ -37,24 +39,36 @@ export function widgetData(
   return { phase: 'ready', results };
 }
 
-const EVENT_ONLY = new Set<string>(EVENT_ONLY_DIMENSIONS);
-const SESSION_ONLY = new Set<string>(SESSION_ONLY_METRICS);
+const EVENT_ONLY_DIMS = new Set<string>(EVENT_ONLY_DIMENSIONS);
+const SESSION_ONLY_DIMS = new Set<string>(SESSION_ONLY_DIMENSIONS);
+const SESSION_METRICS = new Set<string>(SESSION_ONLY_METRICS);
+const EVENT_METRICS = new Set<string>(EVENT_ONLY_METRICS);
 
 /**
  * Click-to-filter on a page or event row makes session-level metrics
- * unanswerable (the compiler refuses the combination — docs/04 § 3). Rather
- * than send a question that can only error — which would blank the whole KPI
- * row — trim those metrics and let the tiles render "—". Queries that would
- * lose every metric are left alone: their per-query error names the conflict.
+ * unanswerable, and a filter on a session-only dimension (entry/exit page)
+ * symmetrically blocks event-level metrics (the compiler refuses either
+ * combination — docs/04 § 3). Rather than send a question that can only error —
+ * which would blank the whole KPI row — trim those metrics and let the tiles
+ * render "—". A `scope: 'session'` filter blocks nothing, exactly as the
+ * compiler reads it. Queries that would lose every metric are left alone:
+ * their per-query error names the conflict.
  */
 export function withoutBlockedMetrics(
   queries: readonly Query[],
   filters: readonly Filter[],
 ): Query[] {
-  if (!filters.some((filter) => EVENT_ONLY.has(filter.dim))) return [...queries];
+  const hit = filters.filter((filter) => filter.scope !== 'session');
+  const blocksSessions = hit.some((filter) => EVENT_ONLY_DIMS.has(filter.dim));
+  const blocksEvents = hit.some((filter) => SESSION_ONLY_DIMS.has(filter.dim));
+  if (!blocksSessions && !blocksEvents) return [...queries];
   return queries.map((query) => {
     if ('kind' in query) return query;
-    const kept = query.metrics.filter((metric) => !SESSION_ONLY.has(metric));
+    const kept = query.metrics.filter(
+      (metric) =>
+        !(blocksSessions && SESSION_METRICS.has(metric)) &&
+        !(blocksEvents && EVENT_METRICS.has(metric)),
+    );
     if (kept.length === 0 || kept.length === query.metrics.length) return query;
     return { ...query, metrics: kept };
   });

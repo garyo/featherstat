@@ -363,7 +363,12 @@ batch itself still succeeds, and never returns wrong numbers.
   `target_url` (the outlink/download destination), `ref_domain`,
   `ref_type`, `utm_*`, `country`, `region`, `city`, `browser`, `os`,
   `device_type`, `screen`, `lang`, `event_category`, `event_action`,
-  `event_name`, `local_hour`, `weekday`, plus `bucket`: `hour|day|week|month`.
+  `event_name`, `local_hour`, `weekday`, plus the session-only `entry_path`
+  and `exit_path` — only the sessions table carries those, so grouping or
+  hit-scope filtering by one refuses event-level metrics (`pageviews`,
+  `visitors`, …) exactly as an event-only dimension refuses session metrics;
+  a `scope: "session"` filter on one names a session attribute and blocks
+  nothing. Plus `bucket`: `hour|day|week|month`.
   Filter ops: `eq`, `neq`, `in`, `contains`, `starts`, and `is_null` (no
   value — matches the NULL group a breakdown returns, e.g. direct traffic
   under `ref_domain`). The compiler maps this vocabulary to parameterized SQL;
@@ -381,6 +386,14 @@ batch itself still succeeds, and never returns wrong numbers.
   consecutive identical labels into one step, so a `transitions` edge never runs
   from a node to itself and no `flows` signature repeats a label back to back
   (see 03 § Journeys).
+- **Adjacency** is the one-page slice of the same machinery:
+  `{ "id": "in", "kind": "adjacency", "path": "/pricing", "direction": "in" }`
+  → rows of `{ label, sessions }` counting the DISTINCT sessions in which the
+  named page was reached from `label` (`"out"`: left toward it), anywhere in
+  the session, top `limit` (default 10). Sessions that start at the page read
+  as the pseudo-row `(entry)` under `in`; sessions that end there as `(exit)`
+  under `out`. Same envelope, same collapse: a reload or double-announce is
+  never an adjacency, and the page is never its own neighbor.
 - **Time on page** is its own kind for the same reason — it counts page legs,
   not rows: `{ "id": "dwell", "kind": "dwell", "limit": 10 }` → rows of
   `{ path, views_measured, avg_page_ms, max_page_ms, views_scrolled,
@@ -404,6 +417,16 @@ batch itself still succeeds, and never returns wrong numbers.
   scroll under that filter returns the second-deepest reading of every page,
   every time: silent, systematic, and always low. Depth is a high-water mark,
   not a gap, so it is aggregated over all of a leg's rows.
+- Both `dwell` and `distribution` take an optional `path`: a **leg selection**,
+  not a session filter — sessions still qualify by the envelope, and only their
+  legs on that page are counted.
+- **Distributions** histogram the same legs with fixed buckets:
+  `{ "id": "d", "kind": "distribution", "of": "dwell" }` → rows of
+  `{ bucket, legs }` over the duration bands `0–10s | 10–30s | 30–60s | 1–3m |
+  3m+`; `"of": "scroll"` buckets each measured leg's deepest reading into
+  deciles `0–9` (100 % belongs to 9). Rows are sparse — empty buckets are
+  omitted — and scroll counts only measured legs: an unmeasured leg is in no
+  bucket, never in bucket 0.
 - **Click-to-filter falls out for free**: clicking a row in any breakdown adds
   a `filters` entry and re-issues the same batch.
 - **Caching**: response ETag = hash(max event rowid, schema version,

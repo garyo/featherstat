@@ -3,12 +3,14 @@ import {
   DimensionSchema,
   ENGAGEMENT_THRESHOLD_MS,
   EVENT_ONLY_DIMENSIONS,
+  EVENT_ONLY_METRICS,
   isQueryError,
   type Metric,
   type MetricQuery,
   MetricSchema,
   POPULATIONS,
   type Population,
+  SESSION_ONLY_DIMENSIONS,
   SESSION_ONLY_METRICS,
   type SiteWindow,
 } from '@featherstat/shared';
@@ -59,6 +61,26 @@ describe('shared vocabulary constants stay true to the compiler tables', () => {
         sites(1),
       );
       expect(isQueryError(compiled), metric).toBe(sessionOnly.has(metric));
+    }
+  });
+
+  it('SESSION_ONLY_DIMENSIONS = exactly the dims that break event-level metrics', () => {
+    const sessionOnly = new Set<string>(SESSION_ONLY_DIMENSIONS);
+    for (const dim of DimensionSchema.options) {
+      const compiled = compileMetricQuery({ id: 'q', metrics: ['pageviews'], dim }, [], sites(1));
+      expect(isQueryError(compiled), dim).toBe(sessionOnly.has(dim));
+    }
+  });
+
+  it('EVENT_ONLY_METRICS = exactly the metrics a session-only dim cannot answer', () => {
+    const eventOnly = new Set<string>(EVENT_ONLY_METRICS);
+    for (const metric of MetricSchema.options) {
+      const compiled = compileMetricQuery(
+        { id: 'q', metrics: [metric], dim: 'entry_path' },
+        [],
+        sites(1),
+      );
+      expect(isQueryError(compiled), metric).toBe(eventOnly.has(metric));
     }
   });
 });
@@ -407,6 +429,74 @@ describe('compileMetricQuery', () => {
       sites(1),
     );
     expect(hit).toHaveProperty(['error', 'code'], 'unsupported');
+  });
+
+  it('groups session metrics by the session-only dims, values bound as ever', () => {
+    const compiled = compile({
+      metrics: ['visits', 'bounce_rate'],
+      dim: 'entry_path',
+      filters: [{ dim: 'exit_path', op: 'eq', value: '/bye' }],
+    });
+    expect(compiled.statements.map((s) => s.table)).toEqual(['sessions']);
+    const statement = compiled.statements[0];
+    expect(statement?.sql).toContain('s.entry_path AS "entry_path"');
+    expect(statement?.sql).toContain('WHERE s.exit_path = ?');
+    expect(statement?.params).toContain('/bye');
+  });
+
+  it('rejects event metrics crossed with session-only dimensions', () => {
+    const byDim = compileMetricQuery(
+      { id: 'q', metrics: ['pageviews'], dim: 'entry_path' },
+      [],
+      sites(1),
+    );
+    expect(byDim).toHaveProperty(['error', 'code'], 'unsupported');
+    expect(byDim).toHaveProperty(
+      ['error', 'message'],
+      expect.stringContaining("session-level 'entry_path'"),
+    );
+
+    const byFilter = compileMetricQuery(
+      { id: 'q', metrics: ['visitors'], filters: [{ dim: 'exit_path', op: 'eq', value: '/' }] },
+      [],
+      sites(1),
+    );
+    expect(byFilter).toHaveProperty(['error', 'code'], 'unsupported');
+  });
+
+  it('rejects a query whose dims block both tables, naming both blockers', () => {
+    const compiled = compileMetricQuery(
+      { id: 'q', metrics: ['visits'], dim: 'path', dim2: 'entry_path' },
+      [],
+      sites(1),
+    );
+    expect(compiled).toHaveProperty(['error', 'code'], 'unsupported');
+    expect(compiled).toHaveProperty(
+      ['error', 'message'],
+      expect.stringContaining("both 'path' and the session-level 'entry_path'"),
+    );
+  });
+
+  it("scope:'session' on a session-only dim reads the session attribute, blocking nothing", () => {
+    // On the sessions table it is the column itself…
+    const sessions = compile({
+      metrics: ['visits'],
+      filters: [{ dim: 'entry_path', op: 'eq', value: '/', scope: 'session' }],
+    });
+    expect(sessions.statements[0]?.sql).toContain('(s.entry_path = ?)');
+    // …and on the events table a semi-join through the same bounds CTE, so an
+    // event metric can still be narrowed to sessions that entered somewhere.
+    const events = compile({
+      metrics: ['pageviews'],
+      filters: [{ dim: 'entry_path', op: 'eq', value: '/', scope: 'session' }],
+    });
+    const sql = events.statements[0]?.sql ?? '';
+    expect(events.statements.map((s) => s.table)).toEqual(['events']);
+    expect(sql).toContain('e.session_id IN (SELECT s.id');
+    expect(sql).toContain(
+      'sessions s JOIN bounds ON s.site_id = bounds.site_id\n  AND s.local_date BETWEEN bounds.from_date AND bounds.to_date',
+    );
+    expect(events.statements[0]?.params).toContain('/');
   });
 
   it('applies global filters to every statement of a split query', () => {

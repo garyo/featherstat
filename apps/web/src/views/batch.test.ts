@@ -188,6 +188,26 @@ describe('withoutBlockedMetrics', () => {
     expect(spark.metrics).toEqual(['visitors', 'pageviews', 'visits']);
   });
 
+  it('trims event-only metrics when a filter uses a session-only dim (entry/exit page)', () => {
+    const entryFilter: Filter[] = [{ dim: 'entry_path', op: 'eq', value: '/x' }];
+    const trimmed = withoutBlockedMetrics(queries, entryFilter);
+    const kpis = trimmed.find((q) => q.id === 'kpis');
+    if (kpis === undefined || 'kind' in kpis) throw new Error('metric query expected');
+    // The session-shaped metrics survive; the events-table ones are the blocked side now.
+    expect(kpis.metrics).toEqual([
+      'visits',
+      'engaged_ms',
+      'engaged_sessions',
+      'avg_engagement',
+      'bounce_rate',
+    ]);
+  });
+
+  it("a scope:'session' filter blocks nothing, exactly as the compiler reads it", () => {
+    const scoped: Filter[] = [{ dim: 'path', op: 'eq', value: '/x', scope: 'session' }];
+    expect(withoutBlockedMetrics(queries, scoped)).toEqual(queries);
+  });
+
   it('is inert for session-level filters and mutates nothing', () => {
     const countryFilter: Filter[] = [{ dim: 'country', op: 'eq', value: 'US' }];
     expect(withoutBlockedMetrics(queries, countryFilter)).toEqual(queries);

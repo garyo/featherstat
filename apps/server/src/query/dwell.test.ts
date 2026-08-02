@@ -236,6 +236,34 @@ describe('dwell attribution', () => {
     expect(compiled.params).toContain(PING_CLAMP_MS);
   });
 
+  it('restricts the legs to `path` — a leg selection, and the value is bound', () => {
+    const response = run({ queries: [{ id: 'q', kind: 'dwell', path: '/a', limit: 10 }] });
+    expect(resultOf(response, 'q').rows).toEqual([
+      {
+        path: '/a',
+        views_measured: 2,
+        avg_page_ms: 32_500,
+        max_page_ms: 45_000,
+        views_scrolled: 0,
+        avg_scroll_pct: null,
+      },
+    ]);
+
+    const compiled = compileDwellQuery(
+      { id: 'q', kind: 'dwell', path: '/a', limit: 10 },
+      [],
+      [{ siteId: 1, timezone: 'UTC', from: '2026-07-01', to: '2026-07-31' }],
+    );
+    if ('error' in compiled) throw new Error(compiled.error.message);
+    expect(compiled.sql).not.toContain('/a');
+    expect(compiled.params).toEqual([PING_CLAMP_MS, '/a', 10]);
+  });
+
+  it('answers a `path` nothing was measured on with empty rows, not a zero', () => {
+    const response = run({ queries: [{ id: 'q', kind: 'dwell', path: '/solo', limit: 10 }] });
+    expect(resultOf(response, 'q').rows).toEqual([]);
+  });
+
   it('ranks by average time and guards the tail with `limit`', () => {
     const rows = resultOf(run({ queries: dwell(2) }), 'q').rows;
     expect(rows.map((row) => row.path)).toEqual(['/a', '/after']);
@@ -367,6 +395,14 @@ describe('scroll depth', () => {
             { path: '/unread', type: 'ping', at: 35_000 },
           ],
         });
+        // A full read: 100 % belongs to the last decile, not an eleventh.
+        seedVisit({
+          sess: 92,
+          hits: [
+            { path: '/full', at: 0 },
+            { path: '/full', type: 'ping', at: 15_000, scroll: 100 },
+          ],
+        });
       });
     } finally {
       db = previous;
@@ -411,5 +447,89 @@ describe('scroll depth', () => {
       .filter((key) => key !== 'path')
       .sort();
     expect(columns).toEqual(Object.keys(DWELL_MEASURES).sort());
+  });
+
+  it('histograms measured readings into deciles; unmeasured legs are absent, not 0', () => {
+    const fresh = scrollDb();
+    const response = executeQueryRequest(fresh, {
+      site: 1,
+      ...RANGE,
+      queries: [{ id: 'q', kind: 'distribution', of: 'scroll' }],
+    });
+    const result = resultOf(response, 'q');
+    // 55 % → decile 5; 95 % and the full read → decile 9. /unread has a timed
+    // leg and no reading — it appears in NO bucket, least of all bucket 0.
+    expect(result.rows).toEqual([
+      { bucket: 5, legs: 1 },
+      { bucket: 9, legs: 2 },
+    ]);
+    expect(result.measures).toEqual({
+      legs: { unit: 'count', population: 'scrolled_pageviews', aggregate: 'sum' },
+    });
+  });
+
+  it('restricts the scroll histogram to one page via `path`', () => {
+    const fresh = scrollDb();
+    const response = executeQueryRequest(fresh, {
+      site: 1,
+      ...RANGE,
+      queries: [{ id: 'q', kind: 'distribution', of: 'scroll', path: '/long' }],
+    });
+    expect(resultOf(response, 'q').rows).toEqual([
+      { bucket: 5, legs: 1 },
+      { bucket: 9, legs: 1 },
+    ]);
+  });
+});
+
+describe('dwell distribution', () => {
+  const query = (partial: { path?: string } = {}) =>
+    run({ queries: [{ id: 'q', kind: 'distribution', of: 'dwell', ...partial }] });
+
+  it('histograms timed legs into the fixed duration bands, sparse where empty', () => {
+    const result = resultOf(query(), 'q');
+    // /b's 5 s; then B's clamped /a (20 s), /after (20 s), /d and /late (10 s
+    // each); then A's 45 s /a leg. Nothing reaches 1–3m or 3m+ — no zero rows.
+    expect(result.rows).toEqual([
+      { bucket: '0–10s', legs: 1 },
+      { bucket: '10–30s', legs: 4 },
+      { bucket: '30–60s', legs: 1 },
+    ]);
+    expect(result.measures).toEqual({
+      legs: { unit: 'count', population: 'measured_pageviews', aggregate: 'sum' },
+    });
+  });
+
+  it('restricts the histogram to one page via `path`, the value bound', () => {
+    const result = resultOf(query({ path: '/a' }), 'q');
+    expect(result.rows).toEqual([
+      { bucket: '10–30s', legs: 1 },
+      { bucket: '30–60s', legs: 1 },
+    ]);
+  });
+
+  it('leaves unmeasurable legs out entirely — a lone pageview is in no band', () => {
+    expect(resultOf(query({ path: '/solo' }), 'q').rows).toEqual([]);
+  });
+
+  it('applies session-scoped filters and refuses event-level ones like its siblings', () => {
+    const filtered = run({
+      filters: [{ dim: 'country', op: 'eq', value: 'US' }],
+      queries: [{ id: 'q', kind: 'distribution', of: 'dwell' }],
+    });
+    // A's 45 s and 5 s legs, B's clamped 20 s.
+    expect(resultOf(filtered, 'q').rows).toEqual([
+      { bucket: '0–10s', legs: 1 },
+      { bucket: '10–30s', legs: 1 },
+      { bucket: '30–60s', legs: 1 },
+    ]);
+
+    const refused = run({
+      filters: [{ dim: 'path', op: 'starts', value: '/a' }],
+      queries: [{ id: 'q', kind: 'distribution', of: 'dwell' }],
+    });
+    expect(refused.results.q).toEqual({
+      error: { code: 'unsupported', message: expect.stringContaining('session-scoped') },
+    });
   });
 });

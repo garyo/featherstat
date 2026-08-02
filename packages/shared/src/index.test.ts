@@ -52,7 +52,7 @@ describe('QueryRequestSchema', () => {
     });
     expect(Object.keys(req.queries)).toHaveLength(3);
     const flows = req.queries[2];
-    expect(flows && 'kind' in flows && flows.limit).toBe(20); // default applied
+    expect(flows && 'kind' in flows && 'limit' in flows && flows.limit).toBe(20); // default applied
   });
 
   it('accepts a dwell query and defaults its depth', () => {
@@ -61,7 +61,7 @@ describe('QueryRequestSchema', () => {
       queries: [{ id: 'dwell', kind: 'dwell' }],
     });
     const dwell = req.queries[0];
-    expect(dwell && 'kind' in dwell && dwell.limit).toBe(10);
+    expect(dwell && 'kind' in dwell && 'limit' in dwell && dwell.limit).toBe(10);
   });
 
   it('rejects an oversized batch', () => {

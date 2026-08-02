@@ -223,6 +223,16 @@ export const EVENT_ONLY_DIMENSIONS = [
   'local_hour',
 ] as const satisfies readonly Dimension[];
 
+/**
+ * Dimensions only the sessions table carries — `EVENT_ONLY_DIMENSIONS`' mirror.
+ * Grouping or hit-scope filtering by one makes event-level metrics unanswerable;
+ * a `scope: 'session'` filter leaf never conflicts (it names a session attribute).
+ */
+export const SESSION_ONLY_DIMENSIONS = [
+  'entry_path',
+  'exit_path',
+] as const satisfies readonly Dimension[];
+
 /** Metrics only the sessions table can answer — unavailable under `EVENT_ONLY_DIMENSIONS`. */
 export const SESSION_ONLY_METRICS = [
   'engaged_ms',
@@ -230,6 +240,16 @@ export const SESSION_ONLY_METRICS = [
   'avg_engagement',
   'bounce_rate',
   'views_per_visit',
+] as const satisfies readonly Metric[];
+
+/** Metrics only the events table can answer — unavailable under `SESSION_ONLY_DIMENSIONS`. */
+export const EVENT_ONLY_METRICS = [
+  'visitors',
+  'pageviews',
+  'events',
+  'outlinks',
+  'downloads',
+  'event_value_sum',
 ] as const satisfies readonly Metric[];
 
 export const MetricQuerySchema = z.object({
@@ -262,11 +282,50 @@ export type SequenceQuery = z.infer<typeof SequenceQuerySchema>;
 export const DwellQuerySchema = z.object({
   id: z.string().min(1).max(64),
   kind: z.literal('dwell'),
+  /** Restricts the per-page legs to this page — a leg selection, not a session filter. */
+  path: z.string().min(1).max(2048).optional(),
   limit: z.number().int().min(1).max(200).default(10),
 });
 export type DwellQuery = z.infer<typeof DwellQuerySchema>;
 
-export const QuerySchema = z.union([SequenceQuerySchema, DwellQuerySchema, MetricQuerySchema]);
+/**
+ * Page adjacency (docs/03 § Journeys, docs/04 § 3): what came just before —
+ * or just after — one page, anywhere in each session in scope. Rows are
+ * `{ label, sessions }` counting DISTINCT sessions containing the adjacency;
+ * `(entry)` / `(exit)` are the pseudo-rows for sessions that start or end at
+ * the page. The same run-collapse as the sequence kinds: a repeat is not a move.
+ */
+export const AdjacencyQuerySchema = z.object({
+  id: z.string().min(1).max(64),
+  kind: z.literal('adjacency'),
+  path: z.string().min(1).max(2048),
+  direction: z.enum(['in', 'out']),
+  limit: z.number().int().min(1).max(100).default(10),
+});
+export type AdjacencyQuery = z.infer<typeof AdjacencyQuerySchema>;
+
+/**
+ * Fixed-bucket histograms over the same page legs `dwell` times (docs/04 § 3):
+ * dwell milliseconds into coarse duration bands, or measured scroll depth into
+ * deciles. Rows are `{ bucket, legs }`, sparse — an empty bucket is omitted.
+ * Scroll counts only MEASURED legs: unmeasured is never 0 (the honesty rule).
+ */
+export const DistributionQuerySchema = z.object({
+  id: z.string().min(1).max(64),
+  kind: z.literal('distribution'),
+  of: z.enum(['dwell', 'scroll']),
+  /** Restricts the legs to one page, like `dwell.path`. */
+  path: z.string().min(1).max(2048).optional(),
+});
+export type DistributionQuery = z.infer<typeof DistributionQuerySchema>;
+
+export const QuerySchema = z.union([
+  SequenceQuerySchema,
+  DwellQuerySchema,
+  AdjacencyQuerySchema,
+  DistributionQuerySchema,
+  MetricQuerySchema,
+]);
 export type Query = z.infer<typeof QuerySchema>;
 
 /** A real calendar date — the regex alone admits impossible months and days. */

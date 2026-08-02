@@ -26,8 +26,9 @@ export interface CompiledSequence {
   params: readonly (string | number)[];
 }
 
-/** NULL never labels a step: a title-only pageview (no URL) reads as ''. */
-const LABEL = `COALESCE(CASE WHEN e.type = 'event'
+/** NULL never labels a step: a title-only pageview (no URL) reads as ''.
+ * Shared with the adjacency kind (adjacency.ts) — one spelling of what a step is. */
+export const STEP_LABEL = `COALESCE(CASE WHEN e.type = 'event'
         THEN 'event: ' || e.event_category || ' · ' || e.event_action
         ELSE e.path END, '')`;
 
@@ -54,7 +55,7 @@ export function compileSequenceQuery(
     // ordered pass for it.
     '  SELECT sid, seq, label, LEAD(label) OVER (PARTITION BY sid ORDER BY seq) AS next',
     '  FROM (',
-    `    SELECT e.session_id AS sid, e.seq AS seq, ${LABEL} AS label`,
+    `    SELECT e.session_id AS sid, e.seq AS seq, ${STEP_LABEL} AS label`,
     '    FROM events e JOIN scoped ON e.session_id = scoped.sid',
     // A journey is what the visitor DID: the `actions` population, so a
     // heartbeat never becomes a step.

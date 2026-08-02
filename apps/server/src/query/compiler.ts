@@ -46,8 +46,9 @@ import { populationSql } from './population.ts';
 export type Table = 'events' | 'sessions';
 
 interface DimSpec {
-  /** Session-scoped predicates re-alias the events table, so this takes the alias. */
-  events: (alias: string) => string;
+  /** Session-scoped predicates re-alias the events table, so this takes the alias.
+   * `null` for the session-only dimensions (entry/exit page): no event row carries them. */
+  events: ((alias: string) => string) | null;
   sessions: string | null;
   /** Digit-string filter values bind as numbers, so expression dims compare correctly. */
   numeric?: boolean;
@@ -87,6 +88,8 @@ const DIMS: Record<Dimension, DimSpec> = {
   local_hour: { events: col('local_hour'), sessions: null, numeric: true },
   weekday: { events: weekdayExpr, sessions: weekdayExpr('s'), numeric: true },
   site: { events: col('site_id'), sessions: 's.site_id', numeric: true },
+  entry_path: { events: null, sessions: 's.entry_path' },
+  exit_path: { events: null, sessions: 's.exit_path' },
 };
 
 /** Monday of the date's week: Sunday belongs to the week that started the previous Monday. */
@@ -360,6 +363,11 @@ export function eventOnlyDimension(dim: Dimension): boolean {
   return DIMS[dim].sessions === null;
 }
 
+/** The mirror image: only the sessions table carries `dim` (entry/exit page). */
+export function sessionOnlyDimension(dim: Dimension): boolean {
+  return DIMS[dim].events === null;
+}
+
 const DATE_BOUNDS = ['site_id', 'from_date', 'to_date'] as const;
 const ROLLING_BOUNDS = [...DATE_BOUNDS, 'from_ts', 'to_ts'] as const;
 
@@ -447,7 +455,7 @@ export interface CompileError {
 
 interface Group {
   key: string;
-  events: string;
+  events: string | null;
   sessions: string | null;
 }
 
@@ -464,28 +472,45 @@ export function compileMetricQuery(
   if (query.bucket !== undefined) groups.push({ key: 'bucket', ...BUCKETS[query.bucket] });
   for (const dim of [query.dim, query.dim2]) {
     if (dim !== undefined) {
-      groups.push({ key: dim, events: DIMS[dim].events('e'), sessions: DIMS[dim].sessions });
+      groups.push({
+        key: dim,
+        events: DIMS[dim].events?.('e') ?? null,
+        sessions: DIMS[dim].sessions,
+      });
     }
   }
 
   // Sessions become unusable as soon as any group — or any HIT-scoped filter
-  // leaf — needs an event-level column. A session-scoped leaf never blocks:
-  // it asks about the session's events, which every table can answer.
+  // leaf — needs an event-level column, and events symmetrically as soon as
+  // one needs a session-only column. A session-scoped leaf never blocks
+  // either: it asks about the session, which every table can answer.
   let sessionsBlocker: string | undefined;
+  let sessionsOnlyBlocker: string | undefined;
   for (const group of groups) {
     if (group.sessions === null) sessionsBlocker ??= group.key;
+    if (group.events === null) sessionsOnlyBlocker ??= group.key;
   }
   for (const leaf of filters.flatMap(filterLeaves)) {
-    if (leaf.scope !== 'session' && DIMS[leaf.dim].sessions === null) sessionsBlocker ??= leaf.dim;
+    if (leaf.scope === 'session') continue;
+    if (DIMS[leaf.dim].sessions === null) sessionsBlocker ??= leaf.dim;
+    if (DIMS[leaf.dim].events === null) sessionsOnlyBlocker ??= leaf.dim;
   }
 
   const metrics = [...new Set(query.metrics)];
   const byTable = new Map<Table, Metric[]>();
   for (const metric of metrics) {
-    const table = pickTable(METRICS[metric], sessionsBlocker === undefined);
+    const spec = METRICS[metric];
+    const table = pickTable(spec, sessionsBlocker === undefined, sessionsOnlyBlocker === undefined);
     if (table === null) {
+      if (spec.events !== undefined && spec.sessions !== undefined) {
+        return unsupported(
+          `'${metric}' cannot be combined with both '${sessionsBlocker}' and the session-level '${sessionsOnlyBlocker}'`,
+        );
+      }
       return unsupported(
-        `'${metric}' is a session-level metric and cannot be combined with '${sessionsBlocker}'`,
+        spec.sessions !== undefined
+          ? `'${metric}' is a session-level metric and cannot be combined with '${sessionsBlocker}'`
+          : `'${metric}' is an event-level metric and cannot be combined with the session-level '${sessionsOnlyBlocker}'`,
       );
     }
     const assigned = byTable.get(table);
@@ -519,10 +544,11 @@ export function unsupported(message: string): CompileError {
   return { error: { code: 'unsupported', message } };
 }
 
-function pickTable(spec: MetricSpec, sessionsUsable: boolean): Table | null {
+function pickTable(spec: MetricSpec, sessionsUsable: boolean, eventsUsable: boolean): Table | null {
   for (const table of tableOrder(spec)) {
     if (spec[table] === undefined) continue;
     if (table === 'sessions' && !sessionsUsable) continue;
+    if (table === 'events' && !eventsUsable) continue;
     return table;
   }
   return null;
@@ -547,7 +573,9 @@ function buildStatement(
 
   const select: string[] = [];
   for (const group of groups) {
-    select.push(`${table === 'events' ? group.events : group.sessions} AS "${group.key}"`);
+    const column = table === 'events' ? group.events : group.sessions;
+    if (column === null) throw new Error(`'${group.key}' group reached a table without it`);
+    select.push(`${column} AS "${group.key}"`);
   }
   for (const metric of metrics) {
     const spec = METRICS[metric][table];
@@ -638,6 +666,19 @@ function sessionLeafSql(
   windows: readonly SiteWindow[],
   params: (string | number)[],
 ): string {
+  // A session-only dimension (entry/exit page) IS a session attribute — there
+  // is no event to range over. On the sessions table the leaf reads the column
+  // directly; on the events table it reaches the session through the same
+  // bounds CTE, so the subquery walks the window, never all history.
+  if (sessionOnlyDimension(leaf.dim)) {
+    const pred = filterSql(leaf, 'sessions', params);
+    if (table === 'sessions') return `(${pred})`;
+    return [
+      'e.session_id IN (SELECT s.id',
+      `FROM ${boundsJoin('sessions', windows)}`,
+      `WHERE ${pred})`,
+    ].join(' ');
+  }
   const pred = filterSql(leaf, 'events', params, 'e2');
   if (table === 'sessions') {
     return `EXISTS (SELECT 1 FROM events e2 WHERE e2.session_id = s.id AND e2.type != 'ping' AND ${pred})`;
@@ -656,7 +697,7 @@ export function filterSql(
   alias = 'e',
 ): string {
   const spec = DIMS[filter.dim];
-  const column = table === 'events' ? spec.events(alias) : spec.sessions;
+  const column = table === 'events' ? (spec.events?.(alias) ?? null) : spec.sessions;
   if (column === null) throw new Error(`'${filter.dim}' filter reached a table without it`);
   const bind = (value: string): string | number =>
     spec.numeric === true && /^-?\d+$/.test(value) ? Number(value) : value;

@@ -30,6 +30,8 @@ export const DimensionSchema = z.enum([
   'local_hour',
   'weekday',
   'site',
+  'entry_path',
+  'exit_path',
 ]);
 export type Dimension = z.infer<typeof DimensionSchema>;
 

@@ -17,6 +17,7 @@ import {
   stmt,
   withReadSnapshot,
 } from '../db/index.ts';
+import { type CompiledAdjacency, compileAdjacencyQuery } from './adjacency.ts';
 import {
   boundsParams,
   type CompiledQuery,
@@ -24,7 +25,7 @@ import {
   metricEmpty,
   queryMeasures,
 } from './compiler.ts';
-import { type CompiledDwell, compileDwellQuery, DWELL_MEASURES } from './dwell.ts';
+import { type CompiledLegs, compileDistributionQuery, compileDwellQuery } from './dwell.ts';
 import { bucketAxis, compareWindow, resolveWindow } from './ranges.ts';
 import { type CompiledSequence, compileSequenceQuery } from './sequences.ts';
 
@@ -93,13 +94,17 @@ export function executeQueryRequest(
         const compiled =
           query.kind === 'dwell'
             ? compileDwellQuery(query, filters, windows)
-            : compileSequenceQuery(query, filters, windows);
+            : query.kind === 'distribution'
+              ? compileDistributionQuery(query, filters, windows)
+              : query.kind === 'adjacency'
+                ? compileAdjacencyQuery(query, filters, windows)
+                : compileSequenceQuery(query, filters, windows);
         if (isQueryError(compiled)) {
           results[query.id] = compiled;
           continue;
         }
         const entry: QueryResult = { rows: runScoped(db, compiled, windows) };
-        if (compiled.kind === 'dwell') entry.measures = DWELL_MEASURES;
+        if ('measures' in compiled) entry.measures = compiled.measures;
         entry.ms = elapsed(queryStarted);
         results[query.id] = entry;
         continue;
@@ -167,10 +172,10 @@ function resolveSites(
   return [site];
 }
 
-/** One session-scoped statement (journeys, dwell): one SQL text, one window scope. */
+/** One session-scoped statement (journeys, dwell, adjacency): one SQL text, one window scope. */
 function runScoped(
   db: Db,
-  compiled: CompiledSequence | CompiledDwell,
+  compiled: CompiledSequence | CompiledLegs | CompiledAdjacency,
   windows: readonly SiteWindow[],
 ): ResultRow[] {
   if (windows.length === 0) return [];

@@ -92,7 +92,14 @@ beforeAll(() => {
         ref_domain: 'google.com',
         ref_type: 'search',
       })),
-      session: { country: 'US', browser: 'Chrome', ref_domain: 'google.com', ref_type: 'search' },
+      session: {
+        country: 'US',
+        browser: 'Chrome',
+        ref_domain: 'google.com',
+        ref_type: 'search',
+        entry_path: '/',
+        exit_path: '/docs',
+      },
     });
     // B: single page, no events, three engaged minutes — NOT a bounce (docs/03).
     seedVisit({
@@ -101,7 +108,7 @@ beforeAll(() => {
       hour: 12,
       engaged: 120_000,
       pages: [{ path: '/blog', country: 'DE' }],
-      session: { country: 'DE' },
+      session: { country: 'DE', entry_path: '/blog', exit_path: '/blog' },
     });
     // C: single page, no engagement — the only bounce.
     seedVisit({
@@ -110,7 +117,7 @@ beforeAll(() => {
       hour: 12,
       engaged: 3_000,
       pages: [{ path: '/pricing', country: 'US' }],
-      session: { country: 'US' },
+      session: { country: 'US', entry_path: '/pricing', exit_path: '/pricing' },
     });
     // D: single page but fired an event — not a bounce either.
     seedVisit({
@@ -120,6 +127,7 @@ beforeAll(() => {
       engaged: 1_000,
       pages: [{ path: '/' }],
       events: [{ path: '/', event_category: 'cta', event_action: 'click', event_value: 2.5 }],
+      session: { entry_path: '/', exit_path: '/' },
     });
     // E: previous week, for compare 'previous'.
     seedVisit({ visitor: 5, sess: 5, date: '2026-07-20', engaged: 0, pages: [{ path: '/' }] });
@@ -581,6 +589,65 @@ describe('error entries', () => {
     expect(() => run({ site: 99, queries: [{ id: 'q', metrics: ['visitors'] }] })).toThrow(
       UnknownSiteError,
     );
+  });
+});
+
+describe('session-only dimensions (entry_path, exit_path)', () => {
+  it('breaks visits down by entry page, with the measures header unchanged in shape', () => {
+    const response = run({
+      queries: [{ id: 'q', metrics: ['visits'], dim: 'entry_path', limit: 10 }],
+    });
+    const result = resultOf(response, 'q');
+    expect(result.rows).toEqual([
+      { entry_path: '/', visits: 2 }, // A and D
+      { entry_path: '/blog', visits: 1 },
+      { entry_path: '/pricing', visits: 1 },
+    ]);
+    expect(result.measures).toEqual({
+      visits: { unit: 'count', population: 'sessions', aggregate: 'sum' },
+    });
+  });
+
+  it('refuses pageviews × entry_path honestly while the batch still succeeds', () => {
+    const response = run({
+      queries: [
+        { id: 'bad', metrics: ['pageviews'], dim: 'entry_path' },
+        { id: 'good', metrics: ['pageviews'] },
+      ],
+    });
+    expect(response.results.bad).toEqual({
+      error: {
+        code: 'unsupported',
+        message: expect.stringContaining("session-level 'entry_path'"),
+      },
+    });
+    expect(resultOf(response, 'good').rows).toEqual([{ pageviews: 6 }]);
+  });
+
+  it('filters session metrics by entry page', () => {
+    const response = run({
+      filters: [{ dim: 'entry_path', op: 'eq', value: '/' }],
+      queries: [{ id: 'q', metrics: ['visits', 'engaged_ms'] }],
+    });
+    // A (60 s) and D (1 s) entered at '/'.
+    expect(resultOf(response, 'q').rows).toEqual([{ visits: 2, engaged_ms: 61_000 }]);
+  });
+
+  it("scope:'session' lets an entry page narrow an event metric", () => {
+    const response = run({
+      filters: [{ dim: 'entry_path', op: 'eq', value: '/', scope: 'session' }],
+      queries: [{ id: 'q', metrics: ['pageviews'] }],
+    });
+    // Every page view of the sessions that entered at '/': A's 3 and D's 1.
+    expect(resultOf(response, 'q').rows).toEqual([{ pageviews: 4 }]);
+  });
+
+  it('treats an injection attempt in an entry_path filter as a literal value', () => {
+    const response = run({
+      filters: [{ dim: 'entry_path', op: 'eq', value: "'; DELETE FROM sessions; --" }],
+      queries: [{ id: 'q', metrics: ['visits'] }],
+    });
+    expect(resultOf(response, 'q').rows).toEqual([{ visits: 0 }]);
   });
 });
 

@@ -33,6 +33,8 @@ export const DIM_LABELS: Record<Dimension, string> = {
   local_hour: 'Hour',
   weekday: 'Weekday',
   site: 'Site',
+  entry_path: 'Entry page',
+  exit_path: 'Exit page',
 };
 
 /** What a chip (or a breakdown row) names the NULL group of a dimension. */
