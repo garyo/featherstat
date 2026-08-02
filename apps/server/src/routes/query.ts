@@ -1,9 +1,12 @@
 import { createHash } from 'node:crypto';
 import {
+  isQueryError,
   localClock,
+  type Query,
   type QueryRequest,
   QueryRequestSchema,
   type QueryResponse,
+  resultToCsv,
   type SiteWindow,
 } from '@featherstat/shared';
 import { type Context, Hono } from 'hono';
@@ -51,6 +54,15 @@ const MAX_QUERY_BODY_BYTES = 1024 * 1024;
 export const QUERY_BATCHES_PER_SESSION = 120;
 export const QUERY_BATCHES_GLOBAL = 600;
 export const QUERY_WINDOW_MS = 60_000;
+/**
+ * The token rate class (docs/04 § 5). An API token is a script, not a reader:
+ * extraction wants a few big answers, never a 3-second revalidation loop, so
+ * its budget is a quarter of a session's — enough for one batch every two
+ * seconds sustained, far beyond any honest export. Tokens share the global
+ * bucket above: however a caller authenticates, the instance-wide ceiling on
+ * synchronous query work is one number.
+ */
+export const TOKEN_BATCHES_PER_MIN = 30;
 /** The one key the whole-instance budget accrues under. */
 const GLOBAL_KEY = '*';
 
@@ -77,6 +89,7 @@ export function createQueryRoutes(db: Db, options: QueryRouteOptions = {}): Hono
       executeQueryRequest(db, request, { now, allowedSites, derived, goals }));
   const app = new Hono<QueryEnv>();
   const sessionBatches = new RateLimiter(QUERY_BATCHES_PER_SESSION, QUERY_WINDOW_MS);
+  const tokenBatches = new RateLimiter(TOKEN_BATCHES_PER_MIN, QUERY_WINDOW_MS);
   const globalBatches = new RateLimiter(QUERY_BATCHES_GLOBAL, QUERY_WINDOW_MS);
 
   app.post('/api/query', bodyLimit({ maxSize: MAX_QUERY_BODY_BYTES }), async (c) => {
@@ -102,6 +115,13 @@ export function createQueryRoutes(db: Db, options: QueryRouteOptions = {}): Hono
     const derived = resolveDerived(db, request);
     const goals = resolveGoals(db, request);
 
+    // CSV negotiation (docs/04 § 3): one query per CSV, resolved before the
+    // ETag so an unanswerable selection 400s without charging or executing.
+    const csvQuery = csvQueryOf(c, request);
+    if (csvQuery !== undefined && 'badRequest' in csvQuery) {
+      return c.json({ error: csvQuery.badRequest }, 400);
+    }
+
     const now = Date.now();
     // The one scoping chokepoint (docs/04 § 5): a non-admin principal's
     // readable set bounds both the resolved windows (and so the ETag) and the
@@ -122,11 +142,15 @@ export function createQueryRoutes(db: Db, options: QueryRouteOptions = {}): Hono
       throw error;
     }
 
+    // The format (and the selected query) is part of what the tag covers: a
+    // CSV body and a JSON body answer the same question differently, and a 304
+    // minted against one must never validate a cache holding the other.
     const canonicalBody = canonicalize({
       request,
       compareFilter: expansion.compareFilter,
       derived,
       goals,
+      format: csvQuery === undefined ? undefined : `csv:${csvQuery.id}`,
     });
     const schema = schemaVersion(db);
     const current = etag(dataVersion(db), schema, canonicalBody, windows, now);
@@ -138,14 +162,17 @@ export function createQueryRoutes(db: Db, options: QueryRouteOptions = {}): Hono
     // is never charged. Only batches the server is about to execute are — and
     // they are charged BEFORE the work, so a query that throws still counts.
     const key = principal(c);
-    if (sessionBatches.exhausted(key, now) || globalBatches.exhausted(GLOBAL_KEY, now)) {
+    // Token principals meter in their own class (docs/04 § 5); everyone shares
+    // the global bucket, so the instance-wide ceiling stays one number.
+    const callerBatches = c.get('principal')?.kind === 'token' ? tokenBatches : sessionBatches;
+    if (callerBatches.exhausted(key, now) || globalBatches.exhausted(GLOBAL_KEY, now)) {
       // The SPA holds its last good response and says so rather than blanking
       // (views/batch.ts), so this degrades to a stale dashboard plus a retry.
       return c.json({ error: 'too many query batches — try again in a minute' }, 429, {
         'Retry-After': String(QUERY_WINDOW_MS / 1000),
       });
     }
-    sessionBatches.charge(key, now);
+    callerBatches.charge(key, now);
     globalBatches.charge(GLOBAL_KEY, now);
 
     let response: QueryResponse;
@@ -162,9 +189,49 @@ export function createQueryRoutes(db: Db, options: QueryRouteOptions = {}): Hono
     }
     // Re-derived from the executed snapshot's version, in case a flush landed in between.
     const tag = etag(response.meta.dataVersion, schema, canonicalBody, windows, now);
+    if (csvQuery !== undefined) {
+      const entry = response.results[csvQuery.id];
+      if (entry === undefined || isQueryError(entry)) {
+        // An honest per-query refusal has no rows to serialize; in a JSON batch
+        // it rides beside its siblings, but it IS this whole response.
+        return c.json(
+          { error: entry?.error.message ?? `no result for query '${csvQuery.id}'` },
+          400,
+        );
+      }
+      const headers: Record<string, string> = {
+        ETag: tag,
+        'Content-Type': 'text/csv; charset=utf-8',
+      };
+      const first = windows[0];
+      if (first !== undefined) headers['X-Featherstat-Window'] = `${first.from}/${first.to}`;
+      return c.body(resultToCsv(csvQuery, entry), 200, headers);
+    }
     return c.json(response, 200, { ETag: tag });
   });
   return app;
+}
+
+/**
+ * Which query a CSV response serializes (docs/04 § 3): `?format=csv` or an
+ * `Accept: text/csv` asks for one, `?query=<id>` picks it from a batch, and a
+ * single-query batch needs no picking. `undefined` = the response is JSON.
+ */
+function csvQueryOf(
+  c: Context<QueryEnv>,
+  request: QueryRequest,
+): Query | { badRequest: string } | undefined {
+  const wantsCsv =
+    c.req.query('format') === 'csv' || (c.req.header('accept') ?? '').includes('text/csv');
+  if (!wantsCsv) return undefined;
+  const selected = c.req.query('query');
+  if (selected !== undefined) {
+    const query = request.queries.find((candidate) => candidate.id === selected);
+    return query ?? { badRequest: `csv: no query '${selected}' in this batch` };
+  }
+  const only = request.queries[0];
+  if (request.queries.length === 1 && only !== undefined) return only;
+  return { badRequest: 'csv needs exactly one query — pass ?query=<id>' };
 }
 
 /**

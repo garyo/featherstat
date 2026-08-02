@@ -595,6 +595,34 @@ batch itself still succeeds, and never returns wrong numbers.
     saturated for a full minute. `test/contract/rate-limit.test.ts` drives the
     shipped dashboards at the shipped cadence and fails if either number moves
     out from under the other.
+- **CSV export.** `POST /api/query?format=csv` (or `Accept: text/csv`) answers
+  the SAME executed batch as CSV — same validation, scoping, rate class and
+  ETag machinery, different serialization. One query per CSV: a single-query
+  batch needs no selection, a larger one names its query with `?query=<id>`,
+  and an ambiguous or unknown selection is a 400 saying so
+  (`csv needs exactly one query — pass ?query=<id>`). A per-query `{error}`
+  entry cannot ride beside siblings here — it IS the whole response, so it
+  answers 400 with the error's message.
+  - **Columns**: the group keys as the compiler orders them (`bucket`, then
+    `dim`, `dim2`), headed by the vocabulary words themselves, then one column
+    per metric in request order; anything else the rows carry (a derived
+    metric's components, a goal `cr`'s `visits` denominator) follows sorted.
+    Sequence kinds use their natural columns — `flows` joins its signature
+    with `" > "` into a `steps` column beside its counts; `transitions` is
+    `step`, `from`, `to`, `sessions`; `dwell`/`adjacency`/`distribution`
+    exactly as their JSON rows read.
+  - **Dialect**: pure RFC 4180 — fields containing a comma, quote, CR or LF
+    are quoted with `""` doubling (dimension values are visitor-controlled
+    text, so this is load-bearing), CRLF records, UTF-8 without BOM. Null and
+    a sparse row's missing cell are empty fields, never zeros; rates stay
+    fractions in 0–1, exactly as `measures` declares them. No spreadsheet
+    formula-escaping (`packages/shared/src/csv.ts` documents the choice).
+  - **Compare** prepends a `period` column (`current`/`previous`) and appends
+    the compare rows. The resolved window travels in an
+    `X-Featherstat-Window: <from>/<to>` response header (the first site's).
+  - **ETag**: the canonical body folds in the format and the selected query
+    id, so a CSV tag and a JSON tag for one batch never cross — a 304 minted
+    against one can never validate a cache holding the other.
 - `"site": "all"` grants the all-sites overview the same one-request property,
   with per-site grouping in the rows.
 
@@ -696,6 +724,36 @@ global budget; 304 revalidations are free) and every `/share` response
 carries `X-Robots-Tag: noindex`. Operations: `/healthz` (liveness + last-flush age) and
 Prometheus `/metrics` (ingest rate, batch flush time, query p95, SSE clients,
 bot drops, DB size) for the existing Grafana stack (R15).
+
+**API tokens cross origins; cookies never do.** A Bearer token (`fs_…`, minted
+under `/api/admin/tokens`) is the data-out credential, and third-party callers
+— a notebook, a cron job, someone's Observable page — live on other origins.
+So `/api/query` and `/api/sites` (exactly these) answer with
+`Access-Control-Allow-Origin: *` when the request presented an `Authorization`
+header, plus `Access-Control-Allow-Headers: authorization, content-type`,
+`Access-Control-Allow-Methods: GET, POST, OPTIONS` and a day of
+`Access-Control-Max-Age`. Cookie-authenticated responses carry **no** CORS
+headers at all: the same-origin wall is what protects sessions, and a wildcard
+on a cookie response would tear it down. The gate answers a presented Bearer
+header as Bearer or 401s — never silently as the cookie — which is what makes
+keying on the header safe. `OPTIONS` preflights to those two paths are
+answered 204 with the CORS headers **before** the session gate, without
+authentication: a preflight carries no credentials and grants nothing, it only
+asks whether a real (still fully gated) request may be attempted. Every other
+route stays same-origin entirely — an `OPTIONS` elsewhere meets the gate like
+any request. (The CSP's `connect-src 'self'` is unrelated: it is
+response-side, governing what our own pages may fetch, and says nothing to a
+third-party caller.)
+
+**Token rate class.** Token principals meter `/api/query` in their own class:
+**30 executed batches per minute per token** (`TOKEN_BATCHES_PER_MIN`),
+distinct from the 120/session — a token is a script, and extraction wants a
+few big answers, not a revalidation loop — while sharing the same global
+600/minute bucket, so the instance-wide ceiling on synchronous query work
+stays one number. The same rules as the session class otherwise: 304s and
+refusals are never charged, over budget answers 429 with `Retry-After: 60`.
+A token's `last_used_at` is written at most hourly — an audit column, not a
+log.
 
 First-run setup (`POST /api/admin/setup`) additionally requires the one-time
 **setup token** the server prints to its log at first boot: between `docker

@@ -42,6 +42,43 @@ const PUBLIC_API_PATHS = new Set([
   '/api/collect',
 ]);
 
+/**
+ * The data-out surface third-party callers may reach cross-origin with a
+ * Bearer token (docs/04 § 5): the query API and the site directory it needs to
+ * name sites. Exactly these — CORS on a cookie-authenticated response would
+ * tear down the same-origin wall that protects sessions, so cookie responses
+ * get NO CORS headers and every other route stays same-origin entirely.
+ * (The CSP's `connect-src 'self'` is response-side — it governs what OUR pages
+ * may fetch, and says nothing to a third-party caller. This allowlist does.)
+ */
+const CORS_API_PATHS = new Set(['/api/query', '/api/sites']);
+
+const CORS_HEADERS: Record<string, string> = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, content-type',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Max-Age': '86400',
+};
+
+/**
+ * Registered BEFORE the session gate, which knows nothing of OPTIONS: a
+ * preflight carries no credentials and grants nothing — it only asks whether a
+ * real request may be attempted — so it is answered here, unauthenticated,
+ * where the gate would otherwise 401 it and break every cross-origin caller.
+ * The real request is then gated as ever; its response carries CORS headers
+ * exactly when it presented an Authorization header, which the gate answers as
+ * Bearer or 401s — never silently as the cookie — so a browser session's
+ * response is never the one being exposed.
+ */
+const corsOnBearer: MiddlewareHandler = async (c, next) => {
+  if (!CORS_API_PATHS.has(c.req.path)) return next();
+  if (c.req.method === 'OPTIONS') return c.body(null, 204, CORS_HEADERS);
+  await next();
+  if (c.req.header('authorization') !== undefined) {
+    for (const [name, value] of Object.entries(CORS_HEADERS)) c.res.headers.set(name, value);
+  }
+};
+
 /** Small, static response headers — the backstop for the render discipline docs/02 relies on. */
 const SECURITY_HEADERS: Record<string, string> = {
   'Content-Security-Policy':
@@ -116,6 +153,7 @@ export function createSecuredApp(options: SecuredAppOptions = {}): SecuredApp {
     observeWriteTransactions(db, (ms) => metrics.flush.observe(ms));
     const createdAuth = createAuth(db, authOptions);
     auth = createdAuth;
+    app.use('/api/*', corsOnBearer);
     app.use('/api/*', (c, next) =>
       PUBLIC_API_PATHS.has(c.req.path) ? next() : createdAuth.gate(c, next),
     );

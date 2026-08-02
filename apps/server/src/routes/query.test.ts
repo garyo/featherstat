@@ -1,6 +1,8 @@
 import type { QueryResponse } from '@featherstat/shared';
+import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { event, openTestDb, session, syncRollups } from '../../test/rows.ts';
+import type { Principal } from '../auth/principal.ts';
 import {
   createDerivedMetric,
   createGoal,
@@ -13,7 +15,12 @@ import {
   withWriteTransaction,
 } from '../db/index.ts';
 import { createApp } from '../index.ts';
-import { QUERY_BATCHES_GLOBAL, QUERY_BATCHES_PER_SESSION, QUERY_WINDOW_MS } from './query.ts';
+import {
+  QUERY_BATCHES_GLOBAL,
+  QUERY_BATCHES_PER_SESSION,
+  QUERY_WINDOW_MS,
+  TOKEN_BATCHES_PER_MIN,
+} from './query.ts';
 
 const BODY = {
   site: 1,
@@ -677,5 +684,138 @@ describe('POST /api/query', () => {
     const recheck = await post(BODY);
     const rechecked = (await recheck.json()) as QueryResponse;
     expect(rechecked.results.kpis).toMatchObject({ rows: [{ visitors: 1, pageviews: 1 }] });
+  });
+
+  describe('CSV export (docs/04 § 3)', () => {
+    const postCsv = async (
+      path: string,
+      body: unknown = BODY,
+      headers: Record<string, string> = {},
+    ): Promise<Response> =>
+      await app.request(path, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...headers },
+        body: JSON.stringify(body),
+      });
+
+    it('serializes a single-query batch with ?format=csv, typed and windowed', async () => {
+      const res = await postCsv('/api/query?format=csv');
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toBe('text/csv; charset=utf-8');
+      expect(res.headers.get('x-featherstat-window')).toBe('2023-11-14/2023-11-14');
+      expect(await res.text()).toBe('visitors,pageviews\r\n1,1\r\n');
+    });
+
+    it('negotiates via Accept: text/csv too', async () => {
+      const res = await postCsv('/api/query', BODY, { accept: 'text/csv' });
+      expect(res.headers.get('content-type')).toBe('text/csv; charset=utf-8');
+      expect(await res.text()).toBe('visitors,pageviews\r\n1,1\r\n');
+    });
+
+    it('needs ?query=<id> for a multi-query batch, and honors it', async () => {
+      const batch = {
+        ...BODY,
+        queries: [
+          { id: 'kpis', metrics: ['visitors', 'pageviews'] },
+          { id: 'pages', metrics: ['pageviews'], dim: 'path' },
+        ],
+      };
+      const ambiguous = await postCsv('/api/query?format=csv', batch);
+      expect(ambiguous.status).toBe(400);
+      expect(await ambiguous.json()).toEqual({
+        error: 'csv needs exactly one query — pass ?query=<id>',
+      });
+
+      const picked = await postCsv('/api/query?format=csv&query=pages', batch);
+      expect(picked.status).toBe(200);
+      expect(await picked.text()).toBe('path,pageviews\r\n,1\r\n');
+
+      const unknown = await postCsv('/api/query?format=csv&query=nope', batch);
+      expect(unknown.status).toBe(400);
+      expect(await unknown.json()).toEqual({ error: "csv: no query 'nope' in this batch" });
+    });
+
+    it("400s with the per-query error's message when the selected query refuses", async () => {
+      const res = await postCsv('/api/query?format=csv', {
+        ...BODY,
+        queries: [{ id: 'bad', metrics: ['bounce_rate'], dim: 'title' }],
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toContain('bounce_rate');
+    });
+
+    it('keeps the CSV and JSON ETags apart — a 304 for one never validates the other', async () => {
+      const json = await post(BODY);
+      const csv = await postCsv('/api/query?format=csv');
+      const jsonTag = json.headers.get('etag') as string;
+      const csvTag = csv.headers.get('etag') as string;
+      expect(csvTag).not.toBe(jsonTag);
+
+      // The JSON tag does not revalidate the CSV response…
+      const crossed = await postCsv('/api/query?format=csv', BODY, { 'if-none-match': jsonTag });
+      expect(crossed.status).toBe(200);
+      // …while the format's own tag does.
+      const matched = await postCsv('/api/query?format=csv', BODY, { 'if-none-match': csvTag });
+      expect(matched.status).toBe(304);
+    });
+  });
+
+  describe('token rate class (docs/04 § 5)', () => {
+    const FROZEN = Date.UTC(2023, 10, 14, 17);
+
+    /** The route behind a stub gate that names a token principal — the app.ts
+     * wiring is covered in auth/app.test.ts with a really minted token. */
+    function tokenApp(tokenId: number): Hono<{ Variables: { principal: Principal } }> {
+      const wrapper = new Hono<{ Variables: { principal: Principal } }>();
+      wrapper.use('*', async (c, next) => {
+        c.set('principal', { kind: 'token', tokenId, sites: 'all' });
+        await next();
+      });
+      wrapper.route('/', app);
+      return wrapper;
+    }
+
+    const asToken = async (tokenId: number): Promise<Response> =>
+      await tokenApp(tokenId).request('/api/query', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(BODY),
+      });
+
+    beforeEach(() => {
+      vi.useFakeTimers({ now: FROZEN, toFake: ['Date'] });
+    });
+
+    it('meters a token in its own, smaller class — and per token', async () => {
+      expect(TOKEN_BATCHES_PER_MIN).toBeLessThan(QUERY_BATCHES_PER_SESSION);
+      for (let i = 0; i < TOKEN_BATCHES_PER_MIN; i += 1) {
+        expect((await asToken(7)).status).toBe(200);
+      }
+      const refused = await asToken(7);
+      expect(refused.status).toBe(429);
+      expect(refused.headers.get('retry-after')).toBe('60');
+      // Another token's budget is its own.
+      expect((await asToken(8)).status).toBe(200);
+      // And a sessionless caller still meters in the session class, untouched.
+      expect((await post(BODY, { 'x-forwarded-for': '203.0.113.7' })).status).toBe(200);
+    });
+
+    it('charges token batches to the shared global bucket', async () => {
+      for (let i = 0; i < TOKEN_BATCHES_PER_MIN; i += 1) {
+        expect((await asToken(7)).status).toBe(200);
+      }
+      // The instance has QUERY_BATCHES_GLOBAL in total; the token spent its 30
+      // from the same pool, so session callers can only take what remains.
+      let granted = 0;
+      for (let caller = 0; caller * QUERY_BATCHES_PER_SESSION < QUERY_BATCHES_GLOBAL; caller += 1) {
+        for (let i = 0; i < QUERY_BATCHES_PER_SESSION; i += 1) {
+          const res = await post(BODY, { 'x-forwarded-for': `198.51.100.${caller}` });
+          if (res.status === 200) granted += 1;
+          else expect(res.status).toBe(429);
+        }
+      }
+      expect(granted).toBe(QUERY_BATCHES_GLOBAL - TOKEN_BATCHES_PER_MIN);
+    });
   });
 });

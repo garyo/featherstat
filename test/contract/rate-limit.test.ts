@@ -1,7 +1,12 @@
 import type { QueryRequest, RangePreset } from '@featherstat/shared';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../../apps/server/src/index.ts';
-import { QUERY_BATCHES_PER_SESSION, QUERY_WINDOW_MS } from '../../apps/server/src/routes/query.ts';
+import {
+  QUERY_BATCHES_GLOBAL,
+  QUERY_BATCHES_PER_SESSION,
+  QUERY_WINDOW_MS,
+  TOKEN_BATCHES_PER_MIN,
+} from '../../apps/server/src/routes/query.ts';
 import { allSites } from '../../apps/web/src/dashboards/all-sites.ts';
 import { siteOverview } from '../../apps/web/src/dashboards/site-overview.ts';
 import { canonicalJson } from '../../apps/web/src/lib/api.ts';
@@ -76,12 +81,33 @@ const allOk = (seen: readonly number[]): void => {
   expect(seen.filter((status) => status !== 200)).toEqual([]);
 };
 
+/**
+ * Saturated API tokens the global bucket must absorb WHILE the live views above
+ * keep revalidating. Tokens have no shipped client whose cadence could drive
+ * them here — a token is someone else's script — so their row is arithmetic:
+ * the token class (routes/query.ts TOKEN_BATCHES_PER_MIN) shares the one global
+ * bucket, and sizing that bucket must leave the interactive traffic room even
+ * with this many extraction scripts running flat out.
+ */
+const TOKENS_SATURATED = 4;
+
 describe('the query budget accommodates the client that shares it', () => {
   it('leaves room for every live view a reader can hold open', () => {
     // The arithmetic the driven tests below rest on, asserted directly so a
     // change to either number fails here first and says which way it went.
     const perViewPerWindow = QUERY_WINDOW_MS / REVALIDATE_DEBOUNCE_MS;
     expect(perViewPerWindow * VIEWS_HELD_OPEN).toBeLessThanOrEqual(QUERY_BATCHES_PER_SESSION);
+  });
+
+  it('leaves the global bucket room for saturated tokens beside the live views', () => {
+    // The token row: a machine's budget never exceeds a human's, and a few
+    // machines at full tilt must not starve the dashboards they run beside.
+    expect(TOKEN_BATCHES_PER_MIN).toBeLessThanOrEqual(QUERY_BATCHES_PER_SESSION);
+    const perViewPerWindow = QUERY_WINDOW_MS / REVALIDATE_DEBOUNCE_MS;
+    const interactive = perViewPerWindow * VIEWS_HELD_OPEN;
+    expect(interactive + TOKENS_SATURATED * TOKEN_BATCHES_PER_MIN).toBeLessThanOrEqual(
+      QUERY_BATCHES_GLOBAL,
+    );
   });
 
   it('does not trip on one batch per view state, at the rate a hand can produce them', async () => {

@@ -6,7 +6,7 @@ import { DESKTOP_UA, openTestDb, T0 } from '../../test/rows.ts';
 import type { Db } from '../db/index.ts';
 import { createPipeline, type Pipeline } from '../pipeline/index.ts';
 import { createRealtimeHub } from '../realtime/hub.ts';
-import { QUERY_BATCHES_PER_SESSION } from '../routes/query.ts';
+import { QUERY_BATCHES_PER_SESSION, TOKEN_BATCHES_PER_MIN } from '../routes/query.ts';
 import { createSecuredApp, type SecuredApp } from './app.ts';
 import { createAuth } from './auth.ts';
 import { SESSION_TTL_MS } from './session.ts';
@@ -333,6 +333,110 @@ describe('login, logout, expiry', () => {
       expect((await postQuery(mine, '198.51.100.22')).status).toBe(429);
       // One address, many people: the next session is not punished for the last.
       expect((await postQuery(theirs, '203.0.113.11')).status).toBe(200);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('CORS on Bearer only (docs/04 § 5)', () => {
+  const CORS = {
+    'access-control-allow-origin': '*',
+    'access-control-allow-headers': 'authorization, content-type',
+    'access-control-allow-methods': 'GET, POST, OPTIONS',
+    'access-control-max-age': '86400',
+  };
+
+  const expectCors = (res: Response): void => {
+    for (const [name, value] of Object.entries(CORS))
+      expect(res.headers.get(name), name).toBe(value);
+  };
+
+  async function mintToken(): Promise<string> {
+    const { cookie, csrf } = await setup();
+    const minted = await secured.app.request('/api/admin/tokens', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie, 'x-csrf-token': csrf },
+      body: JSON.stringify({ name: 'script', sites: 'all' }),
+    });
+    expect(minted.status).toBe(201);
+    return ((await minted.json()) as { token: string }).token;
+  }
+
+  it('answers preflights on /api/query and /api/sites before the gate — no auth required', async () => {
+    for (const path of ['/api/query', '/api/sites']) {
+      const res = await secured.app.request(path, {
+        method: 'OPTIONS',
+        headers: {
+          origin: 'https://third-party.example',
+          'access-control-request-method': 'POST',
+          'access-control-request-headers': 'authorization, content-type',
+        },
+      });
+      expect(res.status, path).toBe(204);
+      expectCors(res);
+    }
+  });
+
+  it('exposes Bearer-authenticated responses cross-origin', async () => {
+    const token = await mintToken();
+    const bearer = { authorization: `Bearer ${token}` };
+
+    const sites = await secured.app.request('/api/sites', { headers: bearer });
+    expect(sites.status).toBe(200);
+    expectCors(sites);
+
+    const query = await secured.app.request('/api/query', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...bearer },
+      body: QUERY_BODY,
+    });
+    expect(query.status).toBe(200);
+    expectCors(query);
+  });
+
+  it('never exposes a cookie-authenticated response — the same-origin wall holds', async () => {
+    const { cookie } = await setup();
+    const query = await postQuery(cookie);
+    expect(query.status).toBe(200);
+    expect(query.headers.get('access-control-allow-origin')).toBeNull();
+    const sites = await secured.app.request('/api/sites', { headers: { cookie } });
+    expect(sites.status).toBe(200);
+    expect(sites.headers.get('access-control-allow-origin')).toBeNull();
+  });
+
+  it('leaves every other route out of CORS entirely, preflights included', async () => {
+    const token = await mintToken();
+    const read = await secured.app.request('/api/segments', {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(read.status).toBe(200);
+    expect(read.headers.get('access-control-allow-origin')).toBeNull();
+    // An OPTIONS elsewhere still meets the gate, exactly as before.
+    expect((await secured.app.request('/api/segments', { method: 'OPTIONS' })).status).toBe(401);
+  });
+
+  it('meters a Bearer caller in the token class through the real gate', async () => {
+    const token = await mintToken();
+    const cookie = await login();
+    vi.useFakeTimers({ now: clock, toFake: ['Date'] });
+    try {
+      for (let i = 0; i < TOKEN_BATCHES_PER_MIN; i += 1) {
+        const res = await secured.app.request('/api/query', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+          body: QUERY_BODY,
+        });
+        expect(res.status).toBe(200);
+      }
+      const refused = await secured.app.request('/api/query', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: QUERY_BODY,
+      });
+      expect(refused.status).toBe(429);
+      // The session class is untouched by the token's spend.
+      expect((await postQuery(cookie)).status).toBe(200);
     } finally {
       vi.useRealTimers();
     }
