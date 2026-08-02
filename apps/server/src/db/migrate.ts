@@ -10,6 +10,10 @@ export interface Migration {
   readonly sql: string;
 }
 
+/** The v1 migration line's range: never migrated in place, only imported. */
+const V1_VERSION_MIN = 1;
+const V1_VERSION_MAX = 99;
+
 const SCHEMA_MIGRATIONS_DDL = `CREATE TABLE IF NOT EXISTS schema_migrations (
   version    INTEGER PRIMARY KEY,
   name       TEXT NOT NULL,
@@ -28,6 +32,12 @@ export function schemaVersion(db: Db): number {
 export function migrate(db: Db, migrations: readonly Migration[] = MIGRATIONS): number {
   const latest = assertSequential(migrations);
   const current = schemaVersion(db);
+  if (current >= V1_VERSION_MIN && current <= V1_VERSION_MAX) {
+    throw new Error(
+      `this is a featherstat v1 database (schema version ${current}) — ` +
+        'run `featherstat import v1 <path>` to rewrite it into a fresh v2 file',
+    );
+  }
   if (current > latest) {
     throw new Error(
       `database schema is version ${current}, newer than this build knows (${latest}) — refusing to run`,

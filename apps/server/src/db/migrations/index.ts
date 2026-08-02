@@ -1,15 +1,10 @@
 import type { Migration } from '../migrate.ts';
-import { migration001 } from './001-init.ts';
-import { migration002 } from './002-admin-sessions.ts';
-import { migration003 } from './003-dashboards.ts';
-import { migration004 } from './004-visitor-covering-index.ts';
-import { migration005 } from './005-scroll-pct.ts';
+import { migration100 } from './100-v2-init.ts';
 
-/** Applied in order at boot. Append only — never edit or renumber a shipped migration. */
-export const MIGRATIONS: readonly Migration[] = [
-  migration001,
-  migration002,
-  migration003,
-  migration004,
-  migration005,
-];
+/**
+ * Applied in order at boot. Append only — never edit or renumber a shipped
+ * migration. The v2 line starts at 100 (100-v2-init.ts explains why); v1
+ * databases (versions 1–99) are refused by migrate.ts with an instruction to
+ * run the importer.
+ */
+export const MIGRATIONS: readonly Migration[] = [migration100];

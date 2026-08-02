@@ -370,9 +370,28 @@ export function upsertSessions(db: Db, rows: readonly SessionRow[]): void {
 
 const SQL_DATA_VERSION = 'SELECT COALESCE(MAX(id), 0) FROM events';
 
-/** MAX(events.id): the rowid doubles as the data version for ETags (docs/03). */
+/**
+ * Insert-only history moves MAX(events.id); in-place rewrites (alias backfill,
+ * prop scrub, site purge, rollup rebuild) do not, so each of those bumps the
+ * epoch instead — otherwise every ETag computed before the rewrite would keep
+ * answering 304 forever. 2^40 rowids per epoch keeps the combined value well
+ * inside Number.MAX_SAFE_INTEGER for any plausible bump count.
+ */
+const EPOCH_SETTING = 'data_epoch';
+const EPOCH_STRIDE = 2 ** 40;
+
+/** Epoch-stridden MAX(events.id): the data version for ETags (docs/03). */
 export function dataVersion(db: Db): number {
-  return stmt(db, SQL_DATA_VERSION).pluck().get() as number;
+  const maxId = stmt(db, SQL_DATA_VERSION).pluck().get() as number;
+  const epoch = Number(getSetting(db, EPOCH_SETTING) ?? 0);
+  return epoch * EPOCH_STRIDE + maxId;
+}
+
+/** Every history-rewriting job calls this once, after its last chunk commits. */
+export function bumpDataEpoch(db: Db): void {
+  assertWritable(db);
+  const epoch = Number(getSetting(db, EPOCH_SETTING) ?? 0);
+  setSetting(db, EPOCH_SETTING, String(epoch + 1));
 }
 
 /** Restart recovery (docs/03): sessions seen since `since`, with their highest stored seq. */
@@ -500,7 +519,7 @@ const DASHBOARD_COLUMNS = 'id, name, site_scope, layout, updated_at';
 const SQL_LIST_DASHBOARDS = `SELECT ${DASHBOARD_COLUMNS} FROM dashboards ORDER BY id`;
 const SQL_GET_DASHBOARD = `SELECT ${DASHBOARD_COLUMNS} FROM dashboards WHERE id = ?`;
 const SQL_CREATE_DASHBOARD =
-  'INSERT INTO dashboards (name, site_scope, layout, updated_at) VALUES (?, ?, ?, ?)';
+  'INSERT INTO dashboards (name, site_scope, layout, updated_at, created_at) VALUES (?, ?, ?, ?, ?)';
 const SQL_UPDATE_DASHBOARD = `UPDATE dashboards SET name = ?, site_scope = ?, layout = ?, updated_at = ?
 WHERE id = ? RETURNING ${DASHBOARD_COLUMNS}`;
 const SQL_DELETE_DASHBOARD = 'DELETE FROM dashboards WHERE id = ?';
@@ -521,6 +540,7 @@ export function createDashboard(db: Db, row: NewDashboard): DashboardRow {
     row.site_scope,
     row.layout,
     row.updated_at,
+    row.updated_at, // created_at: a fresh row's clocks start together
   );
   return { id: Number(info.lastInsertRowid), ...row };
 }

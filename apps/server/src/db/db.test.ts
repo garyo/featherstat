@@ -1,14 +1,17 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import BetterSqlite3 from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { event, SESSION, session, VISITOR } from '../../test/rows.ts';
 import {
+  bumpDataEpoch,
   countEvents,
   createDashboard,
   createSite,
   type Db,
   databaseSizeBytes,
+  dataVersion,
   deleteDashboard,
   deleteSetting,
   getBotDrops,
@@ -44,7 +47,8 @@ import { MIGRATIONS } from './migrations/index.ts';
  * fail on every schema bump.
  */
 const alreadyApplied = MIGRATIONS.map((m) => ({ ...m, sql: 'SELECT 1' }));
-const NEXT_VERSION = MIGRATIONS.length + 1;
+const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]?.version ?? 0;
+const NEXT_VERSION = LATEST_VERSION + 1;
 
 function tableNames(db: Db): string[] {
   return db
@@ -58,18 +62,36 @@ describe('migrate', () => {
     const db = openDb(':memory:');
     expect(tableNames(db)).toEqual([
       'admin_sessions',
+      'annotations',
+      'api_tokens',
       'bot_drops',
+      'campaign_aliases',
+      'campaigns',
       'dashboards',
+      'derived_metrics',
       'events',
+      'goals',
+      'magic_links',
+      'prop_drops',
+      'prop_keys',
+      'prop_values',
+      'rollup_dim_day',
+      'rollup_meta',
+      'rollup_session_seen',
+      'rollup_sessions_day',
+      'rollup_traffic_hour',
+      'rollup_visitor_seen',
       'schema_migrations',
+      'segments',
       'sessions',
       'settings',
       'share_tokens',
       'sites',
+      'viewers',
     ]);
     // Spelled from MIGRATIONS rather than repeated: the list is the fact, and
     // this asserts they were all applied in order, not what the newest one is.
-    expect(schemaVersion(db)).toBe(MIGRATIONS.length);
+    expect(schemaVersion(db)).toBe(LATEST_VERSION);
     expect(db.prepare('SELECT version, name FROM schema_migrations').all()).toEqual(
       MIGRATIONS.map((m) => ({ version: m.version, name: m.name })),
     );
@@ -99,15 +121,22 @@ describe('migrate', () => {
   it('is a no-op when re-run on an already-migrated database', () => {
     const db = openDb(':memory:');
     const applied = db.prepare('SELECT applied_at FROM schema_migrations').pluck().all();
-    expect(migrate(db)).toBe(MIGRATIONS.length);
+    expect(migrate(db)).toBe(LATEST_VERSION);
     expect(db.prepare('SELECT applied_at FROM schema_migrations').pluck().all()).toEqual(applied);
     db.close();
   });
 
   it('refuses a database migrated by a newer build', () => {
     const db = openDb(':memory:');
-    db.exec('PRAGMA user_version = 99');
+    db.exec(`PRAGMA user_version = ${LATEST_VERSION + 1}`);
     expect(() => migrate(db)).toThrow(/newer than this build/);
+    db.close();
+  });
+
+  it('refuses a v1 database with an instruction to import it', () => {
+    const db = new BetterSqlite3(':memory:');
+    db.exec('PRAGMA user_version = 5');
+    expect(() => migrate(db)).toThrow(/featherstat v1 database.*import v1/s);
     db.close();
   });
 
@@ -145,7 +174,7 @@ describe('migrate', () => {
       ]),
     ).toThrow();
     expect(tableNames(db)).not.toContain('half');
-    expect(schemaVersion(db)).toBe(MIGRATIONS.length);
+    expect(schemaVersion(db)).toBe(LATEST_VERSION);
     db.close();
   });
 });
@@ -173,7 +202,7 @@ describe('openDb on a file', () => {
     first.close();
 
     const second = openDb(path);
-    expect(schemaVersion(second)).toBe(MIGRATIONS.length);
+    expect(schemaVersion(second)).toBe(LATEST_VERSION);
     expect(second.prepare('SELECT count(*) FROM schema_migrations').pluck().get()).toBe(
       MIGRATIONS.length,
     );
@@ -382,6 +411,21 @@ describe('helpers', () => {
       expect(settingKeysWithPrefix(db, 'salt:')).toEqual(['salt:2026-07-26', 'salt:2026-07-27']);
       expect(settingKeysWithPrefix(db, 'uid_enabled:')).toEqual(['uid_enabled:1']);
       expect(settingKeysWithPrefix(db, 'nope:')).toEqual([]);
+    });
+  });
+
+  describe('data version', () => {
+    it('strides by epoch so in-place rewrites move every ETag', () => {
+      expect(dataVersion(db)).toBe(0);
+      write(() => insertEvents(db, [event()]));
+      expect(dataVersion(db)).toBe(1);
+      const before = dataVersion(db);
+      write(() => bumpDataEpoch(db));
+      expect(dataVersion(db)).toBe(2 ** 40 + 1);
+      expect(dataVersion(db)).toBeGreaterThan(before);
+      write(() => bumpDataEpoch(db));
+      expect(dataVersion(db)).toBe(2 * 2 ** 40 + 1);
+      expect(Number.isSafeInteger(dataVersion(db))).toBe(true);
     });
   });
 
