@@ -1,5 +1,6 @@
 import { DAY_MS } from '@featherstat/shared';
 import type { Db } from '../db/index.ts';
+import { runCampaignBackfill } from './campaign-backfill.ts';
 import {
   DEFAULT_MMDB_PATH,
   type Fetcher,
@@ -11,6 +12,11 @@ import { runReconcile } from './reconcile.ts';
 import { runRetention } from './retention.ts';
 import { type Job, type Scheduler, type SchedulerOptions, startScheduler } from './scheduler.ts';
 
+export {
+  type CampaignBackfillResult,
+  requestCampaignBackfill,
+  runCampaignBackfill,
+} from './campaign-backfill.ts';
 export { DEFAULT_MMDB_PATH, type Fetcher, refreshGeoipDatabase } from './geoip-refresh.ts';
 export { type PropScrubResult, requestPropScrub, runPropScrubs } from './prop-scrub.ts';
 export { type ReconcileResult, runReconcile } from './reconcile.ts';
@@ -89,6 +95,19 @@ export function startJobs(db: Db, options: JobsOptions = {}): Scheduler {
       const { completed, rows } = await runPropScrubs(db);
       if (completed > 0) {
         console.log(`prop-scrub: removed a key from ${rows} event row(s), ${completed} scrub(s)`);
+      }
+    },
+  });
+
+  // Same shape as prop-scrub: the alias route kicks the backfill directly;
+  // this entry is the resume path for a watermark a crash left behind.
+  jobs.push({
+    name: 'campaign-backfill',
+    everyMs: DAY_MS,
+    run: async () => {
+      const { completed, rows } = await runCampaignBackfill(db);
+      if (completed && rows > 0) {
+        console.log(`campaign-backfill: renormalized utm values on ${rows} row(s)`);
       }
     },
   });

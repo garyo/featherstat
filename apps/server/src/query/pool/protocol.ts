@@ -1,4 +1,5 @@
 import type { QueryRequest, QueryResponse } from '@featherstat/shared';
+import type { GoalDefinitions } from '../goals.ts';
 
 /**
  * The wire between the pool and its workers. Everything here must survive
@@ -22,6 +23,8 @@ export type PoolJob =
       /** Stored derived-metric definitions by name — resolved on main so the
        * ETag hashes them, applied in the worker after aggregation. */
       derived?: Readonly<Record<string, string>>;
+      /** Stored goal definitions by id — same treatment (query/stored.ts). */
+      goals?: GoalDefinitions;
     }
   /** Test/diagnostic aid: proves execution happens off the main thread. */
   | { id: number; kind: 'ping' };

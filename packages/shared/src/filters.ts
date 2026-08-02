@@ -32,6 +32,9 @@ export const BaseDimensionSchema = z.enum([
   'site',
   'entry_path',
   'exit_path',
+  /** Derived at query time from the campaigns registry (docs/03 § Campaigns):
+   * registered | unregistered | untagged. Never stored, never rolled up. */
+  'campaign_status',
 ]);
 /** The closed dimension enum — what every exhaustive `Record<…>` table keys on. */
 export type BaseDimension = z.infer<typeof BaseDimensionSchema>;

@@ -15,6 +15,7 @@ import {
   selectLatestSession,
   selectOpenSessions,
 } from '../db/index.ts';
+import { plainNormalizer, type UtmNormalizer } from './campaigns.ts';
 import type { DeviceInfo } from './enrich.ts';
 import type { GeoResult } from './geo.ts';
 
@@ -77,7 +78,12 @@ export class Sessionizer {
   private dropped = 0;
   private flushes = 0;
 
-  constructor(private readonly findPrior: PriorSessionLookup = () => undefined) {}
+  constructor(
+    private readonly findPrior: PriorSessionLookup = () => undefined,
+    /** Campaign normalization (docs/03 § Campaigns) — the pipeline injects the
+     * alias-aware one; the default canonicalizes without an alias table. */
+    private readonly normalizeUtm: UtmNormalizer = plainNormalizer,
+  ) {}
 
   get size(): number {
     return this.open.size;
@@ -147,6 +153,9 @@ export class Sessionizer {
       utm_source: row.utm_source,
       utm_medium: row.utm_medium,
       utm_campaign: row.utm_campaign,
+      utm_source_raw: row.utm_source_raw ?? null,
+      utm_medium_raw: row.utm_medium_raw ?? null,
+      utm_campaign_raw: row.utm_campaign_raw ?? null,
       event_category: hit.event?.category ?? null,
       event_action: hit.event?.action ?? null,
       event_name: hit.event?.name ?? null,
@@ -218,7 +227,10 @@ export class Sessionizer {
     localDate: string,
     key: string,
   ): OpenSession {
-    const state: OpenSession = { ...startSession(input, page, localDate), touched: this.flushes };
+    const state: OpenSession = {
+      ...startSession(input, page, localDate, this.normalizeUtm),
+      touched: this.flushes,
+    };
     this.open.set(key, state);
     return state;
   }
@@ -279,6 +291,7 @@ function startSession(
   input: SessionizerInput,
   page: PageParts,
   localDate: string,
+  normalizeUtm: UtmNormalizer,
 ): RestoredSession {
   const { site, hit, now } = input;
   const row: SessionRow = {
@@ -293,7 +306,7 @@ function startSession(
     pageviews: 0,
     events: 0,
     engaged_ms: 0,
-    ...classify(hit, page, site),
+    ...classify(hit, page, site, normalizeUtm),
     browser: input.device.browser,
     os: input.device.os,
     device_type: input.device.device_type,
@@ -335,13 +348,24 @@ interface Attribution {
   utm_source: string | null;
   utm_medium: string | null;
   utm_campaign: string | null;
+  /** As received, ONLY when normalization changed it (docs/03 § Campaigns). */
+  utm_source_raw: string | null;
+  utm_medium_raw: string | null;
+  utm_campaign_raw: string | null;
 }
 
-const NO_CAMPAIGN = { utm_source: null, utm_medium: null, utm_campaign: null };
+const NO_CAMPAIGN = {
+  utm_source: null,
+  utm_medium: null,
+  utm_campaign: null,
+  utm_source_raw: null,
+  utm_medium_raw: null,
+  utm_campaign_raw: null,
+};
 
-function classify(hit: Hit, page: PageParts, site: Site): Attribution {
+function classify(hit: Hit, page: PageParts, site: Site, normalizeUtm: UtmNormalizer): Attribution {
   const host = referrerHost(hit.referrer);
-  const campaign = campaignParams(page.url);
+  const campaign = campaignParams(page.url, site.id, normalizeUtm);
   if (campaign !== null) return { ref_domain: host, ref_type: 'campaign', ...campaign };
   if (host === null) return { ref_domain: null, ref_type: 'direct', ...NO_CAMPAIGN };
   if (isInternal(host, site.domains))
@@ -352,7 +376,11 @@ function classify(hit: Hit, page: PageParts, site: Site): Attribution {
 /** utm_* / mtm_* / pk_* families all accepted, stored under the utm_ columns (docs/03). */
 const CAMPAIGN_FAMILIES = ['utm', 'mtm', 'pk'] as const;
 
-function campaignParams(url: URL | null): Omit<Attribution, 'ref_domain' | 'ref_type'> | null {
+function campaignParams(
+  url: URL | null,
+  siteId: number,
+  normalizeUtm: UtmNormalizer,
+): Omit<Attribution, 'ref_domain' | 'ref_type'> | null {
   if (url === null) return null;
   const get = (field: string): string | null => {
     for (const family of CAMPAIGN_FAMILIES) {
@@ -365,7 +393,20 @@ function campaignParams(url: URL | null): Omit<Attribution, 'ref_domain' | 'ref_
   const medium = get('medium');
   const campaign = get('campaign');
   if (source === null && medium === null && campaign === null) return null;
-  return { utm_source: source, utm_medium: medium, utm_campaign: campaign };
+  // Normalized at ingest, raw kept only when it differs (docs/03 § Campaigns).
+  const norm = (field: 'source' | 'medium' | 'campaign', value: string | null) =>
+    value === null ? { normalized: null } : normalizeUtm(siteId, field, value);
+  const s = norm('source', source);
+  const m = norm('medium', medium);
+  const c = norm('campaign', campaign);
+  return {
+    utm_source: s.normalized,
+    utm_medium: m.normalized,
+    utm_campaign: c.normalized,
+    utm_source_raw: s.raw ?? null,
+    utm_medium_raw: m.raw ?? null,
+    utm_campaign_raw: c.raw ?? null,
+  };
 }
 
 function referrerHost(referrer: string | undefined): string | null {

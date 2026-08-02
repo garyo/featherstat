@@ -48,6 +48,9 @@ export const ROLLUP_DIMS: Record<BaseDimension, RollupDimEntry> = {
   entry_path: { dimId: 20, tables: 'sessions' },
   exit_path: { dimId: 21, tables: 'sessions' },
   title: 'raw-only',
+  // Derived from the campaigns REGISTRY at query time, not from rollup keys:
+  // a registry edit re-labels history instantly, which no stored row could.
+  campaign_status: 'raw-only',
   site: 'derived', // every rollup row is keyed by site_id
   local_hour: 'derived', // rollup_traffic_hour's own grain
   weekday: 'derived', // a function of local_date

@@ -1,6 +1,7 @@
 import { type Hit, type HitContext, localClock } from '@featherstat/shared';
 import { type Db, type EventRow, getSite } from '../db/index.ts';
 import { type FlushHook, WriteBatcher } from './batcher.ts';
+import { AliasCache } from './campaigns.ts';
 import { isBotUserAgent, parseUserAgent, preferredLanguage } from './enrich.ts';
 import { type GeoProvider, NullProvider } from './geo.ts';
 import { Identity } from './identity.ts';
@@ -28,6 +29,8 @@ export interface Pipeline {
   onFlush(hook: FlushHook): void;
   /** The live prop registry — the admin delete route invalidates through it. */
   props: PropRegistry;
+  /** The live campaign-alias cache — the admin alias routes invalidate through it. */
+  campaignAliases: AliasCache;
 }
 
 /**
@@ -44,11 +47,12 @@ export function createPipeline(db: Db, options: PipelineOptions = {}): Pipeline 
   // batcher's rollup snapshots before the sessionizer can mutate it, or the
   // next flush would book a revived visit as a brand-new one (docs/03 § Rollups).
   const lookup = priorSessionLookup(db);
+  const campaignAliases = new AliasCache(db);
   const sessionizer = new Sessionizer((siteId, visitorId, notBefore) => {
     const prior = lookup(siteId, visitorId, notBefore);
     if (prior !== undefined) batcher.seedSnapshot(prior.row);
     return prior;
-  });
+  }, campaignAliases.normalizer);
   const restored = loadOpenSessions(db, Date.now());
   for (const entry of restored) batcher.seedSnapshot(entry.row);
   sessionizer.restore(restored);
@@ -108,5 +112,6 @@ export function createPipeline(db: Db, options: PipelineOptions = {}): Pipeline 
     },
     onFlush: (hook) => batcher.onFlush(hook),
     props,
+    campaignAliases,
   };
 }

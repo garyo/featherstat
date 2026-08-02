@@ -1,6 +1,7 @@
 import { availableParallelism } from 'node:os';
 import { Worker } from 'node:worker_threads';
 import type { QueryRequest, QueryResponse } from '@featherstat/shared';
+import type { GoalDefinitions } from '../goals.ts';
 import type { PoolJob, PoolReply, WorkerInit } from './protocol.ts';
 
 /**
@@ -76,6 +77,7 @@ export class QueryPool {
     now: number,
     allowedSites?: readonly number[],
     derived?: Readonly<Record<string, string>>,
+    goals?: GoalDefinitions,
   ): Promise<QueryResponse> {
     const reply = await this.submit({
       id: this.nextId++,
@@ -84,6 +86,7 @@ export class QueryPool {
       now,
       ...(allowedSites === undefined ? {} : { allowedSites }),
       ...(derived === undefined ? {} : { derived }),
+      ...(goals === undefined ? {} : { goals }),
     });
     if (!reply.ok) throw new Error(reply.error);
     return reply.result as QueryResponse;

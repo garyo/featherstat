@@ -3,9 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { event, openTestDb, session, syncRollups } from '../../test/rows.ts';
 import {
   createDerivedMetric,
+  createGoal,
   createSegment,
   type Db,
   insertEvents,
+  updateGoal,
   updateSegment,
   upsertSessions,
   withWriteTransaction,
@@ -526,6 +528,61 @@ describe('POST /api/query', () => {
       expect(answered.results.q).toMatchObject({
         rows: [{ pageviews: 1, visitors: 1, 'd:views_each': 1 }],
       });
+    });
+  });
+
+  describe('goal metrics in requests', () => {
+    it('errors per query while the id is unknown, then answers once it exists — new tag', async () => {
+      const body = { ...BODY, queries: [{ id: 'q', metrics: ['goal:1:conversions'] }] };
+      const first = await post(body);
+      expect(first.status).toBe(200);
+      const missing = (await first.json()) as QueryResponse;
+      expect(missing.results.q).toEqual({
+        error: { code: 'unsupported', message: 'unknown goal 1' },
+      });
+      const etag = first.headers.get('etag') as string;
+      expect((await post(body, { 'if-none-match': etag })).status).toBe(304);
+
+      withWriteTransaction(db, () => {
+        createGoal(
+          db,
+          {
+            site_id: 1,
+            name: 'Landed',
+            filters: JSON.stringify([{ dim: 'path', op: 'is_null' }]),
+            value_expr: null,
+            target: null,
+          },
+          1,
+        );
+      });
+      // dataVersion never moved, but the goal definitions are hashed too.
+      const res = await post(body, { 'if-none-match': etag });
+      expect(res.status).toBe(200);
+      const answeredTag = res.headers.get('etag') as string;
+      expect(answeredTag).not.toBe(etag);
+      const answered = (await res.json()) as QueryResponse;
+      expect(answered.results.q).toMatchObject({ rows: [{ 'goal:1:conversions': 1 }] });
+
+      // An edit to the goal expires the answered tag with zero bookkeeping.
+      withWriteTransaction(db, () => {
+        updateGoal(
+          db,
+          1,
+          {
+            name: 'Landed',
+            filters: JSON.stringify([{ dim: 'path', op: 'eq', value: '/nowhere' }]),
+            value_expr: null,
+            target: null,
+          },
+          2,
+        );
+      });
+      const edited = await post(body, { 'if-none-match': answeredTag });
+      expect(edited.status).toBe(200);
+      expect(edited.headers.get('etag')).not.toBe(answeredTag);
+      const reAnswered = (await edited.json()) as QueryResponse;
+      expect(reAnswered.results.q).toMatchObject({ rows: [{ 'goal:1:conversions': 0 }] });
     });
   });
 

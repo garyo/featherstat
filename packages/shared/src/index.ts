@@ -9,6 +9,7 @@ import {
   type SegmentFilterNode,
   SegmentFilterNodeSchema,
 } from './filters.ts';
+import { GoalMetricRefSchema } from './goals.ts';
 import type { Measures } from './measures.ts';
 
 // ---------------------------------------------------------------------------
@@ -291,11 +292,12 @@ export const EVENT_ONLY_METRICS = [
 
 export const MetricQuerySchema = z.object({
   id: z.string().min(1).max(64),
-  /** Built-in metrics plus `d:<name>` references to stored derived metrics
-   * (docs/04 § 3). The cap counts what was ASKED for; a derived metric's
-   * components ride under a separate internal ceiling in the executor. */
+  /** Built-in metrics plus `d:<name>` references to stored derived metrics and
+   * `goal:<id>:<aspect>` goal metrics (docs/04 § 3). The cap counts what was
+   * ASKED for; a derived metric's components ride under a separate internal
+   * ceiling in the executor. */
   metrics: z
-    .array(z.union([MetricSchema, DerivedMetricRefSchema]))
+    .array(z.union([MetricSchema, DerivedMetricRefSchema, GoalMetricRefSchema]))
     .min(1)
     .max(MAX_METRICS_PER_QUERY),
   dim: DimensionSchema.optional(),
@@ -944,8 +946,10 @@ export interface VersionTick {
 }
 
 export * from './alias.ts';
+export * from './campaigns.ts';
 export * from './derived.ts';
 export * from './filters.ts';
+export * from './goals.ts';
 export * from './layout.ts';
 export * from './measures.ts';
 export * from './time.ts';

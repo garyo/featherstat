@@ -10,6 +10,7 @@ import { ROLLUP_DIMS } from '../rollup/tables.ts';
 import {
   type CompilableMetricQuery,
   invalidLeaf,
+  isBuiltinMetric,
   measureOf,
   routeTable,
   tableBlockers,
@@ -61,6 +62,9 @@ export function planMetricRoute(
   if (query.dim2 !== undefined) return 'raw';
   if (windows.length === 0) return 'raw';
   if (windows.some((window) => window.fromTs !== undefined)) return 'raw';
+  // The fail-safe over the metric axis too: anything outside the built-in enum
+  // (a `goal:` key the executor compiles itself) has no rollup answer.
+  if (query.metrics.some((metric) => !isBuiltinMetric(metric))) return 'raw';
 
   const filters = [...globalFilters, ...(query.filters ?? [])];
   // An unexpanded segment ref or a malformed leaf: the raw path owns the

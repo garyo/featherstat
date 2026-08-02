@@ -309,6 +309,41 @@ batch itself still succeeds, and never returns wrong numbers.
   no client invents a total. Any **distinct** operand (`visitors`, routed
   `visits`) additionally refuses buckets other than `day` — a coarser bucket
   would ask the expression to recombine distinct counts, which have none.
+- **Goal metrics** (`GET /api/goals?site=`, admin CRUD under
+  `/api/admin/goals?site=`) are saved queries over the ordinary filter grammar
+  (no segment refs — a goal cannot depend on a segment edit it does not see).
+  A query names them as **`goal:<id>:conversions`**, **`goal:<id>:cr`** or
+  **`goal:<id>:value`** in its `metrics`, beside built-ins and `d:` refs.
+  Semantics:
+  - A **conversion** is a session with ≥ 1 non-ping event matching the goal's
+    filters — `COUNT(DISTINCT session_id)`, compiled as one extra events-table
+    statement per goal through the same filter compiler as every client filter
+    and merged with the query's own statements on the group keys. Request
+    filters apply inside it, so "conversions from mobile" is just a filter.
+  - A conversion's **bucket is the completing event's local date** — a
+    deliberate simplification from "the session's start date": the day the
+    completing event happened is the honest reading of *when did this
+    convert*, and it needs no join. A session converting on two days counts
+    on both (`aggregate: "distinct"` — no client-side total, like
+    `visitors`).
+  - **`cr`** = conversions / `visits`, declared as a proper `ratio`
+    (`of: {numerator, denominator: "visits"}`); the denominator joins the
+    compiled set and rides in the rows like a derived metric's components.
+  - **`value`** follows the goal's `valueExpr`: `SUM(event_value)` over the
+    matching events (`aggregate: "sum"`), fixed × conversions
+    (`aggregate: "computed"` — no lawful total), or `null` when the goal
+    defines none.
+  - **Hour shapes refuse** (`bucket: "hour"` or the `local_hour` dimension):
+    sessions span hours as a matter of course, so per-hour distinct sessions
+    would manufacture recombinable-looking numbers. Session-only groupings
+    (`entry_path`/`exit_path`) refuse too — goal statements aggregate the
+    events table. All refusals, plus an unknown goal id, a goal of a site
+    outside the request's scope, and an unreadable stored row, are honest
+    per-query `{error}` entries, never a 500.
+  - Goal metrics always route to **raw rows** (the planner treats any
+    non-built-in metric as raw), and definitions resolve on the main thread
+    and hash into the ETag — editing a goal expires every cached answer that
+    used it, exactly as segments and derived metrics do.
 - **The response describes itself.** Resolving a range preset needs the site's
   timezone and a clock; enumerating a chart's x axis needs that *and* the
   granularity the query ran at. The server has all three, so it says what it
@@ -426,7 +461,14 @@ batch itself still succeeds, and never returns wrong numbers.
   hit-scope filtering by one refuses event-level metrics (`pageviews`,
   `visitors`, …) exactly as an event-only dimension refuses session metrics;
   a `scope: "session"` filter on one names a session attribute and blocks
-  nothing. Plus `bucket`: `hour|day|week|month`.
+  nothing. **`campaign_status`** (`registered | unregistered | untagged`) is
+  derived at query time from the campaigns registry (docs/03 § Campaigns):
+  `untagged` when the row has no `utm_campaign`, `registered` when a registry
+  row of the row's site names it and its lifespan (NULL = open) covers the
+  row's local date, `unregistered` otherwise. Both tables carry the CASE, so
+  it groups and filters like any stored dimension; editing the registry
+  reflects instantly (no backfill), and it is raw-only — never rolled up.
+  Plus `bucket`: `hour|day|week|month`.
   **`prop:<key>`** (key charset `[a-z0-9_-]{1,32}`) is the one open-ended
   dimension family: it groups/filters over the event's custom-prop bag
   (docs/03 § Props), compiled to `json_extract(events.props, ?)` with the
@@ -624,11 +666,16 @@ single stream.
 Conventional REST under `/api/admin` (session auth + CSRF): sites CRUD,
 dashboards CRUD (layout JSON — writes validate the schema AND the batch
 invariants: unique query ids, derived-query count within the batch cap),
-segments and derived-metrics CRUD (`/api/admin/segments`,
-`/api/admin/derived-metrics`; the read lists ride outside the wall at
-`GET /api/segments` and `GET /api/derived-metrics`, session-gated but open to
+segments, derived-metrics, goals and campaigns CRUD (`/api/admin/segments`,
+`/api/admin/derived-metrics`, `/api/admin/goals?site=`,
+`/api/admin/campaigns?site=`; the read lists ride outside the wall at
+`GET /api/segments`, `GET /api/derived-metrics`, `GET /api/goals?site=` and
+`GET /api/campaigns?site=`, session-gated but open to
 every principal — a viewer or token composes queries with them exactly as the
-admin does), share/API tokens, ntfy notification settings (`GET`/`PUT`/`DELETE
+admin does), campaign aliases (`GET`/`PUT /api/admin/campaign-aliases?site=`,
+full-list replace per site, site 0 = install-wide; a PUT invalidates the live
+ingest cache, enqueues the chunked utm backfill in the same transaction, and
+kicks it — docs/03 § Campaigns), share/API tokens, ntfy notification settings (`GET`/`PUT`/`DELETE
 /api/admin/ntfy`, R16 — `DELETE` is the off switch; the endpoint URL must be
 https or loopback-http, carry no query/fragment, and never point at link-local
 or cloud-metadata hosts), auth (`login`, `logout`, first-run setup), and props

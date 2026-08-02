@@ -1,6 +1,9 @@
 import {
   derivedNameOf,
+  type GoalMetricRef,
+  goalRefParts,
   isDerivedMetricRef,
+  isGoalMetricRef,
   type Metric,
   type SiteWindow,
   type Unit,
@@ -23,12 +26,24 @@ export const METRIC_LABELS: Record<Metric, string> = {
   event_value_sum: 'Event value',
 };
 
+const GOAL_ASPECT_LABELS = {
+  conversions: 'conversions',
+  cr: 'conv. rate',
+  value: 'value',
+} as const;
+
 /**
  * The label for anything a query's `metrics` may name: the vocabulary table
- * above for built-ins, and the operator's own name (underscores read as
- * spaces) for a `d:<name>` derived metric — the operator chose it to be read.
+ * above for built-ins, the operator's own name (underscores read as spaces)
+ * for a `d:<name>` derived metric — the operator chose it to be read — and
+ * `Goal <id> <aspect>` for a goal metric (the widget carries no goal list;
+ * a title naming the goal is the layout author's to write).
  */
-export function metricLabel(metric: Metric | `d:${string}`): string {
+export function metricLabel(metric: Metric | `d:${string}` | GoalMetricRef): string {
+  if (isGoalMetricRef(metric)) {
+    const { id, aspect } = goalRefParts(metric);
+    return `Goal ${id} ${GOAL_ASPECT_LABELS[aspect]}`;
+  }
   if (isDerivedMetricRef(metric)) return derivedNameOf(metric).replaceAll('_', ' ');
   return METRIC_LABELS[metric];
 }

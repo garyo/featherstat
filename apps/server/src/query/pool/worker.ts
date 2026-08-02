@@ -33,6 +33,7 @@ port.on('message', (job: PoolJob) => {
               now: job.now,
               allowedSites: job.allowedSites,
               derived: job.derived,
+              goals: job.goals,
             }),
           };
   } catch (error) {

@@ -54,6 +54,10 @@ export interface EventRow {
   utm_source?: string | null;
   utm_medium?: string | null;
   utm_campaign?: string | null;
+  /** As received, ONLY when normalization changed it — near-always absent (docs/03 § Campaigns). */
+  utm_source_raw?: string | null;
+  utm_medium_raw?: string | null;
+  utm_campaign_raw?: string | null;
 
   event_category?: string | null;
   event_action?: string | null;
@@ -98,6 +102,10 @@ export interface SessionRow {
   utm_source?: string | null;
   utm_medium?: string | null;
   utm_campaign?: string | null;
+  /** First-touch, like the normalized columns beside them. */
+  utm_source_raw?: string | null;
+  utm_medium_raw?: string | null;
+  utm_campaign_raw?: string | null;
 
   browser?: string | null;
   os?: string | null;
@@ -122,6 +130,9 @@ const EVENT_NULLS: NullFill<EventRow> = {
   utm_source: null,
   utm_medium: null,
   utm_campaign: null,
+  utm_source_raw: null,
+  utm_medium_raw: null,
+  utm_campaign_raw: null,
   event_category: null,
   event_action: null,
   event_name: null,
@@ -149,6 +160,9 @@ const SESSION_NULLS: NullFill<SessionRow> = {
   utm_source: null,
   utm_medium: null,
   utm_campaign: null,
+  utm_source_raw: null,
+  utm_medium_raw: null,
+  utm_campaign_raw: null,
   browser: null,
   os: null,
   device_type: null,
@@ -329,6 +343,7 @@ const SQL_INSERT_EVENT = `INSERT INTO events (
   site_id, ts, local_date, local_hour, type, visitor_id, session_id, seq,
   hostname, path, title, target_url,
   ref_domain, ref_type, utm_source, utm_medium, utm_campaign,
+  utm_source_raw, utm_medium_raw, utm_campaign_raw,
   event_category, event_action, event_name, event_value,
   browser, browser_version, os, device_type, screen, lang,
   country, region, city, lat, lon, scroll_pct, props
@@ -336,6 +351,7 @@ const SQL_INSERT_EVENT = `INSERT INTO events (
   @site_id, @ts, @local_date, @local_hour, @type, @visitor_id, @session_id, @seq,
   @hostname, @path, @title, @target_url,
   @ref_domain, @ref_type, @utm_source, @utm_medium, @utm_campaign,
+  @utm_source_raw, @utm_medium_raw, @utm_campaign_raw,
   @event_category, @event_action, @event_name, @event_value,
   @browser, @browser_version, @os, @device_type, @screen, @lang,
   @country, @region, @city, @lat, @lon, @scroll_pct, @props
@@ -346,11 +362,13 @@ const SQL_UPSERT_SESSION = `INSERT INTO sessions (
   id, site_id, visitor_id, started_at, last_seen_at, local_date,
   entry_path, exit_path, pageviews, events, engaged_ms,
   ref_domain, ref_type, utm_source, utm_medium, utm_campaign,
+  utm_source_raw, utm_medium_raw, utm_campaign_raw,
   browser, os, device_type, country, region, city
 ) VALUES (
   @id, @site_id, @visitor_id, @started_at, @last_seen_at, @local_date,
   @entry_path, @exit_path, @pageviews, @events, @engaged_ms,
   @ref_domain, @ref_type, @utm_source, @utm_medium, @utm_campaign,
+  @utm_source_raw, @utm_medium_raw, @utm_campaign_raw,
   @browser, @os, @device_type, @country, @region, @city
 )
 ON CONFLICT (id) DO UPDATE SET
@@ -752,6 +770,197 @@ export function updateDerivedMetric(
 export function deleteDerivedMetric(db: Db, id: number): boolean {
   assertWritable(db);
   return stmt(db, SQL_DELETE_DERIVED).run(id).changes > 0;
+}
+
+// ---------------------------------------------------------------------------
+// Campaign layer (docs/03 § Campaigns): alias rows the ingest normalizer and
+// the backfill job read, and the registry `campaign_status` reads at query time.
+// ---------------------------------------------------------------------------
+
+export interface CampaignAliasRow {
+  site_id: number;
+  /** 'source' | 'medium' | 'campaign'. */
+  field: string;
+  /** Matched AFTER canonicalization (trim/collapse/lowercase). */
+  alias: string;
+  canonical: string;
+}
+
+const ALIAS_COLUMNS = 'site_id, field, alias, canonical';
+const SQL_ALL_CAMPAIGN_ALIASES = `SELECT ${ALIAS_COLUMNS} FROM campaign_aliases`;
+const SQL_LIST_CAMPAIGN_ALIASES = `SELECT ${ALIAS_COLUMNS} FROM campaign_aliases
+WHERE site_id = ? ORDER BY field, alias`;
+const SQL_DELETE_CAMPAIGN_ALIASES = 'DELETE FROM campaign_aliases WHERE site_id = ?';
+const SQL_INSERT_CAMPAIGN_ALIAS =
+  'INSERT INTO campaign_aliases (site_id, field, alias, canonical) VALUES (?, ?, ?, ?)';
+
+/** Every alias row of every site — what the ingest cache loads whole (it is tiny). */
+export function listAllCampaignAliases(db: Db): CampaignAliasRow[] {
+  return stmt<CampaignAliasRow>(db, SQL_ALL_CAMPAIGN_ALIASES).all() as CampaignAliasRow[];
+}
+
+/** One site's alias rows (site 0 = install-wide). */
+export function listCampaignAliases(db: Db, siteId: number): CampaignAliasRow[] {
+  return stmt<CampaignAliasRow>(db, SQL_LIST_CAMPAIGN_ALIASES).all(siteId) as CampaignAliasRow[];
+}
+
+/** Full-list replace for one site — the PUT route's semantics. */
+export function replaceCampaignAliases(
+  db: Db,
+  siteId: number,
+  rows: readonly Pick<CampaignAliasRow, 'field' | 'alias' | 'canonical'>[],
+): void {
+  assertWritable(db);
+  stmt(db, SQL_DELETE_CAMPAIGN_ALIASES).run(siteId);
+  const insert = stmt(db, SQL_INSERT_CAMPAIGN_ALIAS);
+  for (const row of rows) insert.run(siteId, row.field, row.alias, row.canonical);
+}
+
+export interface CampaignRow {
+  id: number;
+  site_id: number;
+  /** The canonical utm_campaign value. */
+  name: string;
+  /** JSON arrays; NULL = anything. */
+  expected_sources: string | null;
+  expected_mediums: string | null;
+  /** Site-local dates; NULL = open. */
+  starts_at: string | null;
+  ends_at: string | null;
+  notes: string | null;
+  created_at: number;
+}
+
+const CAMPAIGN_COLUMNS =
+  'id, site_id, name, expected_sources, expected_mediums, starts_at, ends_at, notes, created_at';
+const SQL_LIST_CAMPAIGNS = `SELECT ${CAMPAIGN_COLUMNS} FROM campaigns WHERE site_id = ? ORDER BY id`;
+const SQL_GET_CAMPAIGN = `SELECT ${CAMPAIGN_COLUMNS} FROM campaigns WHERE id = ?`;
+const SQL_CREATE_CAMPAIGN = `INSERT INTO campaigns
+  (site_id, name, expected_sources, expected_mediums, starts_at, ends_at, notes, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
+const SQL_UPDATE_CAMPAIGN = `UPDATE campaigns SET name = ?, expected_sources = ?,
+  expected_mediums = ?, starts_at = ?, ends_at = ?, notes = ?
+WHERE id = ? RETURNING ${CAMPAIGN_COLUMNS}`;
+const SQL_DELETE_CAMPAIGN = 'DELETE FROM campaigns WHERE id = ?';
+
+export function listCampaigns(db: Db, siteId: number): CampaignRow[] {
+  return stmt<CampaignRow>(db, SQL_LIST_CAMPAIGNS).all(siteId) as CampaignRow[];
+}
+
+export function getCampaign(db: Db, id: number): CampaignRow | undefined {
+  return stmt<CampaignRow>(db, SQL_GET_CAMPAIGN).get(id);
+}
+
+export type NewCampaign = Omit<CampaignRow, 'id'>;
+
+export function createCampaign(db: Db, row: NewCampaign): CampaignRow {
+  assertWritable(db);
+  const info = stmt(db, SQL_CREATE_CAMPAIGN).run(
+    row.site_id,
+    row.name,
+    row.expected_sources,
+    row.expected_mediums,
+    row.starts_at,
+    row.ends_at,
+    row.notes,
+    row.created_at,
+  );
+  return { id: Number(info.lastInsertRowid), ...row };
+}
+
+export function updateCampaign(
+  db: Db,
+  id: number,
+  patch: Omit<NewCampaign, 'site_id' | 'created_at'>,
+): CampaignRow | undefined {
+  assertWritable(db);
+  return stmt<CampaignRow>(db, SQL_UPDATE_CAMPAIGN).get(
+    patch.name,
+    patch.expected_sources,
+    patch.expected_mediums,
+    patch.starts_at,
+    patch.ends_at,
+    patch.notes,
+    id,
+  );
+}
+
+export function deleteCampaign(db: Db, id: number): boolean {
+  assertWritable(db);
+  return stmt(db, SQL_DELETE_CAMPAIGN).run(id).changes > 0;
+}
+
+// ---------------------------------------------------------------------------
+// Goals (docs/04 § 3): stored saved-query rows. Like segments, the stored
+// filters are client-authored JSON — validated on write, re-parsed on read.
+// ---------------------------------------------------------------------------
+
+export interface GoalRow {
+  id: number;
+  site_id: number;
+  name: string;
+  /** JSON array of FilterNode (no segment refs). */
+  filters: string;
+  /** 'event_value' | 'fixed:<number>' | NULL — parseGoalValueExpr decodes. */
+  value_expr: string | null;
+  target: number | null;
+  updated_at: number;
+}
+
+const GOAL_COLUMNS = 'id, site_id, name, filters, value_expr, target, updated_at';
+const SQL_LIST_GOALS = `SELECT ${GOAL_COLUMNS} FROM goals WHERE site_id = ? ORDER BY id`;
+const SQL_GET_GOAL = `SELECT ${GOAL_COLUMNS} FROM goals WHERE id = ?`;
+const SQL_CREATE_GOAL = `INSERT INTO goals
+  (site_id, name, filters, value_expr, target, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)`;
+const SQL_UPDATE_GOAL = `UPDATE goals SET name = ?, filters = ?, value_expr = ?, target = ?,
+  updated_at = ? WHERE id = ? RETURNING ${GOAL_COLUMNS}`;
+const SQL_DELETE_GOAL = 'DELETE FROM goals WHERE id = ?';
+
+export function listGoals(db: Db, siteId: number): GoalRow[] {
+  return stmt<GoalRow>(db, SQL_LIST_GOALS).all(siteId) as GoalRow[];
+}
+
+export function getGoal(db: Db, id: number): GoalRow | undefined {
+  return stmt<GoalRow>(db, SQL_GET_GOAL).get(id);
+}
+
+export type NewGoal = Omit<GoalRow, 'id' | 'updated_at'>;
+
+export function createGoal(db: Db, goal: NewGoal, now: number): GoalRow {
+  assertWritable(db);
+  const info = stmt(db, SQL_CREATE_GOAL).run(
+    goal.site_id,
+    goal.name,
+    goal.filters,
+    goal.value_expr,
+    goal.target,
+    now,
+    now,
+  );
+  return { id: Number(info.lastInsertRowid), ...goal, updated_at: now };
+}
+
+export function updateGoal(
+  db: Db,
+  id: number,
+  patch: Omit<NewGoal, 'site_id'>,
+  now: number,
+): GoalRow | undefined {
+  assertWritable(db);
+  return stmt<GoalRow>(db, SQL_UPDATE_GOAL).get(
+    patch.name,
+    patch.filters,
+    patch.value_expr,
+    patch.target,
+    now,
+    id,
+  );
+}
+
+export function deleteGoal(db: Db, id: number): boolean {
+  assertWritable(db);
+  return stmt(db, SQL_DELETE_GOAL).run(id).changes > 0;
 }
 
 // ---------------------------------------------------------------------------

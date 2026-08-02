@@ -1,5 +1,6 @@
-import { localClock } from '@featherstat/shared';
+import { type CampaignField, localClock } from '@featherstat/shared';
 import type { EventRow, NewSite, SessionRow } from '../db/index.ts';
+import { type NormalizedUtm, plainNormalizer } from '../pipeline/campaigns.ts';
 
 /**
  * Pure row mappers for the Matomo importer (docs/06): plain Matomo 5 row
@@ -313,7 +314,17 @@ function classifyAction(row: MatomoActionRow): ActionFields | null {
 
 function attribution(
   row: MatomoVisitContext,
-): Pick<SessionRow, 'ref_domain' | 'ref_type' | 'utm_source' | 'utm_medium' | 'utm_campaign'> {
+): Pick<
+  SessionRow,
+  | 'ref_domain'
+  | 'ref_type'
+  | 'utm_source'
+  | 'utm_medium'
+  | 'utm_campaign'
+  | 'utm_source_raw'
+  | 'utm_medium_raw'
+  | 'utm_campaign_raw'
+> {
   const type =
     row.referer_type === null || row.referer_type === undefined
       ? null
@@ -324,13 +335,29 @@ function attribution(
   if (domain === null && type === 'referral' && row.referer_name) {
     domain = stripWww(row.referer_name.toLowerCase());
   }
+  // The shared ingest normalizer (docs/03 § Campaigns), alias-free: an import
+  // targets a fresh file whose alias table is empty; later alias edits reach
+  // these rows through the ordinary backfill.
+  const source = normalized('source', row.campaign_source ?? null);
+  const medium = normalized('medium', row.campaign_medium ?? null);
+  const campaign = normalized(
+    'campaign',
+    row.campaign_name ?? (type === 'campaign' ? (row.referer_name ?? null) : null),
+  );
   return {
     ref_domain: domain,
     ref_type: type,
-    utm_source: row.campaign_source ?? null,
-    utm_medium: row.campaign_medium ?? null,
-    utm_campaign: row.campaign_name ?? (type === 'campaign' ? (row.referer_name ?? null) : null),
+    utm_source: source.normalized,
+    utm_medium: medium.normalized,
+    utm_campaign: campaign.normalized,
+    utm_source_raw: source.raw ?? null,
+    utm_medium_raw: medium.raw ?? null,
+    utm_campaign_raw: campaign.raw ?? null,
   };
+}
+
+function normalized(field: CampaignField, value: string | null): NormalizedUtm {
+  return value === null ? { normalized: null } : plainNormalizer(0, field, value);
 }
 
 /** Matomo DATETIMEs are UTC strings (the adapter connects with `dateStrings`). */

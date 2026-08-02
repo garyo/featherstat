@@ -70,6 +70,24 @@ const col =
   (alias: string): string =>
     `${alias}.${name}`;
 
+/**
+ * `campaign_status` (docs/03 § Campaigns): derived at query time from the
+ * campaigns registry, so a registry edit reflects instantly — no backfill. The
+ * CASE always yields text, so `is_null` on it can never match (there is no
+ * unknown status). Identifiers only; the row's own site/date columns correlate
+ * the EXISTS, and lifespan bounds compare as ISO local dates (NULL = open).
+ */
+function campaignStatusExpr(alias: string): string {
+  return (
+    `CASE WHEN ${alias}.utm_campaign IS NULL THEN 'untagged' ` +
+    `WHEN EXISTS (SELECT 1 FROM campaigns cg WHERE cg.site_id = ${alias}.site_id ` +
+    `AND cg.name = ${alias}.utm_campaign ` +
+    `AND (cg.starts_at IS NULL OR cg.starts_at <= ${alias}.local_date) ` +
+    `AND (cg.ends_at IS NULL OR cg.ends_at >= ${alias}.local_date)) THEN 'registered' ` +
+    `ELSE 'unregistered' END`
+  );
+}
+
 const DIMS: Record<BaseDimension, DimSpec> = {
   path: { events: col('path'), sessions: null },
   hostname: { events: col('hostname'), sessions: null },
@@ -96,6 +114,7 @@ const DIMS: Record<BaseDimension, DimSpec> = {
   site: { events: col('site_id'), sessions: 's.site_id', numeric: true },
   entry_path: { events: null, sessions: 's.entry_path' },
   exit_path: { events: null, sessions: 's.exit_path' },
+  campaign_status: { events: campaignStatusExpr, sessions: campaignStatusExpr('s') },
 };
 
 /**
@@ -293,8 +312,14 @@ const METRICS: Record<Metric, MetricSpec> = {
   },
 };
 
-export function metricEmpty(metric: Metric): 0 | null {
-  return METRICS[metric].empty;
+/** Accepts any result column: a goal metric's absent group is 0 completions. */
+export function metricEmpty(metric: string): 0 | null {
+  return (METRICS as Partial<Record<string, MetricSpec>>)[metric]?.empty ?? 0;
+}
+
+/** True exactly when `metric` names a built-in — a member of `METRICS`. */
+export function isBuiltinMetric(metric: string): metric is Metric {
+  return Object.hasOwn(METRICS, metric);
 }
 
 /**
@@ -340,7 +365,11 @@ function tableOrder(spec: MetricSpec): readonly Table[] {
 export function queryMeasures(compiled: CompiledQuery): Measures {
   const measures: Measures = {};
   for (const statement of compiled.statements) {
-    for (const metric of statement.metrics) measures[metric] = measureOf(metric, statement.table);
+    for (const metric of statement.metrics) {
+      // Goal statements carry `goal:` keys, whose measures the executor
+      // declares itself (query/goals.ts) — only built-ins are described here.
+      if (isBuiltinMetric(metric)) measures[metric] = measureOf(metric, statement.table);
+    }
   }
   return measures;
 }
@@ -454,8 +483,9 @@ export interface CompiledStatement {
   sql: string;
   /** Bound after the per-site bounds tuples, in textual order (SELECT, WHERE, LIMIT). */
   params: readonly (string | number)[];
-  /** The metrics this statement answers; each is aliased to its own name in the row. */
-  metrics: readonly Metric[];
+  /** The result columns this statement answers, each aliased to its own name in
+   * the row: built-in metrics, or `goal:` keys on a goal statement. */
+  metrics: readonly string[];
   /** The routing decision: which table this statement aggregates over. */
   table: Table;
 }
@@ -464,7 +494,7 @@ export interface CompiledQuery {
   statements: readonly CompiledStatement[];
   /** Output columns identifying a group, bucket first; empty for plain totals. */
   groupKeys: readonly string[];
-  metrics: readonly Metric[];
+  metrics: readonly string[];
   hasBucket: boolean;
   limit: number | undefined;
   /** True when the single statement already ordered and limited in SQL; merged queries sort in JS. */
@@ -494,31 +524,27 @@ export interface CompilableMetricQuery extends Omit<MetricQuery, 'metrics'> {
   metrics: readonly Metric[];
 }
 
+export interface CompileMetricOptions {
+  /**
+   * Compile for an external merge: no SQL ORDER BY/LIMIT even for a single
+   * statement, `ordered: false`. The executor sets this when it will append
+   * statements of its own (goal metrics) — a pre-limited base statement would
+   * otherwise clip groups before the merge saw them.
+   */
+  forceMerge?: boolean;
+}
+
 export function compileMetricQuery(
   query: CompilableMetricQuery,
   globalFilters: readonly FilterNode[],
   windows: readonly SiteWindow[],
+  options: CompileMetricOptions = {},
 ): CompiledQuery | CompileError {
   const filters = [...globalFilters, ...(query.filters ?? [])];
   const invalid = invalidLeaf(filters.flatMap(filterLeaves));
   if (invalid !== undefined) return invalid;
 
-  const groups: Group[] = [];
-  if (query.bucket !== undefined) {
-    groups.push({ key: 'bucket', ...BUCKETS[query.bucket], params: [] });
-  }
-  for (const dim of [query.dim, query.dim2]) {
-    if (dim !== undefined) {
-      const spec = dimSpec(dim);
-      groups.push({
-        key: dim,
-        events: spec.events?.('e') ?? null,
-        sessions: spec.sessions,
-        params: spec.params ?? [],
-      });
-    }
-  }
-
+  const groups = queryGroups(query);
   const blockers = tableBlockers(query, filters);
   const { sessionsBlocker, sessionsOnlyBlocker } = blockers;
 
@@ -544,7 +570,7 @@ export function compileMetricQuery(
     else assigned.push(metric);
   }
 
-  const single = byTable.size === 1;
+  const single = byTable.size === 1 && options.forceMerge !== true;
   const statements: CompiledStatement[] = [];
   for (const [table, tableMetrics] of byTable) {
     statements.push(
@@ -568,6 +594,94 @@ export function compileMetricQuery(
 
 export function unsupported(message: string): CompileError {
   return { error: { code: 'unsupported', message } };
+}
+
+/** The GROUP BY columns a query's shape asks for, bucket first — shared with
+ * the goal statement builder so its rows merge on identical keys. */
+function queryGroups(query: Pick<CompilableMetricQuery, 'dim' | 'dim2' | 'bucket'>): Group[] {
+  const groups: Group[] = [];
+  if (query.bucket !== undefined) {
+    groups.push({ key: 'bucket', ...BUCKETS[query.bucket], params: [] });
+  }
+  for (const dim of [query.dim, query.dim2]) {
+    if (dim !== undefined) {
+      const spec = dimSpec(dim);
+      groups.push({
+        key: dim,
+        events: spec.events?.('e') ?? null,
+        sessions: spec.sessions,
+        params: spec.params ?? [],
+      });
+    }
+  }
+  return groups;
+}
+
+/** What one goal's statement must compute (docs/04 § 3); keys are the wire refs. */
+export interface GoalStatementSpec {
+  /** `goal:<id>:conversions` — always computed; `cr` and fixed `value` derive from it. */
+  conversionsKey: string;
+  /** Present exactly when the goal's `valueExpr` is `'event_value'`. */
+  valueKey?: string;
+  /** The goal's own site: bound into the WHERE, so a `site:'all'` batch never
+   * books another site's look-alike events as this goal's completions. */
+  siteId: number;
+  /** The stored filter trees, re-validated by the executor before they get here. */
+  filters: readonly FilterNode[];
+}
+
+/**
+ * One goal's statement: `COUNT(DISTINCT e.session_id)` over non-ping events
+ * matching the goal's filters AND the request's, grouped exactly like the
+ * query so the executor's merge joins rows on the same keys. Events table
+ * only — a completion is an event, and the day it lands in is the completing
+ * EVENT's local date (docs/04 § 3 states this deliberate simplification).
+ * The goal's stored AST compiles through the same `filterNodeSql` as every
+ * client filter (invariant 9): identifiers from `DIMS`, every value bound.
+ */
+export function compileGoalStatement(
+  goal: GoalStatementSpec,
+  query: Pick<CompilableMetricQuery, 'dim' | 'dim2' | 'bucket'>,
+  requestFilters: readonly FilterNode[],
+  windows: readonly SiteWindow[],
+): CompiledStatement | CompileError {
+  const allFilters = [...requestFilters, ...goal.filters];
+  const invalid = invalidLeaf(allFilters.flatMap(filterLeaves));
+  if (invalid !== undefined) return invalid;
+
+  const params: (string | number)[] = [];
+  const select: string[] = [];
+  const metrics: string[] = [goal.conversionsKey];
+  for (const group of queryGroups(query)) {
+    if (group.events === null) {
+      return unsupported(
+        `goal metrics aggregate the events table and cannot be grouped by the session-level '${group.key}'`,
+      );
+    }
+    select.push(`${group.events} AS "${group.key}"`);
+    params.push(...group.params);
+  }
+  select.push(`COUNT(DISTINCT e.session_id) AS "${goal.conversionsKey}"`);
+  if (goal.valueKey !== undefined) {
+    select.push(`COALESCE(SUM(e.event_value), 0) AS "${goal.valueKey}"`);
+    metrics.push(goal.valueKey);
+  }
+
+  const where = ["e.type != 'ping'", 'e.site_id = ?'];
+  params.push(goal.siteId);
+  for (const node of allFilters) where.push(filterNodeSql(node, 'events', windows, params));
+
+  const groupCount = select.length - (goal.valueKey === undefined ? 1 : 2);
+  const lines = [
+    boundsCte(windows),
+    `SELECT ${select.join(', ')}`,
+    `FROM ${boundsJoin('events', windows)}`,
+    `WHERE ${where.join(' AND ')}`,
+  ];
+  if (groupCount > 0) {
+    lines.push(`GROUP BY ${Array.from({ length: groupCount }, (_, i) => i + 1).join(', ')}`);
+  }
+  return { sql: lines.join('\n'), params, metrics, table: 'events' };
 }
 
 function pickTable(spec: MetricSpec, sessionsUsable: boolean, eventsUsable: boolean): Table | null {

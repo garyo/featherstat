@@ -13,8 +13,9 @@ import { readableSites } from '../auth/principal.ts';
 import { RateLimiter } from '../auth/ratelimit.ts';
 import { type Db, dataVersion, listSites, schemaVersion } from '../db/index.ts';
 import { executeQueryRequest, resolveSiteWindows, UnknownSiteError } from '../query/executor.ts';
+import type { GoalDefinitions } from '../query/goals.ts';
 import { PoolSaturatedError } from '../query/pool/pool.ts';
-import { expandSegments, resolveDerived } from '../query/stored.ts';
+import { expandSegments, resolveDerived, resolveGoals } from '../query/stored.ts';
 import { clientIp } from './track.ts';
 
 /**
@@ -62,6 +63,7 @@ export type ExecuteQuery = (
   now: number,
   allowedSites?: readonly number[],
   derived?: Readonly<Record<string, string>>,
+  goals?: GoalDefinitions,
 ) => QueryResponse | Promise<QueryResponse>;
 
 export interface QueryRouteOptions {
@@ -71,8 +73,8 @@ export interface QueryRouteOptions {
 export function createQueryRoutes(db: Db, options: QueryRouteOptions = {}): Hono<QueryEnv> {
   const execute: ExecuteQuery =
     options.execute ??
-    ((request, now, allowedSites, derived) =>
-      executeQueryRequest(db, request, { now, allowedSites, derived }));
+    ((request, now, allowedSites, derived, goals) =>
+      executeQueryRequest(db, request, { now, allowedSites, derived, goals }));
   const app = new Hono<QueryEnv>();
   const sessionBatches = new RateLimiter(QUERY_BATCHES_PER_SESSION, QUERY_WINDOW_MS);
   const globalBatches = new RateLimiter(QUERY_BATCHES_GLOBAL, QUERY_WINDOW_MS);
@@ -98,6 +100,7 @@ export function createQueryRoutes(db: Db, options: QueryRouteOptions = {}): Hono
     if (!expansion.ok) return c.json({ error: expansion.message }, 400);
     const request = expansion.request;
     const derived = resolveDerived(db, request);
+    const goals = resolveGoals(db, request);
 
     const now = Date.now();
     // The one scoping chokepoint (docs/04 § 5): a non-admin principal's
@@ -123,6 +126,7 @@ export function createQueryRoutes(db: Db, options: QueryRouteOptions = {}): Hono
       request,
       compareFilter: expansion.compareFilter,
       derived,
+      goals,
     });
     const schema = schemaVersion(db);
     const current = etag(dataVersion(db), schema, canonicalBody, windows, now);
@@ -146,7 +150,7 @@ export function createQueryRoutes(db: Db, options: QueryRouteOptions = {}): Hono
 
     let response: QueryResponse;
     try {
-      response = await execute(request, now, allowedSites, derived);
+      response = await execute(request, now, allowedSites, derived, goals);
     } catch (error) {
       // A full pool is load, not failure — same degraded path as the limiter.
       if (error instanceof PoolSaturatedError) {

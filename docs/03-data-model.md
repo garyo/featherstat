@@ -36,6 +36,8 @@ CREATE TABLE events (
   -- attribution (set on the session's first event, denormalized onto each row)
   ref_domain  TEXT, ref_type TEXT,        -- 'direct'|'search'|'social'|'referral'|'campaign'|'internal'
   utm_source  TEXT, utm_medium TEXT, utm_campaign TEXT,
+  -- as received, ONLY when normalization changed it (§ Campaigns) — near-always NULL
+  utm_source_raw TEXT, utm_medium_raw TEXT, utm_campaign_raw TEXT,
 
   -- event payload
   event_category TEXT, event_action TEXT, event_name TEXT, event_value REAL,
@@ -84,6 +86,7 @@ CREATE TABLE sessions (
   -- first-touch attribution + device + geo, copied from the first event
   ref_domain TEXT, ref_type TEXT,
   utm_source TEXT, utm_medium TEXT, utm_campaign TEXT,
+  utm_source_raw TEXT, utm_medium_raw TEXT, utm_campaign_raw TEXT,  -- first-touch, like the columns above
   browser TEXT, os TEXT, device_type TEXT,
   country TEXT, region TEXT, city TEXT
 );
@@ -357,6 +360,49 @@ Priority order, evaluated once per session on its first hit:
 3. Referrer matches a small built-in search/social table (~50 entries — the
    long tail is not worth a database) → `search` / `social`.
 4. Any other referrer → `referral`; none → `direct`.
+
+## Campaigns
+
+The `utm_*` columns store **normalized** values, computed at ingest
+(`pipeline/campaigns.ts`, shared with the importer):
+
+1. **Canonicalize**: trim, collapse internal whitespace to single spaces,
+   lowercase (`canonicalUtmValue` in `packages/shared`). `EMail` and
+   ` email ` are one source; nothing downstream ever case-folds again.
+2. **Alias**: look the canonical value up in `campaign_aliases` — the site's
+   own row first, then the install-wide row (`site_id = 0`). Aliases let the
+   operator declare that `fb`, `facebook.com` and `facebook` are one source
+   without touching the tracker. The alias table is read-only at ingest and
+   cached whole in memory (`AliasCache`); the admin routes invalidate the
+   cache after every write.
+3. **Preserve the original**: the as-received value lands in `utm_*_raw`
+   **only when it differs** from what was stored — near-always NULL, so the
+   columns cost nothing.
+
+Rollups roll the normalized columns, so aliasing at ingest is what keeps the
+utm marginals honest with zero query-time work.
+
+**Editing aliases rewrites history.** A `PUT /api/admin/campaign-aliases`
+enqueues a chunked, watermarked backfill (`jobs/campaign-backfill.ts`, the
+prop-scrub shape: settings watermark per table, 5 000-row write transactions
+sharing the lock with ingest, resumed at boot after a crash). Each row's utm
+state is re-derived from **`COALESCE(utm_*_raw, utm_*)`** through the same
+canonicalize-then-alias pipeline — re-reading from that base is what makes
+the job idempotent under any sequence of alias edits, and removing an alias
+restores the canonicalized original (raw is NULLed when the two agree
+again). A completed backfill that changed any row **rebuilds all rollups**
+(the utm marginals moved; per-day recompute, chunked and yielding — minutes
+on a large file, the stated cost of an alias edit) and **bumps the data
+epoch** so every pre-rewrite ETag expires.
+
+**The campaigns registry** (`campaigns` table: canonical `utm_campaign`
+name, optional expected sources/mediums, optional local-date lifespan,
+notes) powers the hygiene dimension **`campaign_status`** — `registered`
+when a registry row of the row's site names its campaign and the lifespan
+covers its local date, `unregistered` otherwise, `untagged` when there is no
+campaign at all. It is compiled as a CASE + EXISTS **at query time**, so a
+registry edit re-labels all of history instantly: no stored column, no
+backfill, and therefore raw-only in the planner (never rolled).
 
 ## Journeys (event sequences)
 

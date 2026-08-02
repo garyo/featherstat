@@ -5,6 +5,7 @@ import {
   evaluateDerived,
   type FilterNode,
   isDerivedMetricRef,
+  isGoalMetricRef,
   isQueryError,
   localClock,
   MAX_METRICS_PER_QUERY,
@@ -43,6 +44,15 @@ import {
   unsupported,
 } from './compiler.ts';
 import { type CompiledLegs, compileDistributionQuery, compileDwellQuery } from './dwell.ts';
+import {
+  appendGoalStatements,
+  attachGoalMetrics,
+  type GoalDefinitions,
+  goalHourRefusal,
+  goalsNeedVisits,
+  type PreparedGoal,
+  prepareGoals,
+} from './goals.ts';
 import { planMetricRoute } from './planner.ts';
 import { bucketAxis, compareWindow, resolveWindow } from './ranges.ts';
 import { compileRollupMetricQuery } from './rollup-compiler.ts';
@@ -93,6 +103,12 @@ export interface ExecuteOptions {
    * with no entry here is answered with an honest per-query error.
    */
   derived?: Readonly<Record<string, string>>;
+  /**
+   * Stored goal definitions by id — the same treatment as `derived` for the
+   * same reasons (query/stored.ts, query/goals.ts). A `goal:` ref with no
+   * entry here is answered with an honest per-query error.
+   */
+  goals?: GoalDefinitions;
 }
 
 export function executeQueryRequest(
@@ -166,20 +182,29 @@ export function executeQueryRequest(
         results[query.id] = entry;
         continue;
       }
-      const prepared = prepareMetricQuery(query, options.derived);
+      const prepared = prepareMetricQuery(query, options.derived, options.goals, request.site);
       if (isQueryError(prepared)) {
         results[query.id] = prepared;
+        continue;
+      }
+      const hasGoals = prepared.goals.length > 0;
+      const hourRefusal = goalHourRefusal(prepared.goals, prepared.query);
+      if (hourRefusal !== undefined) {
+        results[query.id] = hourRefusal;
         continue;
       }
       // Route per query, planning over EVERY window the compiled statements
       // will run against — a compare window that breaks a rollup rule (a
       // multi-day custom compare under a distinct count) must pull the whole
       // query to raw, or the two row sets would answer different questions.
+      // Goal statements aggregate raw event rows, so any goal forces raw.
       const requestFilters = request.filters ?? [];
       const planWindows = compareWindows === undefined ? windows : [...windows, ...compareWindows];
-      const route = planMetricRoute(prepared.query, requestFilters, planWindows, {
-        sessionRollupsStale,
-      });
+      const route = hasGoals
+        ? 'raw'
+        : planMetricRoute(prepared.query, requestFilters, planWindows, {
+            sessionRollupsStale,
+          });
       if (route === 'raw') {
         // Honest refusal at the raw floor (docs/03): this shape NEEDS raw rows,
         // and part of its range no longer has them. Rollup-answerable shapes
@@ -190,10 +215,20 @@ export function executeQueryRequest(
           continue;
         }
       }
-      const compiled =
-        route === 'rollup'
-          ? compileRollupMetricQuery(prepared.query, requestFilters, windows)
-          : compileMetricQuery(prepared.query, requestFilters, windows);
+      // One compile path for the primary rows and the segment-compare rows:
+      // base statements, plus one per goal appended for the executor's merge.
+      const compileFor = (
+        filters: readonly FilterNode[],
+        filterRoute: 'rollup' | 'raw',
+      ): CompiledQuery | QueryErrorResult => {
+        const base =
+          filterRoute === 'rollup'
+            ? compileRollupMetricQuery(prepared.query, filters, windows)
+            : compileMetricQuery(prepared.query, filters, windows, { forceMerge: hasGoals });
+        if (isQueryError(base) || !hasGoals) return base;
+        return appendGoalStatements(base, prepared.goals, prepared.query, filters, windows);
+      };
+      const compiled = compileFor(requestFilters, route);
       if (isQueryError(compiled)) {
         results[query.id] = compiled;
         continue;
@@ -214,19 +249,18 @@ export function executeQueryRequest(
         // on its own: the segment's dimensions may deny the augmented shape the
         // rollup route the bare one took.
         const segmentFilters = [...requestFilters, compareFilter];
-        const augmentedRoute = planMetricRoute(prepared.query, segmentFilters, windows, {
-          sessionRollupsStale,
-        });
+        const augmentedRoute = hasGoals
+          ? 'raw'
+          : planMetricRoute(prepared.query, segmentFilters, windows, {
+              sessionRollupsStale,
+            });
         const augmentedPruned =
           augmentedRoute === 'raw' ? rawHorizonRefusal(windows, horizonTs) : undefined;
         if (augmentedPruned !== undefined) {
           results[query.id] = augmentedPruned;
           continue;
         }
-        const augmented =
-          augmentedRoute === 'rollup'
-            ? compileRollupMetricQuery(prepared.query, segmentFilters, windows)
-            : compileMetricQuery(prepared.query, segmentFilters, windows);
+        const augmented = compileFor(segmentFilters, augmentedRoute);
         if (isQueryError(augmented)) {
           // The requested comparison is unanswerable (the segment's dimensions
           // conflict with the metrics) — refusing the query whole beats rows
@@ -237,6 +271,7 @@ export function executeQueryRequest(
         entry.compare = runCompiled(db, augmented, windows);
       }
       attachDerived(entry, prepared, measures);
+      attachGoalMetrics(entry, prepared.goals, measures);
       entry.measures = measures;
       describeAxis(entry, query, windows, now);
       entry.ms = elapsed(queryStarted);
@@ -315,9 +350,11 @@ interface PreparedDerived {
 }
 
 interface PreparedMetricQuery {
-  /** The query as compiled: `d:` refs replaced by their component metrics. */
+  /** The query as compiled: `d:` refs replaced by their component metrics,
+   * `goal:` refs lifted out (their statements compile separately). */
   query: CompilableMetricQuery;
   derived: readonly PreparedDerived[];
+  goals: readonly PreparedGoal[];
   bucket: MetricQuery['bucket'];
 }
 
@@ -331,10 +368,13 @@ interface PreparedMetricQuery {
 function prepareMetricQuery(
   query: MetricQuery,
   derivedDefs: Readonly<Record<string, string>> | undefined,
+  goalDefs: GoalDefinitions | undefined,
+  site: QueryRequest['site'],
 ): PreparedMetricQuery | QueryErrorResult {
   const base: Metric[] = [];
   const derived: PreparedDerived[] = [];
   for (const metric of query.metrics) {
+    if (isGoalMetricRef(metric)) continue; // resolved by prepareGoals below
     if (!isDerivedMetricRef(metric)) {
       base.push(metric);
       continue;
@@ -354,13 +394,19 @@ function prepareMetricQuery(
     }
     derived.push({ key: metric, ast, components: derivedMetricsOf(ast) });
   }
-  const combined = [...new Set([...base, ...derived.flatMap((d) => d.components)])];
+  const goals = prepareGoals(query.metrics, goalDefs, site);
+  if ('error' in goals) return goals;
+  const components = [...base, ...derived.flatMap((d) => d.components)];
+  // `cr` is conversions/visits: the denominator rides in the rows like a
+  // derived metric's components do.
+  if (goalsNeedVisits(goals)) components.push('visits');
+  const combined = [...new Set(components)];
   if (combined.length > MAX_METRICS_PER_QUERY) {
     return unsupported(
       `this query needs ${combined.length} underlying metrics — the ceiling is ${MAX_METRICS_PER_QUERY}`,
     );
   }
-  return { query: { ...query, metrics: combined }, derived, bucket: query.bucket };
+  return { query: { ...query, metrics: combined }, derived, goals, bucket: query.bucket };
 }
 
 /**

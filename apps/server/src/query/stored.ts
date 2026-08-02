@@ -2,13 +2,16 @@ import {
   derivedNameOf,
   type FilterNode,
   filterSegmentRefs,
+  goalRefParts,
   isDerivedMetricRef,
+  isGoalMetricRef,
   type Query,
   type QueryRequest,
   type SegmentFilterNode,
   SegmentFilterNodeSchema,
 } from '@featherstat/shared';
-import { type Db, getDerivedMetricByName, getSegment } from '../db/index.ts';
+import { type Db, getDerivedMetricByName, getGoal, getSegment } from '../db/index.ts';
+import type { GoalDefinitions } from './goals.ts';
 
 /**
  * Stored query-layer objects (docs/04 § 3), resolved on the MAIN thread before
@@ -141,4 +144,30 @@ export function resolveDerived(db: Db, request: QueryRequest): Record<string, st
     }
   }
   return derived;
+}
+
+/**
+ * Every stored goal the request's `goal:` refs resolve to, by decimal id —
+ * the same treatment as `resolveDerived`: definitions cross the pool beside
+ * the request AND hash into the ETag body, so a goal edit expires every
+ * cached answer. Columns ship verbatim; the executor re-parses and fails
+ * closed. A ref with no stored row is deliberately absent — the executor
+ * turns it into a per-query error, so one bad id costs its query, not the batch.
+ */
+export function resolveGoals(db: Db, request: QueryRequest): GoalDefinitions | undefined {
+  const goals: Record<string, { siteId: number; filters: string; valueExpr: string | null }> = {};
+  let found = false;
+  for (const query of request.queries) {
+    if ('kind' in query) continue;
+    for (const metric of query.metrics) {
+      if (!isGoalMetricRef(metric)) continue;
+      const { id } = goalRefParts(metric);
+      if (goals[id] !== undefined) continue;
+      const row = getGoal(db, id);
+      if (row === undefined) continue;
+      goals[id] = { siteId: row.site_id, filters: row.filters, valueExpr: row.value_expr };
+      found = true;
+    }
+  }
+  return found ? goals : undefined;
 }

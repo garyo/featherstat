@@ -43,6 +43,7 @@ export const DIM_LABELS: Record<BaseDimension, string> = {
   site: 'Site',
   entry_path: 'Entry page',
   exit_path: 'Exit page',
+  campaign_status: 'Campaign status',
 };
 
 /** A dimension's display name; a `prop:` dim reads as its bare key. */

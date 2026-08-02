@@ -53,7 +53,8 @@ const { app, metrics } = createSecuredApp({
   executeQuery:
     pool === undefined
       ? undefined
-      : (request, now, allowedSites, derived) => pool.execute(request, now, allowedSites, derived),
+      : (request, now, allowedSites, derived, goals) =>
+          pool.execute(request, now, allowedSites, derived, goals),
 });
 
 const jobs = startJobs(db, {
