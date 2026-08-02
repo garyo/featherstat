@@ -1,11 +1,17 @@
 import { createHash } from 'node:crypto';
-import { QueryRequestSchema, type SiteWindow } from '@featherstat/shared';
+import {
+  type QueryRequest,
+  QueryRequestSchema,
+  type QueryResponse,
+  type SiteWindow,
+} from '@featherstat/shared';
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { AuthVariables } from '../auth/auth.ts';
 import { RateLimiter } from '../auth/ratelimit.ts';
 import { type Db, dataVersion, schemaVersion } from '../db/index.ts';
 import { executeQueryRequest, resolveSiteWindows, UnknownSiteError } from '../query/executor.ts';
+import { PoolSaturatedError } from '../query/pool/pool.ts';
 import { clientIp } from './track.ts';
 
 /**
@@ -47,7 +53,19 @@ const GLOBAL_KEY = '*';
 /** Mounted behind the session gate in the ops shell, bare in a tracking-only app. */
 type QueryEnv = { Variables: Partial<AuthVariables> };
 
-export function createQueryRoutes(db: Db): Hono<QueryEnv> {
+/** How a batch runs: inline on this thread by default, on the read pool in main.ts. */
+export type ExecuteQuery = (
+  request: QueryRequest,
+  now: number,
+) => QueryResponse | Promise<QueryResponse>;
+
+export interface QueryRouteOptions {
+  execute?: ExecuteQuery;
+}
+
+export function createQueryRoutes(db: Db, options: QueryRouteOptions = {}): Hono<QueryEnv> {
+  const execute: ExecuteQuery =
+    options.execute ?? ((request, now) => executeQueryRequest(db, request, { now }));
   const app = new Hono<QueryEnv>();
   const sessionBatches = new RateLimiter(QUERY_BATCHES_PER_SESSION, QUERY_WINDOW_MS);
   const globalBatches = new RateLimiter(QUERY_BATCHES_GLOBAL, QUERY_WINDOW_MS);
@@ -94,7 +112,18 @@ export function createQueryRoutes(db: Db): Hono<QueryEnv> {
     sessionBatches.charge(key, now);
     globalBatches.charge(GLOBAL_KEY, now);
 
-    const response = executeQueryRequest(db, parsed.data, { now });
+    let response: QueryResponse;
+    try {
+      response = await execute(parsed.data, now);
+    } catch (error) {
+      // A full pool is load, not failure — same degraded path as the limiter.
+      if (error instanceof PoolSaturatedError) {
+        return c.json({ error: 'too many query batches — try again in a minute' }, 429, {
+          'Retry-After': String(QUERY_WINDOW_MS / 1000),
+        });
+      }
+      throw error;
+    }
     // Re-derived from the executed snapshot's version, in case a flush landed in between.
     const tag = etag(response.meta.dataVersion, schema, canonicalBody, windows);
     return c.json(response, 200, { ETag: tag });
