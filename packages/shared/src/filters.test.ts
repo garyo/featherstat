@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DimensionSchema,
   type FilterLeaf,
   FilterLeafSchema,
   type FilterNode,
@@ -8,9 +9,11 @@ import {
   filterDims,
   filterLeaves,
   filterSegmentRefs,
+  isPropDimension,
   MAX_FILTER_DEPTH,
   MAX_FILTER_LEAVES,
   MAX_GLOB_WILDCARDS,
+  propKeyOf,
   QueryRequestSchema,
   SegmentFilterNodeSchema,
 } from './index.ts';
@@ -46,6 +49,39 @@ describe('FilterLeafSchema', () => {
 
     const list = { ...ok, value: ['/a*', '/b*'] };
     expect(FilterLeafSchema.safeParse(list).success).toBe(false);
+  });
+});
+
+describe('prop:<key> dimensions', () => {
+  it('accepts a prop dim in queries and filter leaves', () => {
+    expect(DimensionSchema.safeParse('prop:plan').success).toBe(true);
+    expect(FilterLeafSchema.safeParse({ dim: 'prop:plan', op: 'eq', value: 'pro' }).success).toBe(
+      true,
+    );
+    const req = QueryRequestSchema.safeParse({
+      site: 1,
+      range: { preset: '7d' },
+      queries: [{ id: 'q', metrics: ['pageviews'], dim: 'prop:ab_test' }],
+    });
+    expect(req.success).toBe(true);
+  });
+
+  it('400s a key outside the charset — the injection surface stays closed', () => {
+    for (const hostile of [
+      'prop:', // empty key
+      'prop:Bad Key',
+      'prop:a"||(SELECT 1)||"', // a quote can never reach the bound path
+      `prop:${'a'.repeat(33)}`,
+      'props:plan',
+    ]) {
+      expect(DimensionSchema.safeParse(hostile).success, hostile).toBe(false);
+    }
+  });
+
+  it('isPropDimension / propKeyOf split the union the exhaustive tables key on', () => {
+    expect(isPropDimension('prop:plan')).toBe(true);
+    expect(isPropDimension('path')).toBe(false);
+    expect(propKeyOf('prop:plan')).toBe('plan');
   });
 });
 

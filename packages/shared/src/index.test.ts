@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   AdminSiteCreateSchema,
+  CollectHitSchema,
   DashboardSchema,
   HitSchema,
   MAX_QUERIES_PER_BATCH,
@@ -34,6 +35,36 @@ describe('HitSchema', () => {
   it('rejects an event missing its action', () => {
     expect(() =>
       HitSchema.parse({ siteId: 1, type: 'event', event: { category: 'signup' } }),
+    ).toThrow();
+  });
+});
+
+describe('props on the wire (docs/03 § Props)', () => {
+  it('carries a valid bag through CollectHitSchema and HitSchema alike', () => {
+    const props = { plan: 'pro', seats: 3, beta: true };
+    expect(CollectHitSchema.parse({ type: 'event', category: 'a', action: 'b', props }).props) //
+      .toEqual(props);
+    expect(HitSchema.parse({ siteId: 1, type: 'pageview', props }).props).toEqual(props);
+  });
+
+  it('a malformed bag costs the bag, never the hit (invariant 4)', () => {
+    for (const bad of [
+      'not-an-object',
+      { 'Bad Key!': 'x' }, // charset
+      { nested: { a: 1 } }, // only scalars
+      { nil: null },
+      { big: 'x'.repeat(201) },
+      { nan: Number.NaN },
+    ]) {
+      const hit = CollectHitSchema.parse({ type: 'pageview', url: 'https://a.test/', props: bad });
+      expect(hit.props, JSON.stringify(bad)).toBeUndefined();
+      expect(hit.type).toBe('pageview');
+    }
+  });
+
+  it('HitSchema — the post-parse boundary — rejects instead of degrading', () => {
+    expect(() =>
+      HitSchema.parse({ siteId: 1, type: 'pageview', props: { 'Bad Key!': 'x' } }),
     ).toThrow();
   });
 });

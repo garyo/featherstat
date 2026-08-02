@@ -1,4 +1,4 @@
-import { DimensionSchema } from '@featherstat/shared';
+import { BaseDimensionSchema } from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
 import { openDb } from '../db/index.ts';
 import { eventOnlyDimension, sessionOnlyDimension } from '../query/compiler.ts';
@@ -6,7 +6,7 @@ import { EVENT_ROLLUP_DIMS, NO_DIM_ID, ROLLUP_DIMS, SESSION_ROLLUP_DIMS } from '
 
 describe('ROLLUP_DIMS', () => {
   it('assigns every dimension in the vocabulary — exhaustiveness is the point', () => {
-    for (const dim of DimensionSchema.options) {
+    for (const dim of BaseDimensionSchema.options) {
       expect(ROLLUP_DIMS[dim], dim).toBeDefined();
     }
   });
@@ -58,7 +58,7 @@ describe('ROLLUP_DIMS', () => {
   it('each rolled dim rolls on exactly the sides whose table carries it (compiler DIMS)', () => {
     for (const [dim, entry] of Object.entries(ROLLUP_DIMS)) {
       if (typeof entry === 'string') continue;
-      const d = DimensionSchema.parse(dim);
+      const d = BaseDimensionSchema.parse(dim);
       const expected = sessionOnlyDimension(d)
         ? 'sessions'
         : eventOnlyDimension(d)

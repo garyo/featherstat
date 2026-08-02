@@ -3,6 +3,7 @@ import {
   AdminChangePasswordSchema,
   type AdminDiagnostics,
   AdminLoginSchema,
+  type AdminPropsResponse,
   AdminSetupSchema,
   AdminSiteCreateSchema,
   AdminSitePatchSchema,
@@ -10,6 +11,7 @@ import {
   type ApiTokenInfo,
   type ApiTokenMinted,
   DAY_MS,
+  PROP_KEY_PATTERN,
   type SiteInfo,
 } from '@featherstat/shared';
 import { type Context, Hono } from 'hono';
@@ -25,14 +27,19 @@ import {
   type Db,
   databaseSizeBytes,
   deleteAdminSessionsExcept,
+  deletePropKey,
   insertApiToken,
   listApiTokens,
   listBotDrops,
+  listPropDrops,
+  listPropKeys,
   revokeApiToken,
   type Site,
   updateSite,
   withWriteTransaction,
 } from '../db/index.ts';
+import { requestPropScrub, runPropScrubs } from '../jobs/prop-scrub.ts';
+import type { PropRegistry } from '../pipeline/props.ts';
 import { clientIp } from './track.ts';
 
 /**
@@ -53,7 +60,17 @@ const MAX_ADMIN_BODY_BYTES = 64 * 1024;
 /** Diagnostics window: today plus six prior site-local dates. */
 const BOT_DROP_DAYS = 7;
 
-export function createAdminRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
+export interface AdminRouteOptions {
+  /** The live pipeline's prop registry — a delete must invalidate its cache too.
+   * Absent (a query-only server, tests), the governance rows alone are dropped. */
+  propRegistry?: PropRegistry;
+}
+
+export function createAdminRoutes(
+  db: Db,
+  auth: Auth,
+  options: AdminRouteOptions = {},
+): Hono<AuthEnv> {
   const app = new Hono<AuthEnv>();
   const loginAttempts = new RateLimiter(LOGIN_LIMIT, LOGIN_WINDOW_MS);
   const globalAttempts = new RateLimiter(GLOBAL_LOGIN_LIMIT, LOGIN_WINDOW_MS);
@@ -175,6 +192,48 @@ export function createAdminRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
     if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'invalid token id' }, 400);
     const revoked = withWriteTransaction(db, () => revokeApiToken(db, id, auth.now()));
     if (!revoked) return c.json({ error: `no live token ${id}` }, 404);
+    return c.json({ ok: true });
+  });
+
+  // --- Props governance (docs/03 § Props, docs/04 § 5) ----------------------
+
+  app.get('/api/admin/props', (c) => {
+    const siteId = Number(c.req.query('site'));
+    if (!Number.isInteger(siteId) || siteId <= 0) return c.json({ error: 'invalid site id' }, 400);
+    const since = new Date(auth.now() - (BOT_DROP_DAYS - 1) * DAY_MS).toISOString().slice(0, 10);
+    const response: AdminPropsResponse = {
+      keys: listPropKeys(db, siteId).map((row) => ({
+        key: row.key,
+        firstSeen: row.first_seen,
+        lastSeen: row.last_seen,
+        events: row.events,
+        distinctValues: row.distinct_values,
+        overCapSince: row.over_cap_since,
+      })),
+      drops: listPropDrops(db, siteId, since).map((row) => ({
+        localDate: row.local_date,
+        reason: row.reason,
+        count: row.count,
+      })),
+    };
+    return c.json(response);
+  });
+
+  app.delete('/api/admin/props/:site/:key', (c) => {
+    const siteId = Number(c.req.param('site'));
+    if (!Number.isInteger(siteId) || siteId <= 0) return c.json({ error: 'invalid site id' }, 400);
+    const key = c.req.param('key');
+    if (!PROP_KEY_PATTERN.test(key)) return c.json({ error: 'invalid prop key' }, 400);
+    // Registry rows, the live cache and the scrub watermark move together —
+    // a crash between them could otherwise leave bags no scrub will ever visit.
+    const existed = withWriteTransaction(db, () => {
+      const known = options.propRegistry?.deleteKey(siteId, key) ?? deletePropKey(db, siteId, key);
+      if (known) requestPropScrub(db, siteId, key);
+      return known;
+    });
+    if (!existed) return c.json({ error: `unknown prop key '${key}' on site ${siteId}` }, 404);
+    // Kick the chunked scrub now; the scheduler's job resumes it after a crash.
+    void runPropScrubs(db).catch((error) => console.error('prop scrub failed:', error));
     return c.json({ ok: true });
   });
 

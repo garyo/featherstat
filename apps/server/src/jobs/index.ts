@@ -6,11 +6,13 @@ import {
   geoipInstalledAt,
   refreshGeoipDatabase,
 } from './geoip-refresh.ts';
+import { runPropScrubs } from './prop-scrub.ts';
 import { runReconcile } from './reconcile.ts';
 import { runRetention } from './retention.ts';
 import { type Job, type Scheduler, type SchedulerOptions, startScheduler } from './scheduler.ts';
 
 export { DEFAULT_MMDB_PATH, type Fetcher, refreshGeoipDatabase } from './geoip-refresh.ts';
+export { type PropScrubResult, requestPropScrub, runPropScrubs } from './prop-scrub.ts';
 export { type ReconcileResult, runReconcile } from './reconcile.ts';
 export { RETENTION_DAYS_KEY, retentionDays, runRetention } from './retention.ts';
 export type { Job, Scheduler, SchedulerOptions } from './scheduler.ts';
@@ -73,6 +75,20 @@ export function startJobs(db: Db, options: JobsOptions = {}): Scheduler {
         console.error(
           `rollup-reconcile: repaired ${repaired}/${checked} site-day(s), ${cells} drifted cell(s)`,
         );
+      }
+    },
+  });
+
+  // The route that enqueues a prop scrub also kicks it directly; this entry is
+  // the resume path — a watermark a crash left behind drains at boot (the
+  // scheduler runs never-run jobs immediately) and on the hourly re-check.
+  jobs.push({
+    name: 'prop-scrub',
+    everyMs: DAY_MS,
+    run: async () => {
+      const { completed, rows } = await runPropScrubs(db);
+      if (completed > 0) {
+        console.log(`prop-scrub: removed a key from ${rows} event row(s), ${completed} scrub(s)`);
       }
     },
   });

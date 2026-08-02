@@ -99,6 +99,23 @@ describe('scroll depth', () => {
   });
 });
 
+describe('custom props (docs/03 § Props)', () => {
+  it('lifts a bag onto the hit untouched — the registry, not the parser, clamps it', () => {
+    const props = { plan: 'pro', seats: 3, beta: true };
+    expect(one({ type: 'pageview', url: 'https://a.test/', props })).toEqual([
+      { siteId: 4, type: 'pageview', url: 'https://a.test/', props },
+    ]);
+  });
+
+  it('drops a malformed bag, keeping the hit it rode in on (invariant 4)', () => {
+    for (const props of ['nope', { 'Bad Key!': 'x' }, { nested: { a: 1 } }, { nil: null }]) {
+      const [hit] = one({ type: 'pageview', url: 'https://a.test/', props });
+      expect(hit?.type, JSON.stringify(props)).toBe('pageview');
+      expect(hit?.props, JSON.stringify(props)).toBeUndefined();
+    }
+  });
+});
+
 describe('never rejects, only records less (invariant 4)', () => {
   it('yields nothing for a body that is missing, empty or not JSON', () => {
     for (const input of [undefined, '', '   ', 'not json', '<html>', 'null', '[]']) {

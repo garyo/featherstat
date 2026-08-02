@@ -6,7 +6,7 @@ import { z } from 'zod';
 // binds as a parameter, never SQL.
 // ---------------------------------------------------------------------------
 
-export const DimensionSchema = z.enum([
+export const BaseDimensionSchema = z.enum([
   'path',
   'hostname',
   'title',
@@ -33,7 +33,38 @@ export const DimensionSchema = z.enum([
   'entry_path',
   'exit_path',
 ]);
-export type Dimension = z.infer<typeof DimensionSchema>;
+/** The closed dimension enum — what every exhaustive `Record<…>` table keys on. */
+export type BaseDimension = z.infer<typeof BaseDimensionSchema>;
+
+/** The charset a prop key may use — shared by the ingest bag and the `prop:` dim. */
+export const PROP_KEY_PATTERN = /^[a-z0-9_-]{1,32}$/;
+const PROP_DIMENSION_PATTERN = /^prop:[a-z0-9_-]{1,32}$/;
+
+/**
+ * A custom-prop dimension: `prop:<key>` over `events.props` (docs/03 § Props).
+ * Event-only and open-ended — the key is operator vocabulary, not ours — so it
+ * lives BESIDE the enum: exhaustive tables stay keyed by `BaseDimension`, and
+ * every consumer of `Dimension` routes prop dims explicitly (`isPropDimension`)
+ * before indexing one.
+ */
+export type PropDimension = `prop:${string}`;
+
+export const PropDimensionSchema = z.custom<PropDimension>(
+  (value) => typeof value === 'string' && PROP_DIMENSION_PATTERN.test(value),
+  'not a prop:<key> dimension',
+);
+
+export const DimensionSchema = z.union([BaseDimensionSchema, PropDimensionSchema]);
+export type Dimension = BaseDimension | PropDimension;
+
+export function isPropDimension(dim: string): dim is PropDimension {
+  return PROP_DIMENSION_PATTERN.test(dim);
+}
+
+/** The bare key of a `prop:<key>` dimension. */
+export function propKeyOf(dim: PropDimension): string {
+  return dim.slice('prop:'.length);
+}
 
 export const FilterOpSchema = z.enum(['eq', 'neq', 'in', 'contains', 'starts', 'is_null', 'glob']);
 export type FilterOp = z.infer<typeof FilterOpSchema>;

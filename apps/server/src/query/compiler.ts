@@ -1,16 +1,19 @@
 import {
+  type BaseDimension,
   type Bucket,
   type Dimension,
   ENGAGEMENT_THRESHOLD_MS,
   type FilterLeaf,
   type FilterNode,
   filterLeaves,
+  isPropDimension,
   type Measure,
   type MeasureComponents,
   type Measures,
   type Metric,
   type MetricQuery,
   type Population,
+  propKeyOf,
   type SiteWindow,
   type Unit,
 } from '@featherstat/shared';
@@ -52,6 +55,9 @@ interface DimSpec {
   sessions: string | null;
   /** Digit-string filter values bind as numbers, so expression dims compare correctly. */
   numeric?: boolean;
+  /** Values the events expression's own placeholders bind, in textual order —
+   * the `prop:` dims' JSON path (invariant 9: the key never enters the SQL text). */
+  params?: readonly string[];
 }
 
 /** `strftime('%w')`: 0 = Sunday … 6 = Saturday. */
@@ -64,7 +70,7 @@ const col =
   (alias: string): string =>
     `${alias}.${name}`;
 
-const DIMS: Record<Dimension, DimSpec> = {
+const DIMS: Record<BaseDimension, DimSpec> = {
   path: { events: col('path'), sessions: null },
   hostname: { events: col('hostname'), sessions: null },
   title: { events: col('title'), sessions: null },
@@ -91,6 +97,22 @@ const DIMS: Record<Dimension, DimSpec> = {
   entry_path: { events: null, sessions: 's.entry_path' },
   exit_path: { events: null, sessions: 's.exit_path' },
 };
+
+/**
+ * The one open-ended dimension family: `prop:<key>` reads `events.props` with
+ * `json_extract` over a BOUND path built here from the regex-validated key —
+ * the key never appears in SQL text (invariant 9), and no session row carries
+ * a bag, so every prop dim is event-only. Everything else resolves from the
+ * closed `DIMS` table; this is the single seam where the union splits.
+ */
+export function dimSpec(dim: Dimension): DimSpec {
+  if (!isPropDimension(dim)) return DIMS[dim];
+  return {
+    events: (alias: string) => `json_extract(${alias}.props, ?)`,
+    sessions: null,
+    params: [`$."${propKeyOf(dim)}"`],
+  };
+}
 
 /** Monday of the date's week: Sunday belongs to the week that started the previous Monday. */
 function weekExpr(alias: string): string {
@@ -360,12 +382,12 @@ function metricSql(spec: TableSpec, alias: string): { sql: string; params: reado
 
 /** True when only the events table carries `dim` — sessions cannot be filtered by it. */
 export function eventOnlyDimension(dim: Dimension): boolean {
-  return DIMS[dim].sessions === null;
+  return dimSpec(dim).sessions === null;
 }
 
 /** The mirror image: only the sessions table carries `dim` (entry/exit page). */
 export function sessionOnlyDimension(dim: Dimension): boolean {
-  return DIMS[dim].events === null;
+  return dimSpec(dim).events === null;
 }
 
 const DATE_BOUNDS = ['site_id', 'from_date', 'to_date'] as const;
@@ -459,6 +481,8 @@ interface Group {
   key: string;
   events: string | null;
   sessions: string | null;
+  /** Bound by the events-side column expression's own placeholders (prop dims). */
+  params: readonly string[];
 }
 
 /**
@@ -480,13 +504,17 @@ export function compileMetricQuery(
   if (invalid !== undefined) return invalid;
 
   const groups: Group[] = [];
-  if (query.bucket !== undefined) groups.push({ key: 'bucket', ...BUCKETS[query.bucket] });
+  if (query.bucket !== undefined) {
+    groups.push({ key: 'bucket', ...BUCKETS[query.bucket], params: [] });
+  }
   for (const dim of [query.dim, query.dim2]) {
     if (dim !== undefined) {
+      const spec = dimSpec(dim);
       groups.push({
         key: dim,
-        events: DIMS[dim].events?.('e') ?? null,
-        sessions: DIMS[dim].sessions,
+        events: spec.events?.('e') ?? null,
+        sessions: spec.sessions,
+        params: spec.params ?? [],
       });
     }
   }
@@ -580,13 +608,15 @@ export function tableBlockers(
   }
   for (const dim of [query.dim, query.dim2]) {
     if (dim === undefined) continue;
-    if (DIMS[dim].sessions === null) sessionsBlocker ??= dim;
-    if (DIMS[dim].events === null) sessionsOnlyBlocker ??= dim;
+    const spec = dimSpec(dim);
+    if (spec.sessions === null) sessionsBlocker ??= dim;
+    if (spec.events === null) sessionsOnlyBlocker ??= dim;
   }
   for (const leaf of filters.flatMap(filterLeaves)) {
     if (leaf.scope === 'session') continue;
-    if (DIMS[leaf.dim].sessions === null) sessionsBlocker ??= leaf.dim;
-    if (DIMS[leaf.dim].events === null) sessionsOnlyBlocker ??= leaf.dim;
+    const spec = dimSpec(leaf.dim);
+    if (spec.sessions === null) sessionsBlocker ??= leaf.dim;
+    if (spec.events === null) sessionsOnlyBlocker ??= leaf.dim;
   }
   return { sessionsBlocker, sessionsOnlyBlocker };
 }
@@ -622,6 +652,8 @@ function buildStatement(
     const column = table === 'events' ? group.events : group.sessions;
     if (column === null) throw new Error(`'${group.key}' group reached a table without it`);
     select.push(`${column} AS "${group.key}"`);
+    // A prop dim's expression binds its JSON path; sessions never carry one.
+    if (table === 'events') params.push(...group.params);
   }
   for (const metric of metrics) {
     const spec = METRICS[metric][table];
@@ -755,9 +787,12 @@ export function filterSql(
   params: (string | number)[],
   alias = 'e',
 ): string {
-  const spec = DIMS[filter.dim];
+  const spec = dimSpec(filter.dim);
   const column = table === 'events' ? (spec.events?.(alias) ?? null) : spec.sessions;
   if (column === null) throw new Error(`'${filter.dim}' filter reached a table without it`);
+  // The column expression comes first in the predicate's text, so its own
+  // bound values (a prop dim's JSON path) bind before the op's.
+  if (table === 'events' && spec.params !== undefined) params.push(...spec.params);
   return leafOpSql(column, filter, params, spec.numeric === true);
 }
 

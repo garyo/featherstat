@@ -12,6 +12,9 @@ describe('filter serialization', () => {
     { dim: 'browser', op: 'in', value: ['Chrome', 'Sa:fa,ri'] },
     { dim: 'event_category', op: 'starts', value: 'sign' },
     { dim: 'title', op: 'neq', value: '404 — not found' },
+    // A prop dim carries the one ':' a dimension may contain.
+    { dim: 'prop:plan', op: 'eq', value: 'pro' },
+    { dim: 'prop:ab_test', op: 'is_null' },
   ];
 
   it('round-trips every op, including hostile visitor-controlled values', () => {
@@ -73,5 +76,10 @@ describe('chipLabel', () => {
     expect(chipLabel({ dim: 'browser', op: 'in', value: ['Chrome', 'Edge'] })).toBe(
       'Browser in Chrome, Edge',
     );
+  });
+
+  it('names a prop dim by its bare key, null group included', () => {
+    expect(chipLabel({ dim: 'prop:plan', op: 'eq', value: 'pro' })).toBe('plan: pro');
+    expect(chipLabel({ dim: 'prop:plan', op: 'is_null' })).toBe('plan: (none)');
   });
 });

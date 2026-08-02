@@ -1,5 +1,6 @@
 import {
   type Aggregate,
+  BaseDimensionSchema,
   DimensionSchema,
   ENGAGEMENT_THRESHOLD_MS,
   EVENT_ONLY_DIMENSIONS,
@@ -48,7 +49,7 @@ function compile(
 describe('shared vocabulary constants stay true to the compiler tables', () => {
   it('EVENT_ONLY_DIMENSIONS = exactly the dims that break session metrics', () => {
     const eventOnly = new Set<string>(EVENT_ONLY_DIMENSIONS);
-    for (const dim of DimensionSchema.options) {
+    for (const dim of BaseDimensionSchema.options) {
       const compiled = compileMetricQuery({ id: 'q', metrics: ['engaged_ms'], dim }, [], sites(1));
       expect(isQueryError(compiled), dim).toBe(eventOnly.has(dim));
     }
@@ -68,7 +69,7 @@ describe('shared vocabulary constants stay true to the compiler tables', () => {
 
   it('SESSION_ONLY_DIMENSIONS = exactly the dims that break event-level metrics', () => {
     const sessionOnly = new Set<string>(SESSION_ONLY_DIMENSIONS);
-    for (const dim of DimensionSchema.options) {
+    for (const dim of BaseDimensionSchema.options) {
       const compiled = compileMetricQuery({ id: 'q', metrics: ['pageviews'], dim }, [], sites(1));
       expect(isQueryError(compiled), dim).toBe(sessionOnly.has(dim));
     }
@@ -513,5 +514,73 @@ describe('compileMetricQuery', () => {
       expect(statement.sql).toMatch(/WHERE [es]\.country = \?/);
       expect(statement.params).toEqual(['US']);
     }
+  });
+});
+
+describe('prop:<key> dimensions (docs/03 § Props)', () => {
+  it('groups by json_extract over a BOUND path — the key never enters the SQL text', () => {
+    const compiled = compile({ metrics: ['pageviews'], dim: 'prop:plan' });
+    const statement = compiled.statements[0];
+    expect(statement?.sql).toContain('json_extract(e.props, ?) AS "prop:plan"');
+    // The path exists only as a bound value — never as a literal in the text.
+    expect(statement?.sql).not.toContain('$."');
+    expect(statement?.params).toEqual(['$."plan"']);
+    expect(compiled.groupKeys).toEqual(['prop:plan']);
+  });
+
+  it('filters bind the path before the value, on every op incl. is_null and glob', () => {
+    const eq = compile({
+      metrics: ['pageviews'],
+      filters: [{ dim: 'prop:plan', op: 'eq', value: 'pro' }],
+    });
+    expect(eq.statements[0]?.sql).toContain('WHERE json_extract(e.props, ?) = ?');
+    expect(eq.statements[0]?.params).toEqual(['$."plan"', 'pro']);
+
+    const isNull = compile({
+      metrics: ['pageviews'],
+      filters: [{ dim: 'prop:plan', op: 'is_null' }],
+    });
+    expect(isNull.statements[0]?.sql).toContain('WHERE json_extract(e.props, ?) IS NULL');
+    expect(isNull.statements[0]?.params).toEqual(['$."plan"']);
+
+    const glob = compile({
+      metrics: ['pageviews'],
+      filters: [{ dim: 'prop:page', op: 'glob', value: '/docs/*' }],
+    });
+    expect(glob.statements[0]?.sql).toContain('WHERE json_extract(e.props, ?) GLOB ?');
+    expect(glob.statements[0]?.params).toEqual(['$."page"', '/docs/*']);
+  });
+
+  it('a hostile key never reaches the compiler: the schema is the wall', () => {
+    // The bound path is built from a key this regex admitted and nothing else,
+    // so the injection suite's job here is proving the regex refuses a quote.
+    expect(DimensionSchema.safeParse('prop:a"||(SELECT 1)||"').success).toBe(false);
+    expect(DimensionSchema.safeParse('prop:plan').success).toBe(true);
+  });
+
+  it('is event-only: session metrics under a prop dim earn the standing refusal', () => {
+    const compiled = compileMetricQuery(
+      { id: 'q', metrics: ['bounce_rate'], dim: 'prop:plan' },
+      [],
+      sites(1),
+    );
+    expect(isQueryError(compiled)).toBe(true);
+    // And `visits` re-routes to the events table, exactly as under `path`.
+    const visits = compile({ metrics: ['visits'], dim: 'prop:plan' });
+    expect(visits.statements[0]?.table).toBe('events');
+    expect(visits.statements[0]?.sql).toContain('COUNT(DISTINCT');
+  });
+
+  it("scope:'session' works through the generic path: EXISTS over e2.props", () => {
+    const compiled = compile({
+      metrics: ['visits'],
+      filters: [{ dim: 'prop:plan', op: 'eq', value: 'pro', scope: 'session' }],
+    });
+    const statement = compiled.statements[0];
+    expect(statement?.table).toBe('sessions');
+    expect(statement?.sql).toContain(
+      "EXISTS (SELECT 1 FROM events e2 WHERE e2.session_id = s.id AND e2.type != 'ping' AND json_extract(e2.props, ?) = ?)",
+    );
+    expect(statement?.params).toEqual(['$."plan"', 'pro']);
   });
 });

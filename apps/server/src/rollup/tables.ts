@@ -1,4 +1,4 @@
-import type { Dimension } from '@featherstat/shared';
+import type { BaseDimension } from '@featherstat/shared';
 import type { EventRow, SessionRow } from '../db/index.ts';
 
 /**
@@ -25,7 +25,7 @@ export type RollupDimEntry =
   /** Queries by it go to raw events forever (high cardinality, low value). */
   | 'raw-only';
 
-export const ROLLUP_DIMS: Record<Dimension, RollupDimEntry> = {
+export const ROLLUP_DIMS: Record<BaseDimension, RollupDimEntry> = {
   path: { dimId: 1, tables: 'events' },
   hostname: { dimId: 2, tables: 'events' },
   ref_domain: { dimId: 3, tables: 'both' },
@@ -68,7 +68,7 @@ export const PRESENCE_HORIZON_DAYS = 3;
 
 /** One rolled dimension and the column it reads — column names ARE dimension names. */
 export interface RolledDim<Column> {
-  dim: Dimension;
+  dim: BaseDimension;
   dimId: number;
   column: Column;
 }
@@ -76,12 +76,12 @@ export interface RolledDim<Column> {
 /** Nullable string columns a rolled dimension may read on each side.
  * (`local_hour` is excluded: it shares a name with a dimension but is numeric,
  * and it is 'derived' — a rollup key column, never a rolled value.) */
-export type EventDimColumn = Exclude<Extract<keyof EventRow, Dimension>, 'local_hour'>;
-export type SessionDimColumn = Extract<keyof SessionRow, Dimension>;
+export type EventDimColumn = Exclude<Extract<keyof EventRow, BaseDimension>, 'local_hour'>;
+export type SessionDimColumn = Extract<keyof SessionRow, BaseDimension>;
 
 function rolled<Column extends string>(sides: readonly ('events' | 'sessions' | 'both')[]) {
   const dims: RolledDim<Column>[] = [];
-  for (const [dim, entry] of Object.entries(ROLLUP_DIMS) as [Dimension, RollupDimEntry][]) {
+  for (const [dim, entry] of Object.entries(ROLLUP_DIMS) as [BaseDimension, RollupDimEntry][]) {
     if (typeof entry === 'string' || !sides.includes(entry.tables)) continue;
     // Row types name columns exactly as `DimensionSchema` names dimensions
     // (docs/03: column names verbatim); tables.test.ts holds this in step with

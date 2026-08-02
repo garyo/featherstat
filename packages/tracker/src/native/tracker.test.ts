@@ -182,6 +182,24 @@ describe('events and links', () => {
     });
   });
 
+  it('sends custom props on the wire untouched, for track() and page() alike', () => {
+    start();
+    track('signup', { category: 'account', props: { plan: 'pro', seats: 3, beta: true } });
+    expect(sent()[1]).toMatchObject({
+      type: 'event',
+      action: 'signup',
+      props: { plan: 'pro', seats: 3, beta: true },
+    });
+    page('https://deep-timeline.org/era/permian', 'Permian', { era: 'permian' });
+    expect(sent()[2]).toMatchObject({ type: 'pageview', props: { era: 'permian' } });
+  });
+
+  it('sends no props field at all when none were given — auto pageviews included', () => {
+    start();
+    track('bare');
+    for (const hit of sent()) expect(hit).not.toHaveProperty('props');
+  });
+
   it('drops hits once the tracker is stopped', () => {
     start();
     stop?.();

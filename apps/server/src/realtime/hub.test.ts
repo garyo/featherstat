@@ -65,6 +65,23 @@ describe('RealtimeHub feed', () => {
     });
   });
 
+  // Props are operator-owned payload, not audience telemetry — they stay off
+  // the SSE wire entirely (docs/03 § Props), live path and boot seed alike.
+  it('never puts a stored prop bag on the wire', () => {
+    const hub = new RealtimeHub();
+    hub.record(event({ ts: T0, path: '/pricing', props: '{"plan":"pro"}' }));
+    withWriteTransaction(db, () =>
+      insertEvents(db, [event({ ts: T0, path: '/seeded', props: '{"plan":"free"}' })]),
+    );
+    hub.seedRecent(db);
+    const hits = hub.recent(50);
+    expect(hits).toHaveLength(2);
+    for (const hit of hits) {
+      expect(hit).not.toHaveProperty('props');
+      expect(JSON.stringify(hit)).not.toContain('plan');
+    }
+  });
+
   // Reversed deliberately: pings used to be dropped here as noise. They are what
   // MEASURES a page, and dropping them forced the feed to carry a figure derived
   // elsewhere — which is how a row came to mean one thing live and another after

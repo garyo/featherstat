@@ -27,6 +27,8 @@ export interface SessionizerInput {
   device: DeviceInfo;
   geo: GeoResult | null;
   lang: string | null;
+  /** Canonical JSON from the prop registry's `admit`, or nothing (docs/03 § Props). */
+  props?: string;
 }
 
 export interface SessionizedHit {
@@ -163,6 +165,7 @@ export class Sessionizer {
       // `scroll_pct` is optional on EventRow, so nothing here is type-checked:
       // forget this line and the column silently stays null forever.
       scroll_pct: hit.scrollPct ?? null,
+      props: input.props ?? null,
     };
     return { event, session: row };
   }

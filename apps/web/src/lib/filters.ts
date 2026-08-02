@@ -1,4 +1,11 @@
-import { type Dimension, type Filter, FilterSchema } from '@featherstat/shared';
+import {
+  type BaseDimension,
+  type Dimension,
+  type Filter,
+  FilterSchema,
+  isPropDimension,
+  propKeyOf,
+} from '@featherstat/shared';
 
 /**
  * Filter chips (docs/05: active dimension filters as removable chips, living in
@@ -8,8 +15,9 @@ import { type Dimension, type Filter, FilterSchema } from '@featherstat/shared';
  * after encoding, for the same reason.
  */
 
-/** Exhaustive: a new dimension in `packages/shared` fails to compile until labeled. */
-export const DIM_LABELS: Record<Dimension, string> = {
+/** Exhaustive over the closed enum: a new dimension in `packages/shared` fails to
+ * compile until labeled. `prop:` dims are open-ended — `dimLabel` names them by key. */
+export const DIM_LABELS: Record<BaseDimension, string> = {
   path: 'Page',
   hostname: 'Hostname',
   title: 'Title',
@@ -37,14 +45,19 @@ export const DIM_LABELS: Record<Dimension, string> = {
   exit_path: 'Exit page',
 };
 
+/** A dimension's display name; a `prop:` dim reads as its bare key. */
+export function dimLabel(dim: Dimension): string {
+  return isPropDimension(dim) ? propKeyOf(dim) : DIM_LABELS[dim];
+}
+
 /** What a chip (or a breakdown row) names the NULL group of a dimension. */
-export const NULL_LABELS: Partial<Record<Dimension, string>> = {
+export const NULL_LABELS: Partial<Record<BaseDimension, string>> = {
   ref_domain: 'Direct',
   country: 'Unknown',
 };
 
 export function nullLabelFor(dim: Dimension): string {
-  return NULL_LABELS[dim] ?? '(none)';
+  return (isPropDimension(dim) ? undefined : NULL_LABELS[dim]) ?? '(none)';
 }
 
 const OP_WORDS: Record<Filter['op'], string> = {
@@ -59,7 +72,7 @@ const OP_WORDS: Record<Filter['op'], string> = {
 
 /** Chip text: `Referrer: google.com`, `Referrer: Direct`, `Page: contains /blog`. */
 export function chipLabel(filter: Filter): string {
-  const dim = DIM_LABELS[filter.dim];
+  const dim = dimLabel(filter.dim);
   if (filter.op === 'is_null') return `${dim}: ${nullLabelFor(filter.dim)}`;
   const value = Array.isArray(filter.value) ? filter.value.join(', ') : (filter.value ?? '');
   const word = OP_WORDS[filter.op];
@@ -76,7 +89,11 @@ export function serializeFilter(filter: Filter): string {
 
 /** Anything unparseable is dropped — a mangled link opens the dashboard, not an error. */
 export function parseFilter(raw: string): Filter | undefined {
-  const [dim, op, ...rest] = raw.split(':');
+  const parts = raw.split(':');
+  // A `prop:<key>` dim carries the one ':' a dimension may contain.
+  const dimEnd = parts[0] === 'prop' ? 2 : 1;
+  const dim = parts.slice(0, dimEnd).join(':');
+  const [op, ...rest] = parts.slice(dimEnd);
   const candidate: Record<string, unknown> = { dim, op };
   if (op === 'is_null') {
     if (rest.length > 0) return undefined; // is_null takes no value — trailing junk is junk

@@ -203,6 +203,14 @@ describe('withoutBlockedMetrics', () => {
     ]);
   });
 
+  it('treats a prop:<key> filter as event-level, exactly as the compiler does', () => {
+    const propFilter: Filter[] = [{ dim: 'prop:plan', op: 'eq', value: 'pro' }];
+    const trimmed = withoutBlockedMetrics(queries, propFilter);
+    const kpis = trimmed.find((q) => q.id === 'kpis');
+    if (kpis === undefined || 'kind' in kpis) throw new Error('metric query expected');
+    expect(kpis.metrics).toEqual(['visitors', 'pageviews', 'visits']);
+  });
+
   it("a scope:'session' filter blocks nothing, exactly as the compiler reads it", () => {
     const scoped: Filter[] = [{ dim: 'path', op: 'eq', value: '/x', scope: 'session' }];
     expect(withoutBlockedMetrics(queries, scoped)).toEqual(queries);

@@ -67,6 +67,7 @@ function parseHit(site: number, entry: unknown): Hit | undefined {
     screen: raw.screen,
     lang: raw.lang,
     scrollPct: raw.scroll,
+    props: raw.props,
   });
   return hit.success ? hit.data : undefined;
 }

@@ -1,8 +1,9 @@
 import {
-  type Dimension,
+  type BaseDimension,
   type FilterLeaf,
   type FilterNode,
   filterLeaves,
+  isPropDimension,
   type SiteWindow,
 } from '@featherstat/shared';
 import { ROLLUP_DIMS } from '../rollup/tables.ts';
@@ -70,17 +71,18 @@ export function planMetricRoute(
   if (leaves.some((leaf) => leaf.scope === 'session')) return 'raw';
 
   // Every referenced dimension must be rolled or derivable from rollup keys,
-  // and at most one may be rolled. An unknown-to-ROLLUP_DIMS dimension string
-  // (a future `prop:` key) falls through to raw.
-  const rolled = new Set<Dimension>();
+  // and at most one may be rolled. `prop:` dims are never rolled — raw only —
+  // and any other string outside ROLLUP_DIMS falls through to raw the same way.
+  const rolled = new Set<BaseDimension>();
   for (const dim of [query.dim, ...leaves.map((leaf) => leaf.dim)]) {
     if (dim === undefined) continue;
-    const entry = ROLLUP_DIMS[dim] as (typeof ROLLUP_DIMS)[Dimension] | undefined;
+    if (isPropDimension(dim)) return 'raw';
+    const entry = ROLLUP_DIMS[dim] as (typeof ROLLUP_DIMS)[BaseDimension] | undefined;
     if (entry === undefined || entry === 'raw-only') return 'raw';
     if (entry !== 'derived') rolled.add(dim);
   }
   if (rolled.size > 1) return 'raw';
-  const rolledDim: Dimension | undefined = [...rolled][0];
+  const rolledDim: BaseDimension | undefined = [...rolled][0];
 
   // `local_hour` exists only on rollup_traffic_hour, which has no dim rows:
   // an hour bucket or an hour dimension excludes every rolled dimension.
@@ -136,12 +138,12 @@ function isLocalHourLeaf(leaf: FilterLeaf): boolean {
   return leaf.dim === 'local_hour' && leaf.scope !== 'session';
 }
 
-function eventSideRolled(dim: Dimension): boolean {
+function eventSideRolled(dim: BaseDimension): boolean {
   const entry = ROLLUP_DIMS[dim];
   return typeof entry === 'object' && (entry.tables === 'events' || entry.tables === 'both');
 }
 
-function sessionSideRolled(dim: Dimension): boolean {
+function sessionSideRolled(dim: BaseDimension): boolean {
   const entry = ROLLUP_DIMS[dim];
   return typeof entry === 'object' && (entry.tables === 'sessions' || entry.tables === 'both');
 }

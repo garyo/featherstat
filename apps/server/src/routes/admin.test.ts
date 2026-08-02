@@ -1,4 +1,4 @@
-import type { SiteInfo } from '@featherstat/shared';
+import { AdminPropsResponseSchema, type SiteInfo } from '@featherstat/shared';
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { event, openTestDb, T0 } from '../../test/rows.ts';
@@ -8,8 +8,12 @@ import {
   getSite,
   incrementBotDrops,
   insertEvents,
+  listPropKeys,
+  stmt,
   withWriteTransaction,
 } from '../db/index.ts';
+import { runPropScrubs } from '../jobs/prop-scrub.ts';
+import { PropRegistry } from '../pipeline/props.ts';
 import { createAdminRoutes } from './admin.ts';
 
 const PASSWORD = 'a-decent-password';
@@ -188,6 +192,66 @@ describe('password change', () => {
       next: 'short',
     });
     expect(res.status).toBe(400);
+  });
+});
+
+describe('props governance (docs/03 § Props)', () => {
+  /** Admit through a live registry and land its rows, the way ingest would. */
+  function seedProps(registry: PropRegistry): void {
+    withWriteTransaction(db, () => {
+      insertEvents(db, [
+        event({ props: registry.admit(1, { plan: 'pro' }, '2026-07-27', 'pageview', T0) }),
+        event({ seq: 2, props: registry.admit(1, { plan: 'free' }, '2026-07-27', 'pageview', T0) }),
+      ]);
+      registry.admit(1, { plan: 'x' }, '2026-07-27', 'ping', T0); // → an on_ping drop
+      registry.apply(db);
+    });
+    registry.committed();
+  }
+
+  it("lists a site's keys with their stats and recent drops", async () => {
+    const registry = new PropRegistry(db);
+    app = new Hono<AuthEnv>().route('/', createAdminRoutes(db, auth, { propRegistry: registry }));
+    seedProps(registry);
+    const { cookie } = await login();
+    const res = await app.request('/api/admin/props?site=1', { headers: { cookie } });
+    expect(res.status).toBe(200);
+    const body = AdminPropsResponseSchema.parse(await res.json());
+    expect(body.keys).toEqual([
+      {
+        key: 'plan',
+        firstSeen: T0,
+        lastSeen: T0,
+        events: 2,
+        distinctValues: 2,
+        overCapSince: null,
+      },
+    ]);
+    expect(body.drops).toEqual([{ localDate: '2026-07-27', reason: 'on_ping', count: 1 }]);
+
+    const bad = await app.request('/api/admin/props?site=zero', { headers: { cookie } });
+    expect(bad.status).toBe(400);
+  });
+
+  it('deletes a key: registry rows now, stored bags scrubbed, 404 for a stranger', async () => {
+    const registry = new PropRegistry(db);
+    app = new Hono<AuthEnv>().route('/', createAdminRoutes(db, auth, { propRegistry: registry }));
+    seedProps(registry);
+    const session = await login();
+
+    const missing = await mutate(session, 'DELETE', '/api/admin/props/1/unknown', undefined);
+    expect(missing.status).toBe(404);
+    const badKey = await mutate(session, 'DELETE', '/api/admin/props/1/Bad%20Key', undefined);
+    expect(badKey.status).toBe(400);
+
+    const res = await mutate(session, 'DELETE', '/api/admin/props/1/plan', undefined);
+    expect(res.status).toBe(200);
+    expect(listPropKeys(db, 1)).toEqual([]);
+    // The route kicked the chunked scrub; joining the in-flight run (or a
+    // fresh no-op one) proves the stored bags went with the key.
+    await runPropScrubs(db);
+    const bags = stmt(db, 'SELECT props FROM events').pluck().all();
+    expect(bags).toEqual([null, null]);
   });
 });
 

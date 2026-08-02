@@ -1,0 +1,72 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { event, openTestDb } from '../../test/rows.ts';
+import {
+  type Db,
+  dataVersion,
+  getSetting,
+  insertEvents,
+  stmt,
+  withWriteTransaction,
+} from '../db/index.ts';
+import { requestPropScrub, runPropScrubs } from './prop-scrub.ts';
+
+let db: Db;
+
+beforeEach(() => {
+  db = openTestDb(2);
+});
+
+afterEach(() => {
+  db.close();
+});
+
+const propsOf = (): (string | null)[] =>
+  stmt(db, 'SELECT props FROM events ORDER BY id').pluck().all() as (string | null)[];
+
+describe('runPropScrubs', () => {
+  it('removes exactly the requested key on the requested site, and NULLs emptied bags', async () => {
+    withWriteTransaction(db, () => {
+      insertEvents(db, [
+        event({ props: '{"other":1,"plan":"pro"}' }),
+        event({ seq: 2, props: '{"plan":"free"}' }), // empties to {} → NULL
+        event({ seq: 3, props: null }),
+        event({ seq: 4, site_id: 2, props: '{"plan":"pro"}' }), // another site: untouched
+      ]);
+      requestPropScrub(db, 1, 'plan');
+    });
+
+    const result = await runPropScrubs(db);
+    expect(result).toEqual({ completed: 1, rows: 2 });
+    expect(propsOf()).toEqual(['{"other":1}', null, null, '{"plan":"pro"}']);
+  });
+
+  it('walks a rowid watermark in chunks and finishes across batches', async () => {
+    withWriteTransaction(db, () => {
+      insertEvents(
+        db,
+        Array.from({ length: 7 }, (_, i) => event({ seq: i + 1, props: '{"plan":"pro"}' })),
+      );
+      requestPropScrub(db, 1, 'plan');
+    });
+    const result = await runPropScrubs(db, { batchSize: 2 });
+    expect(result.rows).toBe(7);
+    expect(propsOf()).toEqual(Array.from({ length: 7 }, () => null));
+    expect(getSetting(db, 'prop_scrub:1:plan')).toBeUndefined();
+  });
+
+  it('bumps the data epoch on completion — a history rewrite must expire every ETag', async () => {
+    withWriteTransaction(db, () => {
+      insertEvents(db, [event({ props: '{"plan":"pro"}' })]);
+      requestPropScrub(db, 1, 'plan');
+    });
+    const before = dataVersion(db);
+    await runPropScrubs(db);
+    expect(dataVersion(db)).toBeGreaterThan(before);
+  });
+
+  it('is a no-op with nothing enqueued', async () => {
+    const before = dataVersion(db);
+    expect(await runPropScrubs(db)).toEqual({ completed: 0, rows: 0 });
+    expect(dataVersion(db)).toBe(before);
+  });
+});

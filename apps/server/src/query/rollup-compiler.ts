@@ -1,8 +1,10 @@
 import {
+  type BaseDimension,
   type Dimension,
   type FilterLeaf,
   type FilterNode,
   filterLeaves,
+  isPropDimension,
   type Metric,
   type SiteWindow,
 } from '@featherstat/shared';
@@ -99,7 +101,8 @@ export function compileRollupMetricQuery(
   // The single rolled dimension in play (planner rule: at most one), and
   // whether this is an hour shape (rollup_traffic_hour, which has no dim rows).
   const rolledDim = [query.dim, ...leaves.map((leaf) => leaf.dim)].find(
-    (dim): dim is Dimension => dim !== undefined && typeof ROLLUP_DIMS[dim] === 'object',
+    (dim): dim is BaseDimension =>
+      dim !== undefined && !isPropDimension(dim) && typeof ROLLUP_DIMS[dim] === 'object',
   );
   const hourShape =
     query.bucket === 'hour' ||
@@ -160,7 +163,7 @@ function buildStatement(
   metrics: readonly Metric[],
   query: CompilableMetricQuery,
   filters: readonly FilterNode[],
-  rolledDim: Dimension | undefined,
+  rolledDim: BaseDimension | undefined,
   windows: readonly SiteWindow[],
   options: StatementOptions,
 ): CompiledStatement {
@@ -218,8 +221,10 @@ function buildStatement(
 function keyExpr(
   dim: Dimension,
   source: Source,
-  rolledDim: Dimension | undefined,
+  rolledDim: BaseDimension | undefined,
 ): { sql: string; numeric: boolean } {
+  // The planner routes every prop dim to raw; one arriving here is a wiring bug.
+  if (isPropDimension(dim)) throw new Error(`'${dim}' reached the rollup compiler`);
   if (dim === 'site') return { sql: `${ALIAS}.site_id`, numeric: true };
   if (dim === 'weekday') return { sql: WEEKDAY_EXPR, numeric: true };
   if (dim === 'local_hour') {
@@ -234,7 +239,7 @@ function keyExpr(
   throw new Error(`'${dim}' has no expression over ${source}`);
 }
 
-function dimIdOf(dim: Dimension): number {
+function dimIdOf(dim: BaseDimension): number {
   const entry = ROLLUP_DIMS[dim];
   if (typeof entry !== 'object') throw new Error(`'${dim}' is not a rolled dimension`);
   return entry.dimId;
@@ -251,7 +256,7 @@ function dimIdOf(dim: Dimension): number {
 function filterNodeSql(
   node: FilterNode,
   source: Source,
-  rolledDim: Dimension | undefined,
+  rolledDim: BaseDimension | undefined,
   params: (string | number)[],
 ): string {
   if ('all' in node) {
@@ -272,7 +277,7 @@ function filterNodeSql(
 function leafSql(
   leaf: FilterLeaf,
   source: Source,
-  rolledDim: Dimension | undefined,
+  rolledDim: BaseDimension | undefined,
   params: (string | number)[],
 ): string {
   const column = keyExpr(leaf.dim, source, rolledDim);

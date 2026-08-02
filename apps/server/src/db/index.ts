@@ -74,6 +74,9 @@ export interface EventRow {
   lon?: number | null;
   /** 0–100 from the native tracker's pings; null is unmeasured, never 0 (docs/04 § 2). */
   scroll_pct?: number | null;
+  /** Canonical JSON (sorted keys, no whitespace) from the prop registry; null = no bag —
+   * an empty `{}` is never stored (docs/03 § Props). */
+  props?: string | null;
 }
 
 export interface SessionRow {
@@ -135,6 +138,7 @@ const EVENT_NULLS: NullFill<EventRow> = {
   lat: null,
   lon: null,
   scroll_pct: null,
+  props: null,
 };
 
 const SESSION_NULLS: NullFill<SessionRow> = {
@@ -327,14 +331,14 @@ const SQL_INSERT_EVENT = `INSERT INTO events (
   ref_domain, ref_type, utm_source, utm_medium, utm_campaign,
   event_category, event_action, event_name, event_value,
   browser, browser_version, os, device_type, screen, lang,
-  country, region, city, lat, lon, scroll_pct
+  country, region, city, lat, lon, scroll_pct, props
 ) VALUES (
   @site_id, @ts, @local_date, @local_hour, @type, @visitor_id, @session_id, @seq,
   @hostname, @path, @title, @target_url,
   @ref_domain, @ref_type, @utm_source, @utm_medium, @utm_campaign,
   @event_category, @event_action, @event_name, @event_value,
   @browser, @browser_version, @os, @device_type, @screen, @lang,
-  @country, @region, @city, @lat, @lon, @scroll_pct
+  @country, @region, @city, @lat, @lon, @scroll_pct, @props
 )`;
 
 /** Counters and exit state are re-sent in full by the sessionizer; first-touch columns stick. */
@@ -483,6 +487,53 @@ const SQL_LIST_BOT_DROPS =
 /** Diagnostics (docs/04 § 5): per-site bot-drop counters since a local date (inclusive). */
 export function listBotDrops(db: Db, sinceLocalDate: string): BotDropRow[] {
   return stmt<BotDropRow>(db, SQL_LIST_BOT_DROPS).all(sinceLocalDate) as BotDropRow[];
+}
+
+// ---------------------------------------------------------------------------
+// Props governance (docs/03 § Props) — admin reads + the delete the scrub rides.
+// The write path (upserts, drop counters) lives with the registry in
+// pipeline/props.ts; these are the rows the settings view lists.
+// ---------------------------------------------------------------------------
+
+export interface PropKeyRow {
+  key: string;
+  first_seen: number;
+  last_seen: number;
+  events: number;
+  distinct_values: number;
+  over_cap_since: number | null;
+}
+
+const SQL_LIST_PROP_KEYS = `SELECT key, first_seen, last_seen, events, distinct_values, over_cap_since
+FROM prop_keys WHERE site_id = ? ORDER BY key`;
+
+export function listPropKeys(db: Db, siteId: number): PropKeyRow[] {
+  return stmt<PropKeyRow>(db, SQL_LIST_PROP_KEYS).all(siteId) as PropKeyRow[];
+}
+
+export interface PropDropRow {
+  local_date: string;
+  reason: string;
+  count: number;
+}
+
+const SQL_LIST_PROP_DROPS = `SELECT local_date, reason, count FROM prop_drops
+WHERE site_id = ? AND local_date >= ? ORDER BY local_date DESC, reason`;
+
+export function listPropDrops(db: Db, siteId: number, sinceLocalDate: string): PropDropRow[] {
+  return stmt<PropDropRow>(db, SQL_LIST_PROP_DROPS).all(siteId, sinceLocalDate) as PropDropRow[];
+}
+
+const SQL_DELETE_PROP_KEY = 'DELETE FROM prop_keys WHERE site_id = ? AND key = ?';
+const SQL_DELETE_PROP_VALUES = 'DELETE FROM prop_values WHERE site_id = ? AND key = ?';
+
+/** Removes one key's governance rows; true if the key existed. The stored bags
+ * are the scrub job's to clean (jobs/prop-scrub.ts). */
+export function deletePropKey(db: Db, siteId: number, key: string): boolean {
+  assertWritable(db);
+  const existed = stmt(db, SQL_DELETE_PROP_KEY).run(siteId, key).changes > 0;
+  stmt(db, SQL_DELETE_PROP_VALUES).run(siteId, key);
+  return existed;
 }
 
 const SQL_COUNT_EVENTS = 'SELECT COUNT(*) FROM events';

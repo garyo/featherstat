@@ -594,4 +594,31 @@ describe('POST /api/query', () => {
     const rechecked = (await recheck.json()) as QueryResponse;
     expect(rechecked.results.kpis).toMatchObject({ rows: [{ visitors: 1, pageviews: 1 }] });
   });
+
+  it('400s a hostile prop:<key> dim and answers a valid one through the bound path', async () => {
+    // The key charset is the wall — a quote can never reach the JSON path.
+    const hostile = await post({
+      ...BODY,
+      queries: [{ id: 'q', metrics: ['pageviews'], dim: 'prop:a"||(SELECT 1)||"' }],
+    });
+    expect(hostile.status).toBe(400);
+
+    const res = await post({
+      ...BODY,
+      queries: [
+        {
+          id: 'q',
+          metrics: ['pageviews'],
+          filters: [{ dim: 'prop:plan', op: 'eq', value: "'; DELETE FROM events; --" }],
+        },
+      ],
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as QueryResponse;
+    // No bag matches: an honest zero, and nothing broke.
+    expect(body.results.q).toMatchObject({ rows: [{ pageviews: 0 }] });
+    const recheck = await post(BODY);
+    const rechecked = (await recheck.json()) as QueryResponse;
+    expect(rechecked.results.kpis).toMatchObject({ rows: [{ visitors: 1, pageviews: 1 }] });
+  });
 });

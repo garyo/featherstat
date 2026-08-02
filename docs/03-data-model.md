@@ -53,10 +53,13 @@ CREATE TABLE events (
                                           --   the dashboard codes US/CA for display
   city        TEXT,
   lat REAL, lon REAL,
-  scroll_pct  INTEGER                     -- 0-100, native tracker only (v5).
+  scroll_pct  INTEGER,                    -- 0-100, native tracker only (v5).
                                           --   NULL is UNMEASURED, never 0: the
                                           --   shim, the importer and every row
                                           --   before v5 have no reading.
+  props       TEXT                        -- custom props (§ Props): canonical
+                                          --   JSON, sorted keys, no whitespace;
+                                          --   NULL = no bag ('{}' never stored)
 );
 
 CREATE INDEX ix_events_site_ts   ON events (site_id, ts);
@@ -501,6 +504,53 @@ new ops and rolling windows are slow before they are ever wrong). The rules:
 machine-generated metric × dimension × bucket × filter matrix over the replay
 corpus, executing every rollup-routed shape against BOTH stores and requiring
 identical rows and a byte-identical `measures` header.
+
+## Props
+
+Custom event properties: a small `{key: value}` bag any native-tracker hit
+except a ping may carry (`track(action, {props})` / `page(url, title, props)`),
+stored on the event row as **canonical JSON** — sorted keys, no whitespace —
+in `events.props` (`NULL` = no bag; an emptied bag is never stored as `{}`).
+Values are strings (≤ 200 chars), finite numbers or booleans. **The Matomo
+shim never produces props, permanently** (docs/04 § 1): the shim exists to
+reproduce Matomo's wire behavior during a bake, and Matomo has no such field.
+
+**Caps, enforced at ingest** (`pipeline/props.ts`, constants in
+`packages/shared`): key charset `[a-z0-9_-]{1,32}` · 10 props/event (extras
+dropped in sorted key order) · 1 KiB canonical JSON per bag (past it the bag
+drops whole) · **30 keys per site** (new keys past it drop) · **500 distinct
+values per key** — a new value past that is stored as the `"(other)"`
+sentinel and `prop_keys.over_cap_since` records when the clamp engaged. Every
+breach clamps silently and counts in `prop_drops` (reasons: `bad_key`,
+`oversize`, `ip_shaped`, `too_many_keys`, `value_clamped`, `on_ping`) —
+a beacon never bounces (invariant 4).
+
+**Governance tables** — `prop_keys` (per-site key stats: first/last seen,
+events, distinct values, over-cap timestamp), `prop_values` (the distinct
+values, JSON-encoded so `true` and `"true"` stay distinct), `prop_drops` (the
+diagnostics mirror of `bot_drops`). The in-memory `PropRegistry` loads a
+site's state lazily and runs ahead of the store between flushes; its durable
+deltas land **in the same flush transaction as the events they describe**
+(invariant 2), so a failed flush retries both together. A crash loses at most
+the between-flush in-memory deltas — the tables are the truth a restart
+reloads.
+
+**Query surface**: `prop:<key>` is an event-only dimension compiling to
+`json_extract(events.props, ?)` with the path **bound**, never in the SQL
+text (invariant 9); session metrics under it earn the standing `unsupported`
+refusal, and the planner routes every prop shape to raw — prop dims are never
+rolled up. Note SQLite's JSON semantics show through in groups: a boolean
+prop groups as `1`/`0`. Props stay **off the realtime SSE wire** entirely.
+
+**Privacy posture**: props are operator-owned data and sit OUTSIDE the
+cookieless-identity guarantee — nothing stops a determined operator putting
+an identifier in a bag. The mitigations are caps (cardinality bounds make
+per-visitor identifiers self-defeating), an IP-shape scrub on values
+(invariant 3 posture), keeping bags off the SSE wire, and the admin surface
+(`GET /api/admin/props`, `DELETE /api/admin/props/:site/:key` → registry
+delete + chunked `json_remove` scrub + data-epoch bump). The residual risk —
+an operator storing, say, an email per event — is theirs, is visible in the
+governance tables, and is erasable with the delete-key scrub.
 
 ## Size & retention
 

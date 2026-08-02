@@ -255,7 +255,7 @@ CREATE TABLE prop_values (
 CREATE TABLE prop_drops (
   site_id    INTEGER NOT NULL,
   local_date TEXT NOT NULL,
-  reason     TEXT NOT NULL,               -- 'too_many_keys'|'oversize'|'bad_key'|'ip_shaped'|'value_clamped'
+  reason     TEXT NOT NULL,               -- 'too_many_keys'|'oversize'|'bad_key'|'ip_shaped'|'value_clamped'|'on_ping'
   count      INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (site_id, local_date, reason)
 );

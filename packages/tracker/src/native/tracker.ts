@@ -19,10 +19,14 @@ export interface TrackerConfig {
   idleSeconds?: number;
 }
 
+/** Custom props, sent untouched — the server owns every cap (docs/03 § Props). */
+export type TrackProps = Record<string, string | number | boolean>;
+
 export interface EventProps {
   category?: string;
   name?: string;
   value?: number;
+  props?: TrackProps;
 }
 
 /** One hit of the collect payload; `JSON.stringify` drops the absent fields. */
@@ -40,6 +44,7 @@ interface NativeHit {
   lang?: string;
   /** How far down this page the reader has got, 0–100 (scroll.ts). Pings only. */
   scroll?: number;
+  props?: TrackProps;
 }
 
 interface Runtime {
@@ -222,7 +227,11 @@ export function init(config: TrackerConfig): () => void {
 }
 
 /** Record a pageview; defaults to the current document. Repeats are dropped (repeat.ts). */
-export function page(url: string = location.href, title: string = document.title): void {
+export function page(
+  url: string = location.href,
+  title: string = document.title,
+  props?: TrackProps,
+): void {
   if (!runtime) return;
   const at = Date.now();
   // One navigation an SPA router announced twice — through the history hook and
@@ -244,6 +253,7 @@ export function page(url: string = location.href, title: string = document.title
     referrer: referrer || undefined,
     screen: `${screen.width}x${screen.height}`,
     lang: navigator.language,
+    props,
   });
   // Read the opening depth straight away, so the first ping carries a real
   // figure rather than the 0 of a page nobody has scrolled yet — on a page that
@@ -260,6 +270,7 @@ export function track(action: string, props: EventProps = {}): void {
     action,
     name: props.name,
     value: props.value,
+    props: props.props,
   });
 }
 

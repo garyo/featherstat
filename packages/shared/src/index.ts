@@ -5,6 +5,7 @@ import {
   type Dimension,
   DimensionSchema,
   FiltersSchema,
+  PROP_KEY_PATTERN,
   type SegmentFilterNode,
   SegmentFilterNodeSchema,
 } from './filters.ts';
@@ -102,6 +103,30 @@ export type SiteInfo = z.infer<typeof SiteInfoSchema>;
 export const HitTypeSchema = z.enum(['pageview', 'event', 'outlink', 'download', 'ping']);
 export type HitType = z.infer<typeof HitTypeSchema>;
 
+// ---------------------------------------------------------------------------
+// Custom props (docs/03 § Props) — native tracker only; the Matomo shim never
+// produces them. Caps are enforced server-side in pipeline/props.ts; breaches
+// clamp and count in prop_drops, never bounce the beacon (invariant 4).
+// ---------------------------------------------------------------------------
+
+/** Props one event may carry; extras past this are dropped in sorted key order. */
+export const PROPS_PER_EVENT = 10;
+/** Canonical-JSON byte ceiling for one event's bag; past it the bag is dropped whole. */
+export const PROP_BAG_MAX_BYTES = 1024;
+/** Distinct keys one site may accumulate; new keys past this are dropped. */
+export const PROP_KEYS_PER_SITE = 30;
+/** Distinct values one key may accumulate; new values past this clamp to the sentinel. */
+export const PROP_VALUES_PER_KEY = 500;
+/** What a value clamped by the per-key cardinality cap is stored as. */
+export const PROP_VALUE_OTHER = '(other)';
+
+/** One event's prop bag as validated at the boundary; the registry caps the rest. */
+export const PropsSchema = z.record(
+  z.string().regex(PROP_KEY_PATTERN),
+  z.union([z.string().max(200), z.number().finite(), z.boolean()]),
+);
+export type Props = z.infer<typeof PropsSchema>;
+
 export const EventPayloadSchema = z.object({
   category: z.string().min(1).max(200),
   action: z.string().min(1).max(200),
@@ -136,6 +161,9 @@ export const HitSchema = z.object({
    * page; absent means unmeasured, which is not the same as 0.
    */
   scrollPct: z.number().int().min(0).max(100).optional(),
+  /** Custom props, native tracker only (docs/03 § Props). Post-parse boundary:
+   * no catch here — the collect parser already degraded a malformed bag. */
+  props: PropsSchema.optional(),
 });
 export type Hit = z.infer<typeof HitSchema>;
 
@@ -159,6 +187,8 @@ export const CollectHitSchema = z.object({
   screen: z.string().max(20).optional().catch(undefined),
   lang: z.string().max(35).optional().catch(undefined),
   scroll: z.number().int().min(0).max(100).optional().catch(undefined),
+  /** A malformed bag costs the bag, never the hit (invariant 4). */
+  props: PropsSchema.optional().catch(undefined),
 });
 export type CollectHit = z.infer<typeof CollectHitSchema>;
 
@@ -602,6 +632,38 @@ export interface AdminDiagnostics {
   /** Per site and site-local date, most recent first (last 7 days). */
   botDrops: AdminBotDrops[];
 }
+
+// ---------------------------------------------------------------------------
+// Props governance (docs/03 § Props, docs/04 § 5) — the admin surface's contract
+// ---------------------------------------------------------------------------
+
+/** One `prop_keys` row as the settings view reads it. */
+export const AdminPropKeySchema = z.object({
+  key: z.string(),
+  firstSeen: z.number(),
+  lastSeen: z.number(),
+  /** Stored event rows carrying this key. */
+  events: z.number(),
+  distinctValues: z.number(),
+  /** Set when the per-key value-cardinality clamp engaged; null while under cap. */
+  overCapSince: z.number().nullable(),
+});
+export type AdminPropKey = z.infer<typeof AdminPropKeySchema>;
+
+/** One recent `prop_drops` counter — the diagnostics mirror of bot drops. */
+export const AdminPropDropSchema = z.object({
+  localDate: z.string(),
+  reason: z.string(),
+  count: z.number(),
+});
+export type AdminPropDrop = z.infer<typeof AdminPropDropSchema>;
+
+/** `GET /api/admin/props?site=<id>` */
+export const AdminPropsResponseSchema = z.object({
+  keys: z.array(AdminPropKeySchema),
+  drops: z.array(AdminPropDropSchema),
+});
+export type AdminPropsResponse = z.infer<typeof AdminPropsResponseSchema>;
 
 // ---------------------------------------------------------------------------
 // API tokens (docs/04 § 5) — scoped read-only principals for scripts/MCP

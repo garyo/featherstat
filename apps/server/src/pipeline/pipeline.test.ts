@@ -107,6 +107,32 @@ describe('createPipeline', () => {
     expect(session).toEqual({ pageviews: 1, engaged_ms: 10_000 });
   });
 
+  it('admits props through the registry and lands the bag with its event (docs/03 § Props)', () => {
+    pipeline.sink(
+      [
+        hit({ props: { plan: 'pro', beta: true } }),
+        hit({ type: 'ping', props: { plan: 'pro' } }), // stripped + counted
+      ],
+      ctx(),
+    );
+    pipeline.flush();
+    const bags = db.prepare('SELECT type, props FROM events ORDER BY id').all() as Array<{
+      type: string;
+      props: string | null;
+    }>;
+    expect(bags).toEqual([
+      { type: 'pageview', props: '{"beta":true,"plan":"pro"}' },
+      { type: 'ping', props: null },
+    ]);
+    expect(db.prepare('SELECT reason, count FROM prop_drops WHERE site_id = 1').all()).toEqual([
+      { reason: 'on_ping', count: 1 },
+    ]);
+    expect(db.prepare('SELECT key, events FROM prop_keys').all()).toEqual([
+      { key: 'beta', events: 1 },
+      { key: 'plan', events: 1 },
+    ]);
+  });
+
   it('notifies onFlush hooks with the sites that changed', () => {
     const hook = vi.fn();
     pipeline.onFlush(hook);

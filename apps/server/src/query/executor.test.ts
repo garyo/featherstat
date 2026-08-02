@@ -93,6 +93,7 @@ beforeAll(() => {
         browser: 'Chrome',
         ref_domain: 'google.com',
         ref_type: 'search',
+        props: '{"plan":"pro"}',
       })),
       session: {
         country: 'US',
@@ -109,7 +110,7 @@ beforeAll(() => {
       sess: 2,
       hour: 12,
       engaged: 120_000,
-      pages: [{ path: '/blog', country: 'DE' }],
+      pages: [{ path: '/blog', country: 'DE', props: '{"plan":"free"}' }],
       session: { country: 'DE', entry_path: '/blog', exit_path: '/blog' },
     });
     // C: single page, no engagement — the only bounce.
@@ -417,6 +418,60 @@ describe('filters', () => {
     });
     expect(resultOf(response, 'q').rows).toEqual([{ pageviews: 0 }]);
     expect(resultOf(response, 'like').rows).toEqual([{ pageviews: 0 }]);
+  });
+});
+
+describe('prop:<key> dimensions end-to-end (docs/03 § Props)', () => {
+  it('groups by a prop key, bag-less rows forming the NULL group', () => {
+    const response = run({
+      queries: [{ id: 'q', metrics: ['pageviews'], dim: 'prop:plan' }],
+    });
+    expect(resultOf(response, 'q').rows).toEqual([
+      { 'prop:plan': 'pro', pageviews: 3 },
+      { 'prop:plan': null, pageviews: 2 }, // C and D never sent a bag
+      { 'prop:plan': 'free', pageviews: 1 },
+    ]);
+  });
+
+  it('filters by a prop value, and is_null selects the bag-less rows', () => {
+    const eq = run({
+      queries: [
+        {
+          id: 'q',
+          metrics: ['visitors', 'pageviews'],
+          filters: [{ dim: 'prop:plan', op: 'eq', value: 'pro' }],
+        },
+      ],
+    });
+    expect(resultOf(eq, 'q').rows).toEqual([{ visitors: 1, pageviews: 3 }]);
+
+    const isNull = run({
+      queries: [
+        { id: 'q', metrics: ['pageviews'], filters: [{ dim: 'prop:plan', op: 'is_null' }] },
+      ],
+    });
+    expect(resultOf(isNull, 'q').rows).toEqual([{ pageviews: 2 }]);
+  });
+
+  it("scope:'session' on a prop leaf answers session metrics honestly", () => {
+    const response = run({
+      queries: [
+        {
+          id: 'q',
+          metrics: ['visits', 'bounce_rate'],
+          filters: [{ dim: 'prop:plan', op: 'eq', value: 'pro', scope: 'session' }],
+        },
+      ],
+    });
+    // Only visit A carried plan=pro, and it is not a bounce.
+    expect(resultOf(response, 'q').rows).toEqual([{ visits: 1, bounce_rate: 0 }]);
+  });
+
+  it('refuses session metrics under a hit-scoped prop dim, like any event-only dim', () => {
+    const response = run({
+      queries: [{ id: 'q', metrics: ['bounce_rate'], dim: 'prop:plan' }],
+    });
+    expect(response.results.q).toMatchObject({ error: { code: 'unsupported' } });
   });
 });
 

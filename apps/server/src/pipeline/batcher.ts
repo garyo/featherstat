@@ -15,6 +15,7 @@ import {
   type SessionSnapshot,
   snapshotSession,
 } from '../rollup/apply.ts';
+import type { PropRegistry } from './props.ts';
 
 export interface FlushSummary {
   events: number;
@@ -64,6 +65,9 @@ export class WriteBatcher {
   constructor(
     private readonly db: Db,
     private readonly intervalMs: number = BATCH_INTERVAL_MS,
+    /** Prop-registry deltas ride the same flush transaction as the events they
+     * shaped (docs/03 § Props, invariant 2) — exactly as rollups do. */
+    private readonly props?: PropRegistry,
   ) {}
 
   start(): void {
@@ -111,7 +115,14 @@ export class WriteBatcher {
   }
 
   get pending(): number {
-    return this.events.length + this.sessions.size + this.botDrops.size;
+    return (
+      this.events.length +
+      this.sessions.size +
+      this.botDrops.size +
+      // A prop drop can queue with no event beside it (an orphan heartbeat's
+      // bag); counting it here is what gets that flush scheduled at all.
+      (this.props?.pendingCount ?? 0)
+    );
   }
 
   flush(): FlushSummary | undefined {
@@ -139,6 +150,7 @@ export class WriteBatcher {
           incrementBotDrops(this.db, drop.siteId, drop.localDate, drop.count);
         }
         applyRollups(this.db, sinceEventId, events, deltas);
+        this.props?.apply(this.db);
         this.beforeCommit?.();
       });
     } catch (error) {
@@ -153,6 +165,7 @@ export class WriteBatcher {
     // Only now, after the commit, does "committed" move: better-sqlite3 is
     // synchronous, so nothing can have mutated the rows since they were written.
     for (const row of sessions) this.committed.set(row, snapshotSession(row));
+    this.props?.committed();
     this.events = [];
     this.sessions.clear();
     this.botDrops.clear();

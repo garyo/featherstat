@@ -133,6 +133,10 @@ query strings + edge cases) defines "compatible". CI replays it and asserts
 the normalized `Hit` rows. If a captured production request ever normalizes
 differently, that's a failing test, not an opinion.
 
+The shim path **never produces custom props, permanently** (docs/03 § Props):
+Matomo's wire has no such field, and the shim's job is to be Matomo's wire.
+Props are a native-collector feature only (§ 2).
+
 ## 2. Native tracking (new sites, R14)
 
 - `POST /api/collect` — JSON, single or batch:
@@ -161,9 +165,19 @@ differently, that's a failing test, not an opinion.
   despite living under the otherwise-gated `/api/` prefix — the auth route
   matrix in `auth/app.test.ts` holds it that way.
 
+- **Custom props**: any non-ping hit may carry
+  `props: {key: string | number | boolean}` — e.g.
+  `{ "type": "event", "category": "share", "action": "copy-link",
+  "props": { "plan": "pro", "beta": true } }`. The tracker sends the bag
+  untouched (zero validation bytes client-side); the server enforces every
+  cap and clamps rather than bounces (docs/03 § Props). A malformed bag costs
+  the bag, never the hit. Props on a ping are stripped and counted.
+
 - `packages/tracker` ships `tracker.js` (< 2 KB gz, ESM):
   `init({site, endpoint})`, auto pageviews with a `history` hook (opt-out),
-  auto outlink/download, focus-gated engagement pings, `track(name, props?)`,
+  auto outlink/download, focus-gated engagement pings,
+  `track(action, {category, name, value, props})`,
+  `page(url?, title?, props?)` — auto pageviews send no props —
   and scroll depth (below).
   CORS: `Access-Control-Allow-Origin: *` on collect only — belt and braces,
   since `send.ts` keeps every beacon CORS-safelisted (`text/plain` body,
@@ -413,6 +427,12 @@ batch itself still succeeds, and never returns wrong numbers.
   `visitors`, …) exactly as an event-only dimension refuses session metrics;
   a `scope: "session"` filter on one names a session attribute and blocks
   nothing. Plus `bucket`: `hour|day|week|month`.
+  **`prop:<key>`** (key charset `[a-z0-9_-]{1,32}`) is the one open-ended
+  dimension family: it groups/filters over the event's custom-prop bag
+  (docs/03 § Props), compiled to `json_extract(events.props, ?)` with the
+  path bound server-side — the key never enters SQL text. Event-only (session
+  metrics under it refuse), always answered from raw rows, works with every
+  filter op (`is_null` = the key is absent) and with `scope: "session"`.
   Filter ops: `eq`, `neq`, `in`, `contains`, `starts`, `glob` (SQLite GLOB,
   pattern bound as a parameter, length- and wildcard-capped), and `is_null`
   (no value — matches the NULL group a breakdown returns, e.g. direct traffic
@@ -611,7 +631,14 @@ every principal — a viewer or token composes queries with them exactly as the
 admin does), share/API tokens, ntfy notification settings (`GET`/`PUT`/`DELETE
 /api/admin/ntfy`, R16 — `DELETE` is the off switch; the endpoint URL must be
 https or loopback-http, carry no query/fragment, and never point at link-local
-or cloud-metadata hosts), auth (`login`, `logout`, first-run setup). Read-only
+or cloud-metadata hosts), auth (`login`, `logout`, first-run setup), and props
+governance (docs/03 § Props): `GET /api/admin/props?site=<id>` lists the
+site's `prop_keys` stats plus its last week of `prop_drops`
+(`AdminPropsResponseSchema` in `packages/shared`), and
+`DELETE /api/admin/props/:site/:key` drops the key's registry rows (and the
+live registry's cache) immediately, then scrubs stored bags with a chunked,
+watermarked `json_remove` job (`jobs/prop-scrub.ts` — resumed at boot after a
+crash) that bumps the data epoch on completion so pre-scrub ETags expire. Read-only
 dashboard access via `GET /share/:token`: the server re-validates the stored
 layout and assembles the SAME batch the in-app view would run (widget queries
 plus derived companions, previous-period compare), so the link cannot be

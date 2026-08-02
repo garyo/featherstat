@@ -4,6 +4,7 @@ import { type FlushHook, WriteBatcher } from './batcher.ts';
 import { isBotUserAgent, parseUserAgent, preferredLanguage } from './enrich.ts';
 import { type GeoProvider, NullProvider } from './geo.ts';
 import { Identity } from './identity.ts';
+import { PropRegistry } from './props.ts';
 import { loadOpenSessions, priorSessionLookup, Sessionizer } from './sessionizer.ts';
 
 /** Where normalized hits go. `createPipeline` builds the real one; routes call it. */
@@ -25,6 +26,8 @@ export interface Pipeline {
   shutdown(): void;
   onHit(hook: HitHook): void;
   onFlush(hook: FlushHook): void;
+  /** The live prop registry — the admin delete route invalidates through it. */
+  props: PropRegistry;
 }
 
 /**
@@ -35,7 +38,8 @@ export interface Pipeline {
 export function createPipeline(db: Db, options: PipelineOptions = {}): Pipeline {
   const geo = options.geo ?? new NullProvider();
   const identity = new Identity(db);
-  const batcher = new WriteBatcher(db, options.batchIntervalMs);
+  const props = new PropRegistry(db);
+  const batcher = new WriteBatcher(db, options.batchIntervalMs, props);
   // Every session row read back from the store is COMMITTED state: seed the
   // batcher's rollup snapshots before the sessionizer can mutate it, or the
   // next flush would book a revived visit as a brand-new one (docs/03 § Rollups).
@@ -63,6 +67,18 @@ export function createPipeline(db: Db, options: PipelineOptions = {}): Pipeline 
         batcher.addBotDrop(site.id, localClock(site.timezone, ctx.receivedAt).date);
         continue;
       }
+      // Bag admission runs only when a bag exists — the hot path pays nothing
+      // for hits without props (docs/03 § Props).
+      const admitted =
+        hit.props === undefined
+          ? undefined
+          : props.admit(
+              site.id,
+              hit.props,
+              localClock(site.timezone, ctx.receivedAt).date,
+              hit.type,
+              ctx.receivedAt,
+            );
       const sessionized = sessionizer.process({
         site,
         hit,
@@ -71,6 +87,7 @@ export function createPipeline(db: Db, options: PipelineOptions = {}): Pipeline 
         device,
         geo: geoResult,
         lang: preferredLanguage(ctx.acceptLanguage, hit.lang),
+        props: admitted,
       });
       if (sessionized === undefined) continue; // an orphan heartbeat: no visit to continue
       const { event, session } = sessionized;
@@ -90,5 +107,6 @@ export function createPipeline(db: Db, options: PipelineOptions = {}): Pipeline 
       hitHooks.push(hook);
     },
     onFlush: (hook) => batcher.onFlush(hook),
+    props,
   };
 }

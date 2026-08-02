@@ -2,6 +2,7 @@ import {
   EVENT_ONLY_DIMENSIONS,
   EVENT_ONLY_METRICS,
   type Filter,
+  isPropDimension,
   type Query,
   type QueryResponse,
   SESSION_ONLY_DIMENSIONS,
@@ -59,7 +60,11 @@ export function withoutBlockedMetrics(
   filters: readonly Filter[],
 ): Query[] {
   const hit = filters.filter((filter) => filter.scope !== 'session');
-  const blocksSessions = hit.some((filter) => EVENT_ONLY_DIMS.has(filter.dim));
+  // `prop:` dims live only on event rows, so they block session metrics exactly
+  // as the enumerated event-only dimensions do (docs/03 § Props).
+  const blocksSessions = hit.some(
+    (filter) => EVENT_ONLY_DIMS.has(filter.dim) || isPropDimension(filter.dim),
+  );
   const blocksEvents = hit.some((filter) => SESSION_ONLY_DIMS.has(filter.dim));
   if (!blocksSessions && !blocksEvents) return [...queries];
   return queries.map((query) => {
