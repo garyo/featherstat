@@ -314,6 +314,27 @@ describe('envelope filters', () => {
     expect(resultOf(response, 'ok').rows).toEqual([{ pageviews: 3 }]);
   });
 
+  it("scope:'session' lets a visited path pick whole journeys", () => {
+    // "Journeys of sessions that visited /pricing": A and C. The filter names
+    // an event-only dimension, but session scope asks about the session's own
+    // events — so the refusal above must NOT trigger, and the answer is the
+    // WHOLE journey of each matching session, not just the matching step.
+    const response = run({
+      filters: [{ dim: 'path', op: 'eq', value: '/pricing', scope: 'session' }],
+      queries: QUERIES,
+    });
+    expect(resultOf(response, 'sankey').rows).toEqual([
+      { step: 1, from: '/', to: '/docs', sessions: 1 },
+      { step: 1, from: '/', to: '/pricing', sessions: 1 },
+      { step: 2, from: '/docs', to: 'event: cta · click', sessions: 1 },
+      { step: 3, from: 'event: cta · click', to: '/pricing', sessions: 1 },
+    ]);
+    expect(resultOf(response, 'journeys').rows).toEqual([
+      { steps: ['/', '/docs'], sessions: 1, avg_engaged_ms: 60_000, exit_rate: 0 },
+      { steps: ['/', '/pricing'], sessions: 1, avg_engaged_ms: 5_000, exit_rate: 1 },
+    ]);
+  });
+
   it('treats injection attempts as literal values', () => {
     const response = run({
       filters: [{ dim: 'country', op: 'eq', value: "' OR '1'='1" }],

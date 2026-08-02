@@ -299,6 +299,116 @@ describe('compileMetricQuery', () => {
     expect(statement?.params).toEqual([5]);
   });
 
+  it('compiles any/not trees to parenthesized, fully parameterized SQL', () => {
+    const compiled = compile({
+      metrics: ['pageviews'],
+      filters: [
+        {
+          any: [
+            { dim: 'country', op: 'eq', value: 'US' },
+            { not: { dim: 'path', op: 'starts', value: '/docs' } },
+          ],
+        },
+      ],
+    });
+    const statement = compiled.statements[0];
+    expect(statement?.sql).toContain(
+      "(e.country = ? OR NOT COALESCE((e.path LIKE ? ESCAPE '\\'), 0))",
+    );
+    expect(statement?.params).toEqual(['US', '/docs%']);
+  });
+
+  it('never interpolates a filter value from any nested position', () => {
+    const hostile = "'; DROP TABLE events; --";
+    const compiled = compile({
+      metrics: ['pageviews'],
+      filters: [
+        {
+          any: [
+            { not: { dim: 'path', op: 'glob', value: hostile } },
+            { all: [{ dim: 'title', op: 'contains', value: hostile }] },
+          ],
+        },
+      ],
+    });
+    const statement = compiled.statements[0];
+    expect(statement?.sql).not.toContain('DROP');
+    expect(statement?.params).toEqual([hostile, `%${hostile}%`]);
+  });
+
+  it("compiles 'glob' to a bound GLOB, the pattern never in the SQL text", () => {
+    const compiled = compile({
+      metrics: ['pageviews'],
+      filters: [{ dim: 'path', op: 'glob', value: '/docs/*' }],
+    });
+    const statement = compiled.statements[0];
+    expect(statement?.sql).toContain('WHERE e.path GLOB ?');
+    expect(statement?.sql).not.toContain('/docs/*');
+    expect(statement?.params).toEqual(['/docs/*']);
+  });
+
+  it("negation is NULL-safe: `not` compiles through COALESCE, matching leaf 'neq'", () => {
+    // A row whose dimension is NULL evaluates `eq` to SQL NULL; a bare NOT would
+    // drop it from BOTH the filter and its negation. COALESCE pins it to false
+    // first, so not(eq) admits the NULL row exactly as `neq` (IS NOT) does.
+    const compiled = compile({
+      metrics: ['pageviews'],
+      filters: [{ not: { dim: 'ref_domain', op: 'eq', value: 'google.com' } }],
+    });
+    expect(compiled.statements[0]?.sql).toContain('NOT COALESCE((e.ref_domain = ?), 0)');
+  });
+
+  it("scope:'session' compiles as EXISTS over the session's non-ping events", () => {
+    const compiled = compile({
+      metrics: ['visits', 'bounce_rate'],
+      filters: [{ dim: 'path', op: 'eq', value: '/pricing', scope: 'session' }],
+    });
+    expect(compiled.statements.map((s) => s.table)).toEqual(['sessions']);
+    const statement = compiled.statements[0];
+    expect(statement?.sql).toContain(
+      "EXISTS (SELECT 1 FROM events e2 WHERE e2.session_id = s.id AND e2.type != 'ping' AND e2.path = ?)",
+    );
+    expect(statement?.params).toContain('/pricing');
+  });
+
+  it("scope:'session' on the events table semi-joins through the same bounds CTE", () => {
+    const compiled = compile({
+      metrics: ['pageviews'],
+      filters: [{ dim: 'path', op: 'eq', value: '/pricing', scope: 'session' }],
+    });
+    const sql = compiled.statements[0]?.sql ?? '';
+    expect(sql).toContain('e.session_id IN (SELECT e2.session_id');
+    // The subquery walks the window, never all history: it rides the bounds CTE.
+    expect(sql).toContain(
+      'events e2 JOIN bounds ON e2.site_id = bounds.site_id\n  AND e2.local_date BETWEEN bounds.from_date AND bounds.to_date',
+    );
+    expect(sql).toContain("WHERE e2.type != 'ping' AND e2.path = ?");
+  });
+
+  it('a session-scoped event-only dim never blocks session metrics; hit scope still does', () => {
+    const scoped = compileMetricQuery(
+      {
+        id: 'q',
+        metrics: ['engaged_ms'],
+        filters: [{ dim: 'path', op: 'eq', value: '/', scope: 'session' }],
+      },
+      [],
+      sites(1),
+    );
+    expect(isQueryError(scoped)).toBe(false);
+
+    const hit = compileMetricQuery(
+      {
+        id: 'q',
+        metrics: ['engaged_ms'],
+        filters: [{ dim: 'path', op: 'eq', value: '/', scope: 'hit' }],
+      },
+      [],
+      sites(1),
+    );
+    expect(hit).toHaveProperty(['error', 'code'], 'unsupported');
+  });
+
   it('applies global filters to every statement of a split query', () => {
     const compiled = compileMetricQuery(
       { id: 'q', metrics: ['pageviews', 'visits'] },

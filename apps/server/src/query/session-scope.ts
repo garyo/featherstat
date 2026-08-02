@@ -1,10 +1,11 @@
-import type { Filter, SiteWindow } from '@featherstat/shared';
+import { type FilterNode, filterLeaves, type SiteWindow } from '@featherstat/shared';
 import {
   boundsCte,
   boundsJoin,
   type CompileError,
   eventOnlyDimension,
-  filterSql,
+  filterNodeSql,
+  invalidLeaf,
   unsupported,
 } from './compiler.ts';
 
@@ -28,24 +29,26 @@ export interface SessionScope {
 export function sessionScope(
   /** Names the asking kind (plural) in the refusal message: "<subject> are session-scoped …". */
   subject: string,
-  filters: readonly Filter[],
+  filters: readonly FilterNode[],
   windows: readonly SiteWindow[],
   /** Extra session columns a kind needs downstream, e.g. `s.engaged_ms AS engaged_ms`. */
   columns: readonly string[] = [],
 ): SessionScope | CompileError {
-  for (const filter of filters) {
-    if (filter.op !== 'in' && Array.isArray(filter.value)) {
-      return unsupported(`filter op '${filter.op}' on '${filter.dim}' expects a single value`);
-    }
-    if (eventOnlyDimension(filter.dim)) {
+  const leaves = filters.flatMap(filterLeaves);
+  const invalid = invalidLeaf(leaves);
+  if (invalid !== undefined) return invalid;
+  for (const leaf of leaves) {
+    // A session-scoped leaf asks about the session's own events — that is
+    // honest here; only a HIT-scoped event-level predicate has no session answer.
+    if (leaf.scope !== 'session' && eventOnlyDimension(leaf.dim)) {
       return unsupported(
-        `${subject} are session-scoped and cannot honestly apply the event-level filter '${filter.dim}'`,
+        `${subject} are session-scoped and cannot honestly apply the event-level filter '${leaf.dim}'`,
       );
     }
   }
 
   const params: (string | number)[] = [];
-  const where = filters.map((filter) => filterSql(filter, 'sessions', params));
+  const where = filters.map((node) => filterNodeSql(node, 'sessions', windows, params));
   const sql = [
     `${boundsCte(windows)},`,
     'scoped AS (',

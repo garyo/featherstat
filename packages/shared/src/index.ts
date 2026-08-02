@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { RealtimeVisitor } from './alias.ts';
+import { type Dimension, DimensionSchema, FiltersSchema } from './filters.ts';
 import type { Measures } from './measures.ts';
 
 // ---------------------------------------------------------------------------
@@ -200,33 +201,6 @@ export const MetricSchema = z.enum([
 ]);
 export type Metric = z.infer<typeof MetricSchema>;
 
-export const DimensionSchema = z.enum([
-  'path',
-  'hostname',
-  'title',
-  'target_url',
-  'ref_domain',
-  'ref_type',
-  'utm_source',
-  'utm_medium',
-  'utm_campaign',
-  'country',
-  'region',
-  'city',
-  'browser',
-  'os',
-  'device_type',
-  'screen',
-  'lang',
-  'event_category',
-  'event_action',
-  'event_name',
-  'local_hour',
-  'weekday',
-  'site',
-]);
-export type Dimension = z.infer<typeof DimensionSchema>;
-
 export const BucketSchema = z.enum(['hour', 'day', 'week', 'month']);
 export type Bucket = z.infer<typeof BucketSchema>;
 
@@ -258,25 +232,13 @@ export const SESSION_ONLY_METRICS = [
   'views_per_visit',
 ] as const satisfies readonly Metric[];
 
-export const FilterSchema = z
-  .object({
-    dim: DimensionSchema,
-    op: z.enum(['eq', 'neq', 'in', 'contains', 'starts', 'is_null']),
-    /** Absent only for `is_null`, which names a group (e.g. direct traffic) that has no value. */
-    value: z.union([z.string().max(2048), z.array(z.string().max(2048)).max(100)]).optional(),
-  })
-  .refine((f) => (f.op === 'is_null' ? f.value === undefined : f.value !== undefined), {
-    message: "'is_null' takes no value; every other op requires one",
-  });
-export type Filter = z.infer<typeof FilterSchema>;
-
 export const MetricQuerySchema = z.object({
   id: z.string().min(1).max(64),
   metrics: z.array(MetricSchema).min(1).max(MAX_METRICS_PER_QUERY),
   dim: DimensionSchema.optional(),
   dim2: DimensionSchema.optional(),
   bucket: BucketSchema.optional(),
-  filters: z.array(FilterSchema).max(16).optional(),
+  filters: FiltersSchema.optional(),
   limit: z.number().int().min(1).max(1000).optional(),
 });
 export type MetricQuery = z.infer<typeof MetricQuerySchema>;
@@ -333,7 +295,7 @@ export const QueryRequestSchema = z.object({
   site: z.union([z.number().int().positive(), z.literal('all')]),
   range: RangeSchema,
   compare: z.enum(['previous', 'year']).optional(),
-  filters: z.array(FilterSchema).max(16).optional(),
+  filters: FiltersSchema.optional(),
   queries: z.array(QuerySchema).min(1).max(MAX_QUERIES_PER_BATCH),
 });
 export type QueryRequest = z.infer<typeof QueryRequestSchema>;
@@ -800,6 +762,7 @@ export interface VersionTick {
 }
 
 export * from './alias.ts';
+export * from './filters.ts';
 export * from './layout.ts';
 export * from './measures.ts';
 export * from './time.ts';

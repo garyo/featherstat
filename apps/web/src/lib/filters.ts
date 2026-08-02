@@ -52,6 +52,7 @@ const OP_WORDS: Record<Filter['op'], string> = {
   contains: 'contains',
   starts: 'starts with',
   is_null: '',
+  glob: 'matches',
 };
 
 /** Chip text: `Referrer: google.com`, `Referrer: Direct`, `Page: contains /blog`. */

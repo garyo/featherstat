@@ -1,6 +1,6 @@
 import {
   type DwellQuery,
-  type Filter,
+  type FilterNode,
   type Measures,
   PING_CLAMP_MS,
   type SiteWindow,
@@ -79,7 +79,7 @@ export const DWELL_MEASURES: Measures = {
 
 export function compileDwellQuery(
   query: DwellQuery,
-  filters: readonly Filter[],
+  filters: readonly FilterNode[],
   windows: readonly SiteWindow[],
 ): CompiledDwell | CompileError {
   const scope = sessionScope('dwell queries', filters, windows);

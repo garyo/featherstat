@@ -1,4 +1,4 @@
-import type { Filter, SequenceQuery, SiteWindow } from '@featherstat/shared';
+import type { FilterNode, SequenceQuery, SiteWindow } from '@featherstat/shared';
 import type { CompileError } from './compiler.ts';
 import { populationWhere } from './population.ts';
 import { sessionScope } from './session-scope.ts';
@@ -33,7 +33,7 @@ const LABEL = `COALESCE(CASE WHEN e.type = 'event'
 
 export function compileSequenceQuery(
   query: SequenceQuery,
-  filters: readonly Filter[],
+  filters: readonly FilterNode[],
   windows: readonly SiteWindow[],
 ): CompiledSequence | CompileError {
   const scope = sessionScope(

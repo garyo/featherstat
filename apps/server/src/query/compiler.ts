@@ -2,7 +2,9 @@ import {
   type Bucket,
   type Dimension,
   ENGAGEMENT_THRESHOLD_MS,
-  type Filter,
+  type FilterLeaf,
+  type FilterNode,
+  filterLeaves,
   type Measure,
   type MeasureComponents,
   type Measures,
@@ -44,7 +46,8 @@ import { populationSql } from './population.ts';
 export type Table = 'events' | 'sessions';
 
 interface DimSpec {
-  events: string;
+  /** Session-scoped predicates re-alias the events table, so this takes the alias. */
+  events: (alias: string) => string;
   sessions: string | null;
   /** Digit-string filter values bind as numbers, so expression dims compare correctly. */
   numeric?: boolean;
@@ -55,30 +58,35 @@ function weekdayExpr(alias: string): string {
   return `CAST(strftime('%w', ${alias}.local_date) AS INTEGER)`;
 }
 
+const col =
+  (name: string) =>
+  (alias: string): string =>
+    `${alias}.${name}`;
+
 const DIMS: Record<Dimension, DimSpec> = {
-  path: { events: 'e.path', sessions: null },
-  hostname: { events: 'e.hostname', sessions: null },
-  title: { events: 'e.title', sessions: null },
-  target_url: { events: 'e.target_url', sessions: null },
-  ref_domain: { events: 'e.ref_domain', sessions: 's.ref_domain' },
-  ref_type: { events: 'e.ref_type', sessions: 's.ref_type' },
-  utm_source: { events: 'e.utm_source', sessions: 's.utm_source' },
-  utm_medium: { events: 'e.utm_medium', sessions: 's.utm_medium' },
-  utm_campaign: { events: 'e.utm_campaign', sessions: 's.utm_campaign' },
-  country: { events: 'e.country', sessions: 's.country' },
-  region: { events: 'e.region', sessions: 's.region' },
-  city: { events: 'e.city', sessions: 's.city' },
-  browser: { events: 'e.browser', sessions: 's.browser' },
-  os: { events: 'e.os', sessions: 's.os' },
-  device_type: { events: 'e.device_type', sessions: 's.device_type' },
-  screen: { events: 'e.screen', sessions: null },
-  lang: { events: 'e.lang', sessions: null },
-  event_category: { events: 'e.event_category', sessions: null },
-  event_action: { events: 'e.event_action', sessions: null },
-  event_name: { events: 'e.event_name', sessions: null },
-  local_hour: { events: 'e.local_hour', sessions: null, numeric: true },
-  weekday: { events: weekdayExpr('e'), sessions: weekdayExpr('s'), numeric: true },
-  site: { events: 'e.site_id', sessions: 's.site_id', numeric: true },
+  path: { events: col('path'), sessions: null },
+  hostname: { events: col('hostname'), sessions: null },
+  title: { events: col('title'), sessions: null },
+  target_url: { events: col('target_url'), sessions: null },
+  ref_domain: { events: col('ref_domain'), sessions: 's.ref_domain' },
+  ref_type: { events: col('ref_type'), sessions: 's.ref_type' },
+  utm_source: { events: col('utm_source'), sessions: 's.utm_source' },
+  utm_medium: { events: col('utm_medium'), sessions: 's.utm_medium' },
+  utm_campaign: { events: col('utm_campaign'), sessions: 's.utm_campaign' },
+  country: { events: col('country'), sessions: 's.country' },
+  region: { events: col('region'), sessions: 's.region' },
+  city: { events: col('city'), sessions: 's.city' },
+  browser: { events: col('browser'), sessions: 's.browser' },
+  os: { events: col('os'), sessions: 's.os' },
+  device_type: { events: col('device_type'), sessions: 's.device_type' },
+  screen: { events: col('screen'), sessions: null },
+  lang: { events: col('lang'), sessions: null },
+  event_category: { events: col('event_category'), sessions: null },
+  event_action: { events: col('event_action'), sessions: null },
+  event_name: { events: col('event_name'), sessions: null },
+  local_hour: { events: col('local_hour'), sessions: null, numeric: true },
+  weekday: { events: weekdayExpr, sessions: weekdayExpr('s'), numeric: true },
+  site: { events: col('site_id'), sessions: 's.site_id', numeric: true },
 };
 
 /** Monday of the date's week: Sunday belongs to the week that started the previous Monday. */
@@ -385,8 +393,11 @@ export function boundsCte(windows: readonly SiteWindow[]): string {
  * index work either way (it is the dates the span touches); the instants trim
  * the two partial dates at the ends down to the hour.
  */
-export function boundsJoin(table: Table, windows: readonly SiteWindow[]): string {
-  const alias = table === 'events' ? 'e' : 's';
+export function boundsJoin(
+  table: Table,
+  windows: readonly SiteWindow[],
+  alias = table === 'events' ? 'e' : 's',
+): string {
   const scope = [
     `${alias}.site_id = bounds.site_id`,
     `${alias}.local_date BETWEEN bounds.from_date AND bounds.to_date`,
@@ -442,29 +453,30 @@ interface Group {
 
 export function compileMetricQuery(
   query: MetricQuery,
-  globalFilters: readonly Filter[],
+  globalFilters: readonly FilterNode[],
   windows: readonly SiteWindow[],
 ): CompiledQuery | CompileError {
   const filters = [...globalFilters, ...(query.filters ?? [])];
-  for (const filter of filters) {
-    if (filter.op !== 'in' && Array.isArray(filter.value)) {
-      return unsupported(`filter op '${filter.op}' on '${filter.dim}' expects a single value`);
-    }
-  }
+  const invalid = invalidLeaf(filters.flatMap(filterLeaves));
+  if (invalid !== undefined) return invalid;
 
   const groups: Group[] = [];
   if (query.bucket !== undefined) groups.push({ key: 'bucket', ...BUCKETS[query.bucket] });
   for (const dim of [query.dim, query.dim2]) {
-    if (dim !== undefined) groups.push({ key: dim, ...DIMS[dim] });
+    if (dim !== undefined) {
+      groups.push({ key: dim, events: DIMS[dim].events('e'), sessions: DIMS[dim].sessions });
+    }
   }
 
-  // Sessions become unusable as soon as any group or filter needs an event-level column.
+  // Sessions become unusable as soon as any group — or any HIT-scoped filter
+  // leaf — needs an event-level column. A session-scoped leaf never blocks:
+  // it asks about the session's events, which every table can answer.
   let sessionsBlocker: string | undefined;
   for (const group of groups) {
     if (group.sessions === null) sessionsBlocker ??= group.key;
   }
-  for (const filter of filters) {
-    if (DIMS[filter.dim].sessions === null) sessionsBlocker ??= filter.dim;
+  for (const leaf of filters.flatMap(filterLeaves)) {
+    if (leaf.scope !== 'session' && DIMS[leaf.dim].sessions === null) sessionsBlocker ??= leaf.dim;
   }
 
   const metrics = [...new Set(query.metrics)];
@@ -526,7 +538,7 @@ function buildStatement(
   table: Table,
   metrics: readonly Metric[],
   groups: readonly Group[],
-  filters: readonly Filter[],
+  filters: readonly FilterNode[],
   windows: readonly SiteWindow[],
   options: StatementOptions,
 ): CompiledStatement {
@@ -545,7 +557,7 @@ function buildStatement(
     params.push(...expr.params);
   }
 
-  const where = filters.map((filter) => filterSql(filter, table, params));
+  const where = filters.map((node) => filterNodeSql(node, table, windows, params));
 
   const lines = [
     boundsCte(windows),
@@ -574,9 +586,77 @@ function orderClause(groups: readonly Group[], firstMetric: Metric | undefined):
   return `ORDER BY "${firstMetric}" DESC, 1`;
 }
 
-export function filterSql(filter: Filter, table: Table, params: (string | number)[]): string {
+/** The one refusal a well-typed tree can still earn: a list value on a single-value op. */
+export function invalidLeaf(leaves: readonly FilterLeaf[]): CompileError | undefined {
+  for (const leaf of leaves) {
+    if (leaf.op !== 'in' && Array.isArray(leaf.value)) {
+      return unsupported(`filter op '${leaf.op}' on '${leaf.dim}' expects a single value`);
+    }
+  }
+  return undefined;
+}
+
+/**
+ * One FilterNode → one parenthesizable SQL predicate (CLAUDE.md invariant 9:
+ * identifiers from the tables above, every value bound). `not` compiles
+ * NULL-safely: a predicate over a NULL dimension evaluates to SQL NULL, and a
+ * bare NOT would keep the row out of BOTH the filter and its negation. COALESCE
+ * pins the unknown to false first, so `not(eq …)` matches a NULL row exactly as
+ * the leaf op `neq` (`IS NOT`) does.
+ */
+export function filterNodeSql(
+  node: FilterNode,
+  table: Table,
+  windows: readonly SiteWindow[],
+  params: (string | number)[],
+): string {
+  if ('all' in node) {
+    return `(${node.all.map((child) => filterNodeSql(child, table, windows, params)).join(' AND ')})`;
+  }
+  if ('any' in node) {
+    return `(${node.any.map((child) => filterNodeSql(child, table, windows, params)).join(' OR ')})`;
+  }
+  if ('not' in node) {
+    return `NOT COALESCE((${filterNodeSql(node.not, table, windows, params)}), 0)`;
+  }
+  if (node.scope === 'session') return sessionLeafSql(node, table, windows, params);
+  return filterSql(node, table, params);
+}
+
+/**
+ * A session-scoped leaf: "the session containing this row has ≥1 non-ping event
+ * matching the predicate". On the sessions table that is a correlated EXISTS
+ * riding ix_events_session; on the events table, a semi-join through the same
+ * bounds CTE the statement already scopes with — so the subquery walks the
+ * window, never all history. The predicate itself always reads the events
+ * table (aliased e2), which is what lets an event-only dimension like `path`
+ * scope a session-shaped question honestly.
+ */
+function sessionLeafSql(
+  leaf: FilterLeaf,
+  table: Table,
+  windows: readonly SiteWindow[],
+  params: (string | number)[],
+): string {
+  const pred = filterSql(leaf, 'events', params, 'e2');
+  if (table === 'sessions') {
+    return `EXISTS (SELECT 1 FROM events e2 WHERE e2.session_id = s.id AND e2.type != 'ping' AND ${pred})`;
+  }
+  return [
+    'e.session_id IN (SELECT e2.session_id',
+    `FROM ${boundsJoin('events', windows, 'e2')}`,
+    `WHERE e2.type != 'ping' AND ${pred})`,
+  ].join(' ');
+}
+
+export function filterSql(
+  filter: FilterLeaf,
+  table: Table,
+  params: (string | number)[],
+  alias = 'e',
+): string {
   const spec = DIMS[filter.dim];
-  const column = table === 'events' ? spec.events : spec.sessions;
+  const column = table === 'events' ? spec.events(alias) : spec.sessions;
   if (column === null) throw new Error(`'${filter.dim}' filter reached a table without it`);
   const bind = (value: string): string | number =>
     spec.numeric === true && /^-?\d+$/.test(value) ? Number(value) : value;
@@ -604,6 +684,11 @@ export function filterSql(filter: Filter, table: Table, params: (string | number
     case 'starts':
       params.push(`${escapeLike(filter.value as string)}%`);
       return `${column} LIKE ? ESCAPE '\\'`;
+    case 'glob':
+      // The pattern is a bound parameter like every other value; the schema
+      // already capped its length and wildcard count.
+      params.push(filter.value as string);
+      return `${column} GLOB ?`;
   }
 }
 

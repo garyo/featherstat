@@ -408,6 +408,94 @@ describe('filters', () => {
   });
 });
 
+describe('filter trees', () => {
+  it("'glob' matches SQLite glob patterns against the column", () => {
+    const response = run({
+      queries: [
+        { id: 'd', metrics: ['pageviews'], filters: [{ dim: 'path', op: 'glob', value: '/d*' }] },
+        {
+          id: 'one',
+          metrics: ['pageviews'],
+          filters: [{ dim: 'path', op: 'glob', value: '/?ricing' }],
+        },
+      ],
+    });
+    expect(resultOf(response, 'd').rows).toEqual([{ pageviews: 2 }]);
+    expect(resultOf(response, 'one').rows).toEqual([{ pageviews: 1 }]);
+  });
+
+  it("'any' takes the union of its branches", () => {
+    const response = run({
+      filters: [
+        {
+          any: [
+            { dim: 'country', op: 'eq', value: 'US' },
+            { dim: 'country', op: 'eq', value: 'DE' },
+          ],
+        },
+      ],
+      queries: [{ id: 'q', metrics: ['visits'] }],
+    });
+    expect(resultOf(response, 'q').rows).toEqual([{ visits: 3 }]);
+  });
+
+  it('not(eq) matches a NULL row exactly as neq does; not(is_null) excludes it', () => {
+    const response = run({
+      queries: [
+        // Sessions B, C, D have no referrer: a NULL differs from google.com.
+        {
+          id: 'noteq',
+          metrics: ['visits'],
+          filters: [{ not: { dim: 'ref_domain', op: 'eq', value: 'google.com' } }],
+        },
+        {
+          id: 'neq',
+          metrics: ['visits'],
+          filters: [{ dim: 'ref_domain', op: 'neq', value: 'google.com' }],
+        },
+        // ... and a NULL referrer IS null, so its negation excludes those rows.
+        {
+          id: 'notnull',
+          metrics: ['visits'],
+          filters: [{ not: { dim: 'ref_domain', op: 'is_null' } }],
+        },
+      ],
+    });
+    expect(resultOf(response, 'noteq').rows).toEqual([{ visits: 3 }]);
+    expect(resultOf(response, 'neq').rows).toEqual(resultOf(response, 'noteq').rows);
+    expect(resultOf(response, 'notnull').rows).toEqual([{ visits: 1 }]);
+  });
+
+  it('negation stays NULL-safe over a whole subtree', () => {
+    // D's country is NULL: `any` evaluates to NULL for it, and only the
+    // COALESCE lets its negation claim the row. B (DE) matches too.
+    const response = run({
+      filters: [
+        {
+          not: {
+            any: [
+              { dim: 'country', op: 'eq', value: 'US' },
+              { dim: 'country', op: 'is_null' },
+            ],
+          },
+        },
+      ],
+      queries: [{ id: 'q', metrics: ['visits'] }],
+    });
+    expect(resultOf(response, 'q').rows).toEqual([{ visits: 1 }]);
+  });
+
+  it("scope:'session' answers both tables: the session that visited the path", () => {
+    // Only session A visited /docs. Session metrics count that one visit; the
+    // event metric counts ALL of A's pageviews (/ included), not just the match.
+    const response = run({
+      filters: [{ dim: 'path', op: 'eq', value: '/docs', scope: 'session' }],
+      queries: [{ id: 'q', metrics: ['visits', 'bounce_rate', 'pageviews'] }],
+    });
+    expect(resultOf(response, 'q').rows).toEqual([{ visits: 1, bounce_rate: 0, pageviews: 3 }]);
+  });
+});
+
 describe('compare windows', () => {
   it("'previous' answers the same query over the window immediately before", () => {
     const response = run({

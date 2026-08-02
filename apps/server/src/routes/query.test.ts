@@ -384,4 +384,33 @@ describe('POST /api/query', () => {
     const rechecked = (await recheck.json()) as QueryResponse;
     expect(rechecked.results.kpis).toMatchObject({ rows: [{ visitors: 1, pageviews: 1 }] });
   });
+
+  it('keeps hostile values inert from every nested tree position (any/not/glob)', async () => {
+    const hostile = "'; DELETE FROM events; --";
+    const res = await post({
+      ...BODY,
+      queries: [
+        {
+          id: 'q',
+          metrics: ['pageviews'],
+          filters: [
+            {
+              any: [
+                { not: { dim: 'path', op: 'glob', value: hostile } },
+                { all: [{ dim: 'title', op: 'contains', value: hostile }] },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as QueryResponse;
+    // not(glob hostile) matches every real path — the value stayed a pattern, not SQL.
+    expect(body.results.q).toMatchObject({ rows: [{ pageviews: 1 }] });
+    // The table survived and still answers.
+    const recheck = await post(BODY);
+    const rechecked = (await recheck.json()) as QueryResponse;
+    expect(rechecked.results.kpis).toMatchObject({ rows: [{ visitors: 1, pageviews: 1 }] });
+  });
 });
