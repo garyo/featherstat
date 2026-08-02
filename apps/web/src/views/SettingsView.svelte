@@ -1,17 +1,30 @@
 <script lang="ts">
-import type { AdminDiagnostics, SiteInfo } from '@featherstat/shared';
+import type { SiteInfo } from '@featherstat/shared';
 import type { AdminClient } from '../lib/admin.ts';
-import { botDropTotals, formatBytes, parseDomains, trackingSnippet } from '../lib/settings.ts';
-import { exactNumber } from '../widgets/format.ts';
-import NtfyPanel from './NtfyPanel.svelte';
+import { parseDomains, trackingSnippet } from '../lib/settings.ts';
+import AccessPanels from './settings/AccessPanels.svelte';
+import CampaignPanels from './settings/CampaignPanels.svelte';
+import DataPanels from './settings/DataPanels.svelte';
+import NotifyPanels from './settings/NotifyPanels.svelte';
+import QueryPanels from './settings/QueryPanels.svelte';
 
 /**
- * The settings view (docs/04 § 5): sites CRUD, the tracking snippet, password
- * change, notifications, diagnostics. All strings shown here are admin- or
- * visitor-authored — text interpolation only (registry.ts boundary note).
+ * The settings view (docs/04 § 5, docs/05 § Settings): a section nav over every
+ * admin surface — Sites & tracking (sites CRUD, the snippet, the password),
+ * Access (tokens + viewers), Query objects (segments + derived metrics +
+ * goals), Campaigns (registry + aliases + link builder), Notifications (ntfy +
+ * alert rules), Data (props + annotations + diagnostics). All strings shown
+ * here are admin- or visitor-authored — text interpolation only (registry.ts
+ * boundary note).
  *
- * Loaded as its own chunk (Shell.svelte): none of this belongs on the path to a
- * dashboard, which is what every session opens on.
+ * Loaded as ONE chunk (Shell.svelte): none of this belongs on the path to a
+ * dashboard, which is what every session opens on. The section panels are
+ * static imports, deliberately NOT nested `import()` sub-chunks: a dynamic
+ * import inside a non-entry chunk splits vite's preload helper (and every
+ * module this chunk shares with the entry graph) into preloaded siblings, and
+ * that costs first-load bytes the docs/05 budget does not have. One admin-only
+ * chunk, loaded on entering Settings, is the shape that leaves the entry graph
+ * untouched — build.guard.ts holds it to its own ceiling.
  */
 interface Props {
   admin: AdminClient;
@@ -22,6 +35,28 @@ interface Props {
 }
 
 let { admin, sites, onsiteschanged }: Props = $props();
+
+// ---------- sections ----------
+type Section = 'sites' | 'access' | 'query' | 'campaigns' | 'notify' | 'data';
+const SECTIONS: ReadonlyArray<{ id: Section; label: string }> = [
+  { id: 'sites', label: 'Sites & tracking' },
+  { id: 'access', label: 'Access' },
+  { id: 'query', label: 'Query objects' },
+  { id: 'campaigns', label: 'Campaigns' },
+  { id: 'notify', label: 'Notifications' },
+  { id: 'data', label: 'Data' },
+];
+let section = $state<Section>('sites');
+
+/** Panel props are uniform, so one component slot serves every section. */
+const PANELS: Record<Exclude<Section, 'sites'>, typeof AccessPanels> = {
+  access: AccessPanels,
+  query: QueryPanels,
+  campaigns: CampaignPanels,
+  notify: NotifyPanels,
+  data: DataPanels,
+};
+const Panel = $derived(section === 'sites' ? undefined : PANELS[section]);
 
 // ---------- sites ----------
 interface Draft {
@@ -134,165 +169,146 @@ async function changePassword(event: SubmitEvent): Promise<void> {
   }
 }
 
-// ---------- diagnostics ----------
-let diagnostics = $state<AdminDiagnostics | undefined>(undefined);
-let diagnosticsError = $state(false);
-$effect(() => {
-  void admin
-    .diagnostics()
-    .then((result) => {
-      diagnostics = result;
-    })
-    .catch(() => {
-      diagnosticsError = true;
-    });
-});
-
-const botTotals = $derived(diagnostics === undefined ? [] : botDropTotals(diagnostics.botDrops));
 const nameOf = (id: number): string => sites?.find((s) => s.id === id)?.name ?? `Site ${id}`;
 </script>
 
 <div class="filters">
-  <span class="compare-note">
-    Settings — sites, tracking snippet, password, notifications, diagnostics
-  </span>
+  <nav class="settings-nav" aria-label="Settings sections">
+    {#each SECTIONS as entry (entry.id)}
+      <button
+        class="btn slim"
+        class:primary={section === entry.id}
+        type="button"
+        aria-current={section === entry.id ? 'page' : undefined}
+        onclick={() => (section = entry.id)}
+      >
+        {entry.label}
+      </button>
+    {/each}
+  </nav>
 </div>
 
 <div class="grid">
-  <div class="card c6">
-    <h2>Sites</h2>
-    {#if sites === undefined}
-      <p class="widget-note">Loading…</p>
-    {:else}
-      <div class="site-list">
-        {#each sites as site (site.id)}
-          <div class="site-row">
-            <div class="site-meta">
-              <span class="site-name">{site.name}</span>
-              <span class="site-sub">
-                #{site.id} · {site.domains.length > 0 ? site.domains.join(', ') : 'no domains'} ·
-                {site.timezone}
-              </span>
-            </div>
-            <button class="btn subtle" type="button" onclick={() => startEdit(site)}>Edit</button>
-          </div>
-        {/each}
-      </div>
-      {#if draft !== undefined}
-        <form class="site-form" onsubmit={saveDraft}>
-          <h3>{draft.id === undefined ? 'New site' : `Edit ${nameOf(draft.id)}`}</h3>
-          <label class="field">
-            Name
-            <input bind:value={draft.name} required maxlength="200" />
-          </label>
-          <label class="field">
-            Domains (comma-separated; the first is canonical)
-            <input bind:value={draft.domains} placeholder="blog.example.com, www.example.com" />
-          </label>
-          <label class="field">
-            Timezone
-            <input bind:value={draft.timezone} list="timezones" required />
-          </label>
-          <datalist id="timezones">
-            {#each timezones as tz (tz)}<option value={tz}></option>{/each}
-          </datalist>
-          {#if siteError !== undefined}<p class="form-error" role="alert">{siteError}</p>{/if}
-          <div class="row">
-            <button class="btn primary" type="submit" disabled={siteBusy || draft.name.trim() === ''}>
-              {siteBusy ? 'Saving…' : 'Save'}
-            </button>
-            <button class="btn" type="button" onclick={() => (draft = undefined)}>Cancel</button>
-          </div>
-        </form>
+  {#if section === 'sites'}
+    <div class="card c6">
+      <h2>Sites</h2>
+      {#if sites === undefined}
+        <p class="widget-note">Loading…</p>
       {:else}
-        <button class="btn add-site" type="button" onclick={startAdd}>Add site</button>
-      {/if}
-    {/if}
-  </div>
-
-  <div class="card c6">
-    <h2>Tracking snippet</h2>
-    {#if snippet === undefined || snippetSiteId === undefined}
-      <p class="widget-note">Create a site first.</p>
-    {:else}
-      <label class="field snippet-site">
-        Site
-        <select
-          value={String(snippetSiteId)}
-          onchange={(e) => (snippetChoice = Number(e.currentTarget.value))}
-        >
-          {#each sites ?? [] as site (site.id)}
-            <option value={String(site.id)}>{site.name}</option>
-          {/each}
-        </select>
-      </label>
-      <pre class="snippet"><code>{snippet}</code></pre>
-      <button class="btn" type="button" onclick={copySnippet}>
-        {copied ? 'Copied ✓' : copyFailed ? 'Copy failed — select it manually' : 'Copy snippet'}
-      </button>
-      <p class="widget-note">
-        Paste before <code>&lt;/head&gt;</code>. Safe to add while another analytics tag is still
-        running — it shares no globals, so you can compare the two before switching. Already on
-        Matomo? Existing tags keep working against this server unchanged.
-      </p>
-    {/if}
-  </div>
-
-  <div class="card c6">
-    <h2>Change password</h2>
-    <form class="pw-form" onsubmit={changePassword}>
-      <label class="field">
-        Current password
-        <input type="password" bind:value={currentPassword} autocomplete="current-password" />
-      </label>
-      <label class="field">
-        New password (at least 8 characters)
-        <input type="password" bind:value={nextPassword} autocomplete="new-password" />
-      </label>
-      <label class="field">
-        Repeat new password
-        <input type="password" bind:value={confirmPassword} autocomplete="new-password" />
-      </label>
-      {#if passwordError !== undefined}<p class="form-error" role="alert">{passwordError}</p>{/if}
-      {#if passwordChanged}<p class="form-ok">Password changed. Other sessions were logged out.</p>{/if}
-      <button class="btn primary" type="submit" disabled={passwordBusy || !passwordReady}>
-        {passwordBusy ? 'Changing…' : 'Change password'}
-      </button>
-    </form>
-  </div>
-
-  <div class="card c6">
-    <h2>Diagnostics</h2>
-    {#if diagnosticsError}
-      <p class="widget-note">Diagnostics unavailable.</p>
-    {:else if diagnostics === undefined}
-      <p class="widget-note">Loading…</p>
-    {:else}
-      <dl class="diag">
-        <div><dt>Database size</dt><dd>{formatBytes(diagnostics.dbSizeBytes)}</dd></div>
-        <div><dt>Stored events</dt><dd>{exactNumber(diagnostics.eventCount)}</dd></div>
-        <div>
-          <dt>Bot hits dropped · 7 days</dt>
-          <dd>{exactNumber(botTotals.reduce((sum, [, count]) => sum + count, 0))}</dd>
-        </div>
-      </dl>
-      {#if botTotals.length > 0}
-        <div class="bot-list">
-          {#each botTotals as [siteId, count] (siteId)}
-            <div class="bot-row">
-              <span class="name">{nameOf(siteId)}</span>
-              <span class="num">{exactNumber(count)}</span>
+        <div class="site-list">
+          {#each sites as site (site.id)}
+            <div class="site-row">
+              <div class="site-meta">
+                <span class="site-name">{site.name}</span>
+                <span class="site-sub">
+                  #{site.id} · {site.domains.length > 0 ? site.domains.join(', ') : 'no domains'} ·
+                  {site.timezone}
+                </span>
+              </div>
+              <button class="btn subtle" type="button" onclick={() => startEdit(site)}>Edit</button>
             </div>
           {/each}
         </div>
+        {#if draft !== undefined}
+          <form class="site-form" onsubmit={saveDraft}>
+            <h3>{draft.id === undefined ? 'New site' : `Edit ${nameOf(draft.id)}`}</h3>
+            <label class="field">
+              Name
+              <input bind:value={draft.name} required maxlength="200" />
+            </label>
+            <label class="field">
+              Domains (comma-separated; the first is canonical)
+              <input bind:value={draft.domains} placeholder="blog.example.com, www.example.com" />
+            </label>
+            <label class="field">
+              Timezone
+              <input bind:value={draft.timezone} list="timezones" required />
+            </label>
+            <datalist id="timezones">
+              {#each timezones as tz (tz)}<option value={tz}></option>{/each}
+            </datalist>
+            {#if siteError !== undefined}<p class="form-error" role="alert">{siteError}</p>{/if}
+            <div class="row">
+              <button
+                class="btn primary"
+                type="submit"
+                disabled={siteBusy || draft.name.trim() === ''}
+              >
+                {siteBusy ? 'Saving…' : 'Save'}
+              </button>
+              <button class="btn" type="button" onclick={() => (draft = undefined)}>Cancel</button>
+            </div>
+          </form>
+        {:else}
+          <button class="btn add-site" type="button" onclick={startAdd}>Add site</button>
+        {/if}
       {/if}
-    {/if}
-  </div>
+    </div>
 
-  <NtfyPanel {admin} {sites} />
+    <div class="card c6">
+      <h2>Tracking snippet</h2>
+      {#if snippet === undefined || snippetSiteId === undefined}
+        <p class="widget-note">Create a site first.</p>
+      {:else}
+        <label class="field snippet-site">
+          Site
+          <select
+            value={String(snippetSiteId)}
+            onchange={(e) => (snippetChoice = Number(e.currentTarget.value))}
+          >
+            {#each sites ?? [] as site (site.id)}
+              <option value={String(site.id)}>{site.name}</option>
+            {/each}
+          </select>
+        </label>
+        <pre class="snippet"><code>{snippet}</code></pre>
+        <button class="btn" type="button" onclick={copySnippet}>
+          {copied ? 'Copied ✓' : copyFailed ? 'Copy failed — select it manually' : 'Copy snippet'}
+        </button>
+        <p class="widget-note">
+          Paste before <code>&lt;/head&gt;</code>. Safe to add while another analytics tag is still
+          running — it shares no globals, so you can compare the two before switching. Already on
+          Matomo? Existing tags keep working against this server unchanged.
+        </p>
+      {/if}
+    </div>
+
+    <div class="card c6">
+      <h2>Change password</h2>
+      <form class="pw-form" onsubmit={changePassword}>
+        <label class="field">
+          Current password
+          <input type="password" bind:value={currentPassword} autocomplete="current-password" />
+        </label>
+        <label class="field">
+          New password (at least 8 characters)
+          <input type="password" bind:value={nextPassword} autocomplete="new-password" />
+        </label>
+        <label class="field">
+          Repeat new password
+          <input type="password" bind:value={confirmPassword} autocomplete="new-password" />
+        </label>
+        {#if passwordError !== undefined}<p class="form-error" role="alert">{passwordError}</p>{/if}
+        {#if passwordChanged}
+          <p class="form-ok">Password changed. Other sessions were logged out.</p>
+        {/if}
+        <button class="btn primary" type="submit" disabled={passwordBusy || !passwordReady}>
+          {passwordBusy ? 'Changing…' : 'Change password'}
+        </button>
+      </form>
+    </div>
+  {:else if Panel !== undefined}
+    <Panel {admin} {sites} />
+  {/if}
 </div>
 
 <style>
+  .settings-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
   .site-list {
     display: flex;
     flex-direction: column;
@@ -363,50 +379,5 @@ const nameOf = (id: number): string => sites?.find((s) => s.id === id)?.name ?? 
     font-size: 11.5px;
     line-height: 1.5;
     margin: 0 0 10px;
-  }
-
-  .diag {
-    margin: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .diag div {
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
-  }
-
-  .diag dt {
-    color: var(--ink-2);
-  }
-
-  .diag dd {
-    margin: 0;
-    font-weight: 600;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .bot-list {
-    margin-top: 10px;
-    border-top: 1px solid var(--grid);
-    padding-top: 6px;
-  }
-
-  .bot-row {
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
-    font-size: 12.5px;
-    padding: 3px 0;
-  }
-
-  .bot-row .name {
-    color: var(--ink-2);
-  }
-
-  .bot-row .num {
-    font-variant-numeric: tabular-nums;
   }
 </style>

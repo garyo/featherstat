@@ -67,7 +67,17 @@ function vitePath(): string {
 /** Chunk name prefix → gzipped ceiling. Every one must exist in the build. */
 export const CHUNK_MAX_GZIP: Readonly<Record<string, number>> = {
   editor: 6_656,
-  SettingsView: 6_656,
+  /**
+   * Raised 6_656 → 20_480 on 2026-08-02, when Settings grew from four cards to
+   * the whole v2 admin surface (tokens, viewers, segments, derived metrics,
+   * goals, campaigns + aliases + the UTM builder, alert rules, props,
+   * annotations — docs/05 § Settings). Deliberately ONE lazy chunk rather than
+   * per-section sub-chunks: a dynamic import inside a non-entry chunk splits
+   * vite's preload helper and every entry-shared module into preloaded
+   * siblings, which costs first-load bytes the entry budget does not have.
+   * Admin-only, loaded on entering Settings — never on the dashboard path.
+   */
+  SettingsView: 20_480,
   /** The entity detail views + their shared templates — loaded on first drill. */
   DetailView: 4_096,
   /** The per-widget filter rows — lazy inside WidgetSettings. */
@@ -85,7 +95,19 @@ export const CHUNK_MAX_GZIP: Readonly<Record<string, number>> = {
  */
 export const CHUNK_MARKERS: Readonly<Record<string, readonly string[]>> = {
   editor: ['Add widget', 'Apply to draft', 'Drag to reorder', 'Editing'],
-  SettingsView: ['Tracking snippet', 'Send test notification'],
+  // One marker per Settings section, so no panel can quietly migrate to the entry.
+  SettingsView: [
+    'Tracking snippet',
+    'Send test notification',
+    'Mint token',
+    'Invite viewer',
+    'New segment',
+    'New derived metric',
+    'UTM link builder',
+    'Save alert rules',
+    'Really delete + scrub',
+    'New annotation',
+  ],
   // The second marker is a detail TEMPLATE's widget title: the shared entity
   // templates must ride this chunk, never the entry.
   DetailView: ['← Back', 'Sessions entering here'],

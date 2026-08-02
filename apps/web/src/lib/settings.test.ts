@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { botDropTotals, formatBytes, parseDomains, trackingSnippet } from './settings.ts';
+import {
+  botDropTotals,
+  formatBytes,
+  localInputToMs,
+  msToLocalInput,
+  parseDomains,
+  trackingSnippet,
+} from './settings.ts';
 
 describe('trackingSnippet', () => {
   it('targets this deployment and the chosen site', () => {
@@ -61,5 +68,19 @@ describe('botDropTotals', () => {
 
   it('is empty for no drops', () => {
     expect(botDropTotals([])).toEqual([]);
+  });
+});
+
+describe('datetime-local round trip', () => {
+  it('survives the trip through the input format', () => {
+    const ms = Date.UTC(2026, 6, 4, 12, 30);
+    const input = msToLocalInput(ms);
+    expect(input).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
+    expect(localInputToMs(input)).toBe(ms);
+  });
+
+  it('answers undefined for blank or partial input', () => {
+    expect(localInputToMs('')).toBeUndefined();
+    expect(localInputToMs('2026-07-')).toBeUndefined();
   });
 });

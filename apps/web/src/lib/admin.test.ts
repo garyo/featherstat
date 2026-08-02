@@ -80,6 +80,17 @@ describe('createAdminClient', () => {
     expect(onUnauthorized).not.toHaveBeenCalled();
   });
 
+  it('exposes call() with the same CSRF echo the named methods get', async () => {
+    const { admin, calls } = client((input) =>
+      input === '/api/admin/login' ? json(200, { ok: true, csrf: 'tok-9' }) : json(200, []),
+    );
+    await admin.login('pw');
+    await admin.call('/api/admin/tokens', { method: 'POST', body: { name: 'x' } });
+    const headers = calls[1]?.init?.headers as Record<string, string>;
+    expect(headers['x-csrf-token']).toBe('tok-9');
+    expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({ name: 'x' });
+  });
+
   it('propagates rate-limit and non-JSON failures as AdminError', async () => {
     const limited = client(() => json(429, { error: 'too many attempts' }));
     await expect(limited.admin.login('pw')).rejects.toMatchObject({

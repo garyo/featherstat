@@ -41,6 +41,20 @@ export function parseDomains(input: string): string[] {
     .filter((domain) => domain !== '');
 }
 
+/** UTC ms → what a `datetime-local` input holds (the browser's zone, minutes). */
+export function msToLocalInput(ms: number): string {
+  const date = new Date(ms - new Date(ms).getTimezoneOffset() * 60_000);
+  return date.toISOString().slice(0, 16);
+}
+
+/** A `datetime-local` value → UTC ms, or undefined while the input is blank/partial.
+ * The shape check matters: `Date` happily reads half-typed strings as real dates. */
+export function localInputToMs(value: string): number | undefined {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value)) return undefined;
+  const ms = new Date(value).getTime();
+  return Number.isNaN(ms) ? undefined : ms;
+}
+
 /** Per-site totals over the diagnostics window, largest first. */
 export function botDropTotals(drops: readonly AdminBotDrops[]): Array<[number, number]> {
   const totals = new Map<number, number>();

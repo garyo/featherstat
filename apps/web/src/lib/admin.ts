@@ -68,6 +68,13 @@ export interface AdminClient {
   createShareLink(dashboardId: number): Promise<{ token: string }>;
   /** Revokes every live link of a dashboard — the only revoke the API offers. */
   revokeShareLinks(dashboardId: number): Promise<{ revoked: number }>;
+  /**
+   * The raw authenticated call (CSRF echoed, 401 reported) the code-split
+   * Settings panels build their per-surface clients on (`admin-objects.ts`) —
+   * so forty admin-object methods need not ride the entry chunk this module
+   * is part of.
+   */
+  call<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T>;
   ntfySettings(): Promise<NtfySettingsView>;
   saveNtfySettings(settings: NtfySettingsInput): Promise<NtfySettingsView>;
   /** The off switch: forgets endpoint, token and rules (a PUT cannot express it). */
@@ -156,6 +163,7 @@ export function createAdminClient(options: AdminClientOptions = {}): AdminClient
       call(`/api/admin/dashboards/${dashboardId}/share`, { method: 'POST' }),
     revokeShareLinks: (dashboardId) =>
       call(`/api/admin/dashboards/${dashboardId}/share`, { method: 'DELETE' }),
+    call,
     ntfySettings: () => call('/api/admin/ntfy'),
     saveNtfySettings: (settings) => call('/api/admin/ntfy', { method: 'PUT', body: settings }),
     clearNtfySettings: () => call('/api/admin/ntfy', { method: 'DELETE' }),
