@@ -5,7 +5,8 @@
   "license": "MIT",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./detail-templates": "./src/templates/detail/index.ts"
   },
   "dependencies": {
     "zod": "^4.4.3"

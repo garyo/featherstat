@@ -68,6 +68,10 @@ function vitePath(): string {
 export const CHUNK_MAX_GZIP: Readonly<Record<string, number>> = {
   editor: 6_656,
   SettingsView: 6_656,
+  /** The entity detail views + their shared templates — loaded on first drill. */
+  DetailView: 4_096,
+  /** The per-widget filter rows — lazy inside WidgetSettings. */
+  WidgetFilters: 1_536,
   /** The share page and the dialog that mints links for it — small by construction. */
   share: 2_048,
   dialog: 2_048,
@@ -82,6 +86,10 @@ export const CHUNK_MAX_GZIP: Readonly<Record<string, number>> = {
 export const CHUNK_MARKERS: Readonly<Record<string, readonly string[]>> = {
   editor: ['Add widget', 'Apply to draft', 'Drag to reorder', 'Editing'],
   SettingsView: ['Tracking snippet', 'Send test notification'],
+  // The second marker is a detail TEMPLATE's widget title: the shared entity
+  // templates must ride this chunk, never the entry.
+  DetailView: ['← Back', 'Sessions entering here'],
+  WidgetFilters: ['Only count rows where'],
   share: ['Shared dashboard'],
   dialog: ['Create share link'],
   // NOT the switcher's "Manage dashboards…" line — that trigger rides the entry.

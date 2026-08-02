@@ -978,6 +978,7 @@ export const VizTypeSchema = z.enum([
   'devices',
   'dwell',
   'histogram',
+  'changes',
   'map',
   'feed',
   'active-now',

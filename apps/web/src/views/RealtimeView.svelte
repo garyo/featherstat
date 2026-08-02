@@ -50,6 +50,9 @@ const env = $derived<WidgetEnv>({
   scope: site,
   now,
   onfilter: null,
+  ondrill: null,
+  onpivot: null,
+  annotations: null,
   headless: false,
   highlight: { ref: hover, onhover: (ref) => (hover = ref) },
 });

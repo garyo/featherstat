@@ -8,6 +8,7 @@ import {
   formatDayRange,
   localDayKey,
   parseDashRef,
+  parseDetailRef,
   parseViewState,
   RANGE_LABELS,
   RANGE_PRESETS,
@@ -295,5 +296,94 @@ describe('localDayKey', () => {
     expect(localDayKey(['America/New_York', 'America/New_York'], noon)).toBe(
       localDayKey(['America/New_York'], noon),
     );
+  });
+});
+
+describe('detail views in the URL (docs/05 § Detail views)', () => {
+  it('reads ?view=detail&d=<dim>:<encoded value>, awkward characters intact', () => {
+    const state = parseViewState('/?site=4&view=detail&d=path:%2Fblog%2Fwhy%3A%20colons');
+    expect(state.view).toBe('detail');
+    expect(state.detail).toEqual({ dim: 'path', value: '/blog/why: colons' });
+    expect(parseViewState('/?view=detail&d=ref_domain:news.ycombinator.com').detail).toEqual({
+      dim: 'ref_domain',
+      value: 'news.ycombinator.com',
+    });
+  });
+
+  it('opens the dashboard, not an error, when the entity ref is junk', () => {
+    // No d, an undrillable dim, an empty value, a stray % — all fall back.
+    for (const query of ['view=detail', 'view=detail&d=country:US', 'view=detail&d=path:']) {
+      const state = parseViewState(`/?${query}`);
+      expect(state.view, query).toBe('dash');
+      expect(state.detail, query).toBeUndefined();
+    }
+    expect(parseDetailRef('path:%ZZ')).toBeUndefined();
+  });
+
+  it('ignores a d param on any other view', () => {
+    expect(parseViewState('/?view=realtime&d=path:%2Fx').detail).toBeUndefined();
+  });
+
+  it('round-trips a detail state', () => {
+    const state = at({
+      site: 4,
+      view: 'detail',
+      detail: { dim: 'utm_campaign', value: 'summer:launch' },
+    });
+    expect(parseViewState(applyViewState(state, '/'))).toEqual(state);
+  });
+
+  it('drops the entity from the URL when the view is not detail', () => {
+    expect(applyViewState(at({ detail: { dim: 'path', value: '/x' } }), '/')).toBe('/');
+  });
+
+  it('naming an entity IS entering its view; leaving forgets it', () => {
+    const here = at({ site: 4 });
+    const patch = resolveNav(here, { detail: { dim: 'path', value: '/x' } }, 4);
+    expect(patch.view).toBe('detail');
+    expect(patch.detail).toEqual({ dim: 'path', value: '/x' });
+    const on = at({ site: 4, view: 'detail', detail: { dim: 'path', value: '/x' } });
+    const away = resolveNav(on, { view: 'realtime' }, 4);
+    expect({ ...on, ...away }.detail).toBeUndefined();
+  });
+
+  it('is per-site: entering at All coerces to the last-visited site, like Journeys', () => {
+    const patch = resolveNav(at({}), { detail: { dim: 'path', value: '/x' } }, 6);
+    expect(patch.site).toBe(6);
+    const on = at({ site: 6, view: 'detail', detail: { dim: 'path', value: '/x' } });
+    expect(resolveNav(on, { site: 'all' }, 6).view).toBe('dash');
+  });
+});
+
+describe('pivots in the URL (docs/05 § Pivots)', () => {
+  it('reads repeatable pv=<widget>:<dim> params, junk dropped, last pick winning', () => {
+    expect(parseViewState('/?pv=refs:country&pv=pages:ref_domain').pivots).toEqual([
+      { widget: 'refs', dim: 'country' },
+      { widget: 'pages', dim: 'ref_domain' },
+    ]);
+    expect(parseViewState('/?pv=refs:country&pv=refs:path').pivots).toEqual([
+      { widget: 'refs', dim: 'path' },
+    ]);
+    expect(parseViewState('/?pv=refs:nope&pv=refs&pv=:country').pivots).toEqual([]);
+    // A widget id may itself carry a ':' — the dim anchors from the right.
+    expect(parseViewState('/?pv=a:b:country').pivots).toEqual([{ widget: 'a:b', dim: 'country' }]);
+  });
+
+  it('round-trips a pivoted state', () => {
+    const state = at({ site: 4, pivots: [{ widget: 'refs', dim: 'country' }] });
+    expect(parseViewState(applyViewState(state, '/'))).toEqual(state);
+  });
+
+  it('drops the overlay when the scope or the library selection moves', () => {
+    const pivoted = at({ site: 4, pivots: [{ widget: 'refs', dim: 'country' }] });
+    expect(resolveNav(pivoted, { site: 6 }, 4).pivots).toEqual([]);
+    expect(resolveNav(pivoted, { dash: 7 }, 4).pivots).toEqual([]);
+    expect(resolveNav(pivoted, { range: '7d' }, 4).pivots).toBeUndefined();
+  });
+
+  it('compares pivot state by value', () => {
+    const pv = [{ widget: 'refs', dim: 'country' as const }];
+    expect(sameViewState(at({ pivots: [...pv] }), at({ pivots: [...pv] }))).toBe(true);
+    expect(sameViewState(at({ pivots: pv }), at({}))).toBe(false);
   });
 });

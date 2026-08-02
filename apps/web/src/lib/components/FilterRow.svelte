@@ -15,6 +15,9 @@ interface Props {
   range: ViewRange;
   /** Compare mode; omitted hides the compare control (Journeys sends no compare). */
   cmp?: CompareChoice;
+  /** Chips bound by the view itself (a detail view's entity) — visible so the
+   * scope is never hidden, not removable because leaving IS removing them. */
+  locked?: readonly string[];
   /** Active dimension filters, as removable chips (docs/05). */
   filters?: readonly Filter[];
   /** Muted trailing line — the resolved window and compare mode. */
@@ -29,6 +32,7 @@ interface Props {
 let {
   range,
   cmp,
+  locked = [],
   filters = [],
   note,
   onselect,
@@ -150,6 +154,12 @@ const customCmp = $derived(cmp !== undefined && typeof cmp !== 'string');
       </span>
     {/if}
   {/if}
+  {#each locked as label, i (i)}
+    <span class="fchip locked" title="This view is about this — go back to remove it">
+      <span aria-hidden="true">🔒</span>
+      {label}
+    </span>
+  {/each}
   {#each filters as filter, i (i)}
     {@const label = chipLabel(filter)}
     <button
@@ -167,6 +177,15 @@ const customCmp = $derived(cmp !== undefined && typeof cmp !== 'string');
 </div>
 
 <style>
+  /* A locked chip is a statement, not a control (docs/05 § Detail views). */
+  .fchip.locked {
+    cursor: default;
+  }
+
+  .fchip.locked:hover {
+    border-color: color-mix(in srgb, var(--s1) 35%, transparent);
+  }
+
   .range-edit {
     display: inline-flex;
     align-items: center;

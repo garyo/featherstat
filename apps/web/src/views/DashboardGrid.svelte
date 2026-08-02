@@ -1,7 +1,13 @@
 <script lang="ts">
-import type { Dashboard, QueryResponse, WidgetSpec } from '@featherstat/shared';
+import {
+  type Dashboard,
+  filterLeaves,
+  type QueryResponse,
+  type WidgetSpec,
+} from '@featherstat/shared';
 import type { ShowQuery } from '../editor/editor.ts';
 import { loadEditor } from '../lib/editor-mode.svelte.ts';
+import { chipLabel } from '../lib/filters.ts';
 import { gridEnv } from '../widgets/env.ts';
 import type { ViewEnv } from '../widgets/types.ts';
 import WidgetGrid from '../widgets/WidgetGrid.svelte';
@@ -42,6 +48,21 @@ async function showQuery(spec: WidgetSpec): Promise<void> {
   ShowQueryModal ??= (await loadEditor()).ShowQuery;
   shownQuery = spec;
 }
+
+/**
+ * The "filtered" badge (docs/05 § Widget filters): a widget carrying its own
+ * filters is answering a narrower question than the cards beside it, and must
+ * say so in view chrome — the tooltip lists them in chip words. Widget filters
+ * AND with the view's chips; a contradiction renders honestly empty with both
+ * in sight.
+ */
+function scopeNote(spec: WidgetSpec): string | undefined {
+  const filters =
+    spec.query !== undefined && !('kind' in spec.query) ? spec.query.filters : undefined;
+  if (filters === undefined) return undefined;
+  const labels = filters.flatMap(filterLeaves).map(chipLabel);
+  return labels.length === 0 ? undefined : labels.join(' · ');
+}
 </script>
 
 <WidgetGrid
@@ -51,7 +72,11 @@ async function showQuery(spec: WidgetSpec): Promise<void> {
   env={widgetsEnv}
 >
   {#snippet card({ spec, frame, widget })}
+    {@const scoped = scopeNote(spec)}
     <div class={frame}>
+      {#if scoped !== undefined}
+        <span class="scoped" title="Only counting: {scoped}">filtered</span>
+      {/if}
       {#if chrome}
         <button
           class="q-btn"
@@ -108,5 +133,21 @@ async function showQuery(spec: WidgetSpec): Promise<void> {
 
   .q-btn:hover {
     color: var(--ink);
+  }
+
+  .scoped {
+    position: absolute;
+    top: 10px;
+    right: 34px;
+    z-index: 2;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 99px;
+    padding: 1px 7px;
+    cursor: help;
   }
 </style>

@@ -2,9 +2,10 @@ import { buildDashboard } from './build.ts';
 import type { DashboardTemplate } from './index.ts';
 
 /**
- * The shipped default site dashboard — the mockup's arrangement: KPIs → main
- * series → pages/referrers → countries/devices/events → outbound links/time on
- * page → hours heatmap.
+ * The shipped default site dashboard — the mockup's arrangement: KPIs → what
+ * changed → main series → pages/referrers → countries/devices/events →
+ * outbound links/time on page → hours heatmap. The changes card compares, so
+ * it reads from the view's compare control and refuses honestly at `cmp=off`.
  */
 export const overviewTemplate: DashboardTemplate = {
   id: 'overview',
@@ -33,6 +34,14 @@ export const overviewTemplate: DashboardTemplate = {
             ],
           },
           options: { tiles: ['visitors', 'pageviews', 'avg_engagement', 'bounce_rate'] },
+        },
+        {
+          id: 'changes',
+          viz: 'changes',
+          title: 'What changed',
+          w: 12,
+          h: 2,
+          query: { id: 'changes', kind: 'changes' },
         },
         {
           id: 'series',

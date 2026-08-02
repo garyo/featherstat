@@ -19,7 +19,7 @@ import {
 import { dashboardEnv } from '../widgets/env.ts';
 import type { AppEnv } from '../widgets/types.ts';
 import { createBatchRunner } from './batch.svelte.ts';
-import { collectBatch, hourlyWhenIntraday } from './batch.ts';
+import { collectBatch, hourlyWhenIntraday, wantsAnnotations } from './batch.ts';
 import DashboardGrid from './DashboardGrid.svelte';
 
 interface Props {
@@ -83,6 +83,8 @@ const requestFor = (queries: readonly Query[]): QueryRequest => {
     site: 'all',
     range: toRange(range),
     ...(compare === undefined ? {} : { compare }),
+    // The shipped all-sites template has no timeseries, but a stored layout may.
+    ...(wantsAnnotations(dashboard) ? { annotations: true as const } : {}),
     queries: hourlyWhenIntraday([...queries], range),
   };
 };
@@ -128,8 +130,11 @@ async function openShare(): Promise<void> {
   ShareDialog = (await import('../share/dialog.ts')).ShareDialog;
 }
 
-/** ONE environment for the dashboard AND the editor's preview (see SiteView). */
-const env = $derived(dashboardEnv(app, { scope: 'all', range, onfilter: null }));
+/** ONE environment for the dashboard AND the editor's preview (see SiteView).
+ * Detail views are per-site, so the all-sites grid offers no drill or pivot. */
+const env = $derived(
+  dashboardEnv(app, { scope: 'all', range, onfilter: null, ondrill: null, onpivot: null }),
+);
 
 const note = $derived.by(() => {
   if (runner.error !== undefined && runner.response !== undefined) {

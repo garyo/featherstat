@@ -48,6 +48,7 @@ const pickLimit = $derived(freeForm || viz === 'feed');
 const METRICLESS = new Set<VizType>([
   'site-cards',
   'dwell',
+  'changes',
   'feed',
   'active-now',
   'visitor-tally',

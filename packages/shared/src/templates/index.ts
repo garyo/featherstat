@@ -49,6 +49,11 @@ export function templatesForScope(scope: 'site' | 'all'): DashboardTemplate[] {
   return DASHBOARD_TEMPLATES.filter((template) => template.scope === scope);
 }
 
+// Only the tiny dims module rides the root export: the detail template
+// BUILDERS live behind `@featherstat/shared/detail-templates`, so the entry
+// bundle's module graph never executes them — they belong to the code-split
+// detail view (apps/web build.guard.ts markers prove it).
+export * from './detail/dims.ts';
 export {
   acquisitionTemplate,
   allSitesTemplate,

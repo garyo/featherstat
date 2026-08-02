@@ -1,12 +1,15 @@
 <script lang="ts">
-import type { WidgetSpec } from '@featherstat/shared';
+import { BaseDimensionSchema, type WidgetSpec } from '@featherstat/shared';
+import { DIM_LABELS } from '../lib/filters.ts';
 import { type SiteSort, siteSortOf } from '../widgets/site-stats.ts';
 import Modal from './Modal.svelte';
 
 /**
  * Per-widget options (docs/05 edit mode). Every change commits to the draft
  * immediately — the grid card re-renders in place, and query-shaping changes
- * (the bar-list limit) get a batch-of-one preview from the Editor.
+ * (the bar-list limit, a widget filter) get a batch-of-one preview from the
+ * Editor. The filter rows are their own lazy chunk (`WidgetFilters`), so the
+ * editor budget doesn't carry them.
  */
 interface Props {
   spec: WidgetSpec;
@@ -21,6 +24,25 @@ const metricQuery = $derived(
 );
 /** The bar-list row-count option; other list-shaped vizzes share it. */
 const hasLimit = $derived(spec.viz === 'bar-list' && metricQuery !== undefined);
+/** Widget filters make sense on any metric query but the per-site card grid,
+ * whose derived queries scope themselves. */
+const filterable = $derived(metricQuery !== undefined && spec.viz !== 'site-cards');
+
+let Filters = $state<typeof import('./WidgetFilters.svelte').default | undefined>(undefined);
+$effect(() => {
+  if (filterable && Filters === undefined) {
+    void import('./WidgetFilters.svelte').then((chunk) => {
+      Filters = chunk.default;
+    });
+  }
+});
+
+/** The vocabulary the filter rows offer, read here so the lazy chunk imports
+ * no shared module (see WidgetFilters' own note). */
+const FILTER_DIMS = BaseDimensionSchema.options.map((dim) => ({
+  value: dim,
+  label: DIM_LABELS[dim],
+}));
 
 const SORTS: { value: SiteSort; label: string }[] = [
   { value: 'traffic', label: 'Traffic (busiest first)' },
@@ -75,6 +97,9 @@ function setSort(sort: string): void {
           onchange={(event) => setLimit(event.currentTarget)}
         />
       </label>
+    {/if}
+    {#if filterable && metricQuery !== undefined && Filters !== undefined}
+      <Filters {spec} query={metricQuery} dims={FILTER_DIMS} {onchange} />
     {/if}
     {#if spec.viz === 'site-cards'}
       <label class="field">

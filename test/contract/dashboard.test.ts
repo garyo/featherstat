@@ -2,6 +2,7 @@ import {
   DASHBOARD_TEMPLATES,
   type Dashboard,
   DashboardSchema,
+  type DetailDimension,
   isQueryError,
   MAX_METRICS_PER_QUERY,
   type Measure,
@@ -10,6 +11,7 @@ import {
   type ResultRow,
   upgradeDashboard,
 } from '@featherstat/shared';
+import { DETAIL_TEMPLATES } from '@featherstat/shared/detail-templates';
 import { afterAll, describe, expect, it } from 'vitest';
 import { resultAxes, sharedKeys } from '../../apps/web/src/widgets/axis.ts';
 import { barRows } from '../../apps/web/src/widgets/bar-rows.ts';
@@ -76,6 +78,40 @@ describe('every shipped TEMPLATE answers against a real corpus', () => {
           throw new Error(`template '${template.id}' query '${query.id}' errored`);
         }
       }
+    });
+  }
+});
+
+describe('every detail TEMPLATE answers against a real corpus', () => {
+  // The same ratchet, for the entity templates behind the drill affordance
+  // (docs/05 § Detail views): detail.test.ts proves each one batches; this
+  // proves the vocabulary — adjacency, distribution.path, dwell.path, the
+  // session-scope filter, the entry/exit dims — actually answers what each
+  // widget asks, over entities the corpus really contains.
+  const values: Record<DetailDimension, string> = {
+    path: '/timeline',
+    ref_domain: 'news.ycombinator.com',
+    utm_campaign: 'spring-release',
+  };
+  for (const template of Object.values(DETAIL_TEMPLATES)) {
+    it(`'${template.dim}' answers every query with no per-query errors`, () => {
+      const built = template.build(CONTRACT_SITE, values[template.dim]);
+      const { request, response } = answer(built, { site: CONTRACT_SITE });
+      for (const query of request.queries) {
+        const result = response.results[query.id];
+        expect(result, query.id).toBeDefined();
+        if (result === undefined || isQueryError(result)) {
+          throw new Error(
+            `detail '${template.dim}' query '${query.id}' errored: ${JSON.stringify(result)}`,
+          );
+        }
+      }
+      // Not merely error-free: the entity exists in the corpus, so the headline
+      // KPI must have counted something — an all-zero detail view would mean
+      // the binding filtered everything away.
+      const kpis = sliceOf({ dashboard: built, request, response }, 'kpis');
+      const row = kpis.rows[0] as ResultRow;
+      expect(Number(row.pageviews ?? row.visits), template.dim).toBeGreaterThan(0);
     });
   }
 });

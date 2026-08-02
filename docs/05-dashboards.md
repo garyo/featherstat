@@ -133,6 +133,73 @@ call and appears in the library as a virtual entry.
   its share tokens in the same transaction; the list shape carries a live
   `shareCount` so the delete confirm says what it will revoke first.
 
+### Detail views (drilldowns)
+
+A breakdown row whose dimension has an **entity template** — `path`,
+`ref_domain`, `utm_campaign` (`DETAIL_DIMENSIONS`) — drills on its primary
+click: `?view=detail&d=<dim>:<encoded value>` joins the view state, and the
+view renders `DashboardGrid` over the template built for that entity
+(`@featherstat/shared/detail-templates`: `pageDetail`, `referrerDetail`,
+`campaignDetail`). Invariants 1 & 7 hold: ordinary widgets, one batch. The
+page template leans on the phase-2 vocabulary — adjacency (previous/next
+pages), `dwell.path`, per-page `distribution` histograms, entry/exit KPIs and
+a `scope:'session'` referrer list.
+
+- **The binding is per-widget, shown as a locked chip.** No single
+  request-level filter can say "hits on this page" AND "sessions containing
+  it" AND "sessions entering at it" at once, so each widget's query carries
+  its own binding; the filter row wears one locked (visible, not removable)
+  chip naming the entity, and the view's ordinary removable chips compose on
+  top — they ride the request's `filters` exactly as on a dashboard.
+- Detail templates are **code, not library entries**: versionless, rebuilt at
+  the current vocabulary on every visit, no `t:` ref, nothing to clone. They
+  live behind the `detail-templates` subpath export so the code-split detail
+  chunk — not the entry — carries them (build.guard markers prove it).
+- Per-site only (like Journeys): entering at All-sites coerces to the
+  last-visited site. Back is `history.back()` — a drill pushes history. The
+  filter icon on a drillable row keeps click-to-filter reachable.
+
+### Pivots & per-widget filters
+
+- **Pivot** = a transient overlay swapping one bar-list's breakdown:
+  repeatable `pv=<widgetId>:<dim>` URL params, applied by `applyPivots`
+  (web `lib/pivots.ts`) to derive the document BEFORE `collectBatch`, so the
+  one-fetch rule holds trivially and derived companions recompute. The card
+  title becomes a `<select>` of the base dimensions valid for the widget's
+  metrics (a dim that would block every metric is not offered; a partial
+  block is trimmed like any chip). Pivots are dropped on a scope or library
+  change (they name widgets of that document) and **ignored by share links**
+  — the share route assembles its batch from the stored row. Keeping a pivot
+  is saving it: the editor opens on the pivoted document, so "Customize/Edit
+  → Save" persists it.
+- **Per-widget filters** are already first-class in the schema
+  (`MetricQuery.filters`, merged AND with the view's chips by the compiler).
+  The editor's WidgetSettings carries a filter-row editor (dim/op/value over
+  the shared vocabulary; eq/neq/contains in the UI, the schema accepts more)
+  in its own lazy chunk. A scoped widget wears a **"filtered" badge** in view
+  chrome whose tooltip lists its filters in chip words; a contradiction with
+  the view's chips renders honestly empty with both in sight.
+  `withoutBlockedMetrics` judges blocked combinations **per query** — the
+  view's chips plus the widget's own filters plus its (possibly pivoted)
+  grouping dims — so a page-scoped widget loses its bounce column while the
+  card beside it keeps every metric.
+
+### What changed & annotations
+
+- The `changes` viz renders the server's `changes` kind (docs/04 § 3): per
+  scanned dimension, the top movers by |delta| between the compare windows,
+  as a compact signed-bar list (current count, delta bar, share of the net
+  change in the tooltip; rise/fall in the status colors WITH a sign glyph).
+  It ships on the overview template under the KPI row. It requires `compare`:
+  at `cmp=off` the server's refusal renders like any per-query error card.
+- **Annotations**: a view whose dashboard contains a timeseries widget sets
+  `annotations: true` on its batch (opt-in, so an annotation edit only
+  expires ETags of dashboards that show one); `meta.annotations` flows into
+  the widget environment beside `windows`, and Timeseries draws a small
+  marker on the bucket each note's instant falls in (site-local, the same
+  clock→bucket derivation as the axis trim), with the text joining the
+  existing hover tooltip. Authoring UI is Phase-6d settings work.
+
 ### Custom ranges & compare
 
 The range row's presets are joined by an explicit range (`range=<from>..<to>`

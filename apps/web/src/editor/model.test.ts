@@ -38,7 +38,7 @@ describe('allowedWidths', () => {
 describe('grid mutations', () => {
   it('reorders without mutating the input', () => {
     const next = reorder(grid, 0, 2);
-    expect(next.map((spec) => spec.id).slice(0, 3)).toEqual(['series', 'pages', 'kpis']);
+    expect(next.map((spec) => spec.id).slice(0, 3)).toEqual(['changes', 'series', 'kpis']);
     expect(grid[0]?.id).toBe('kpis');
     expect(next).toHaveLength(grid.length);
   });

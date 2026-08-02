@@ -1,8 +1,9 @@
 <script lang="ts">
-import type { Dimension, Filter } from '@featherstat/shared';
+import { type Dimension, type Filter, isDetailDimension } from '@featherstat/shared';
 import type { BarRow, TipLine } from './bar-rows.ts';
 import { compactNumber, exactNumber } from './format.ts';
 import { countryName, flagEmoji } from './geo.ts';
+import type { WidgetEnv } from './types.ts';
 
 /**
  * The ranked rows of a bar-list — THE bar row, rendered by the standalone
@@ -29,17 +30,39 @@ interface Props {
   dim?: Dimension;
   /** Click-to-filter, or null where a row has nothing to filter into. */
   onfilter: ((filter: Filter) => void) | null;
+  /** Drill into a row's detail view (docs/05 § Detail views), or null. When the
+   * dim has a detail template, the row's primary click drills and the filter
+   * becomes the hover icon; otherwise clicks keep filtering. */
+  ondrill?: WidgetEnv['ondrill'];
 }
 
-let { rows, unit, extraUnit = 'value', flags = false, dim, onfilter }: Props = $props();
+let {
+  rows,
+  unit,
+  extraUnit = 'value',
+  flags = false,
+  dim,
+  onfilter,
+  ondrill = null,
+}: Props = $props();
 
 const filterable = $derived(dim !== undefined && onfilter !== null);
+/** Detail views exist for real values only — the NULL group has no entity. */
+const drills = $derived(ondrill !== null && dim !== undefined && isDetailDimension(dim));
 
-function activate(row: BarRow): void {
+function addFilter(row: BarRow): void {
   if (dim === undefined || onfilter === null || row.filterValue === undefined) return;
   onfilter(
     row.filterValue === null ? { dim, op: 'is_null' } : { dim, op: 'eq', value: row.filterValue },
   );
+}
+
+function activate(row: BarRow): void {
+  if (drills && dim !== undefined && typeof row.filterValue === 'string') {
+    ondrill?.(dim as Parameters<NonNullable<typeof ondrill>>[0], row.filterValue);
+    return;
+  }
+  addFilter(row);
 }
 
 function onKeydown(event: KeyboardEvent, row: BarRow): void {
@@ -87,7 +110,7 @@ function tipsOf(row: BarRow): readonly TipLine[] {
 <div class="rows-pane" bind:this={pane}>
   <div class="bar-list">
     {#each rows as row, i (row.name)}
-      {@const clickable = filterable && row.filterValue !== undefined}
+      {@const clickable = (filterable || drills) && row.filterValue !== undefined}
       <!-- The flag is read off what the row IS, not off what it filters into:
            keyed on `filterValue`, the realtime country tally asked for flags and
            silently drew bare codes, because a stream row has nothing to filter
@@ -120,6 +143,19 @@ function tipsOf(row: BarRow): readonly TipLine[] {
         <!-- One number, then at most one labeled aside: a second unlabeled
              figure breaks the tabular column and reads as a glitch; the value
              sum lives in the tooltip, labeled. -->
+        <!-- On a drillable row the primary click navigates, so the existing
+             filter behavior moves to this small secondary affordance. -->
+        {#if drills && filterable && typeof row.filterValue === 'string'}
+          <button
+            class="row-filter"
+            type="button"
+            aria-label="Filter to {row.name}"
+            onclick={(event) => {
+              event.stopPropagation();
+              addFilter(row);
+            }}>⊕</button
+          >
+        {/if}
         <span class="num">{row.text ?? compactNumber(row.value)}</span>
         {#if row.sub !== undefined}<span class="num sub">{row.sub}</span>{/if}
       </div>

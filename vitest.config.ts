@@ -20,7 +20,11 @@ export default defineConfig({
     projects: [
       {
         resolve: {
+          // The subpath first: the bare-specifier alias is a prefix match.
           alias: {
+            '@featherstat/shared/detail-templates': fileURLToPath(
+              new URL('./packages/shared/src/templates/detail/index.ts', import.meta.url),
+            ),
             '@featherstat/shared': fileURLToPath(
               new URL('./packages/shared/src/index.ts', import.meta.url),
             ),

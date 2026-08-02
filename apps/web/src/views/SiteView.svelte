@@ -8,12 +8,15 @@ import { builtTemplate } from '../lib/dashboards.ts';
 import { createEditorMode } from '../lib/editor-mode.svelte.ts';
 import { sameFilter } from '../lib/filters.ts';
 import { createRevalidator, type LiveStream } from '../lib/live.ts';
+import { applyPivots } from '../lib/pivots.ts';
 import {
   type CompareChoice,
   compareNote,
   compareParam,
   type DashRef,
+  type DetailRef,
   localDayKey,
+  type PivotChoice,
   rangeQualifier,
   toRange,
   type ViewRange,
@@ -22,7 +25,12 @@ import { dashboardEnv } from '../widgets/env.ts';
 import { windowLabel } from '../widgets/format.ts';
 import type { AppEnv } from '../widgets/types.ts';
 import { createBatchRunner } from './batch.svelte.ts';
-import { collectBatch, hourlyWhenIntraday, withoutBlockedMetrics } from './batch.ts';
+import {
+  collectBatch,
+  hourlyWhenIntraday,
+  wantsAnnotations,
+  withoutBlockedMetrics,
+} from './batch.ts';
 import DashboardGrid from './DashboardGrid.svelte';
 
 interface Props {
@@ -40,12 +48,17 @@ interface Props {
   range: ViewRange;
   cmp: CompareChoice;
   filters: Filter[];
+  /** Per-widget breakdown overrides from the URL (docs/05 § Pivots). */
+  pivots: PivotChoice[];
   onselectrange: (range: ViewRange) => void;
   onselectcmp: (cmp: CompareChoice) => void;
   /** Saving while a TEMPLATE is up clones it — the URL then points at the clone. */
   onselectdash: (dash: DashRef) => void;
   /** Chips changed (row clicked, chip removed): one URL update, one re-batch. */
   onfilters: (filters: Filter[]) => void;
+  onpivots: (pivots: PivotChoice[]) => void;
+  /** Opens an entity's detail view (a history push — back returns here). */
+  onopendetail: (detail: DetailRef) => void;
 }
 
 let {
@@ -59,10 +72,13 @@ let {
   range,
   cmp,
   filters,
+  pivots,
   onselectrange,
   onselectcmp,
   onselectdash,
   onfilters,
+  onpivots,
+  onopendetail,
 }: Props = $props();
 
 // The client is an app-lifetime singleton; capturing its initial value is the point.
@@ -71,13 +87,25 @@ const runner = createBatchRunner(client);
 
 // The library selection: a stored row's layout, or a shipped template built
 // fresh — the scope's default when nothing (or nothing readable) is selected.
-const dashboard = $derived(
+const saved = $derived(
   store.stored ??
     builtTemplate(
       store.selection?.kind === 'template' ? store.selection.template.id : undefined,
       site,
     ),
 );
+// Pivots overlay the document BEFORE the batch is collected (invariant 1 holds
+// trivially: one batch, over the pivoted specs, derived companions recomputed).
+const dashboard = $derived(applyPivots(saved, pivots));
+
+/** Pivot one widget; picking its saved breakdown back lifts the overlay. */
+function setPivot(widget: string, dim: PivotChoice['dim']): void {
+  const kept = pivots.filter((pivot) => pivot.widget !== widget);
+  const spec = saved.grid.find((entry) => entry.id === widget);
+  const original =
+    spec?.query !== undefined && !('kind' in spec.query) ? spec.query.dim : undefined;
+  onpivots(original === dim ? kept : [...kept, { widget, dim }]);
+}
 
 /** This view's request shape — also the editor's preview context (batch of one widget). */
 const requestFor = (queries: readonly Query[]): QueryRequest => {
@@ -87,6 +115,8 @@ const requestFor = (queries: readonly Query[]): QueryRequest => {
     range: toRange(range),
     ...(compare === undefined ? {} : { compare }),
     ...(filters.length > 0 ? { filters } : {}),
+    // Opt in to `meta.annotations` exactly when something here draws markers.
+    ...(wantsAnnotations(dashboard) ? { annotations: true as const } : {}),
     queries: withoutBlockedMetrics(hourlyWhenIntraday(queries, range), filters),
   };
 };
@@ -165,7 +195,15 @@ const span = $derived(windowLabel(runner.response?.meta.windows));
  * It follows the range on SCREEN, not the pill, so a refetch cannot label held
  * data with the range being loaded.
  */
-const env = $derived(dashboardEnv(app, { scope: site, range: heldRange, onfilter: addFilter }));
+const env = $derived(
+  dashboardEnv(app, {
+    scope: site,
+    range: heldRange,
+    onfilter: addFilter,
+    ondrill: (dim, value) => onopendetail({ dim, value }),
+    onpivot: setPivot,
+  }),
+);
 const note = $derived.by(() => {
   if (failed) {
     // A user-initiated change that never landed reads differently from a live

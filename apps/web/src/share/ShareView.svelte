@@ -85,7 +85,13 @@ const response = $derived<QueryResponse | undefined>(
  */
 const span = $derived(windowLabel(payload?.meta.windows));
 const env = $derived(
-  dashboardEnv(app, { scope: payload?.dashboard.site ?? 'all', range, onfilter: null }),
+  dashboardEnv(app, {
+    scope: payload?.dashboard.site ?? 'all',
+    range,
+    onfilter: null,
+    ondrill: null,
+    onpivot: null,
+  }),
 );
 </script>
 

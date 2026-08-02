@@ -1,7 +1,9 @@
 import {
+  type Dashboard,
   EVENT_ONLY_DIMENSIONS,
   EVENT_ONLY_METRICS,
   type Filter,
+  filterLeaves,
   isPropDimension,
   type Query,
   type QueryResponse,
@@ -54,21 +56,35 @@ const EVENT_METRICS = new Set<string>(EVENT_ONLY_METRICS);
  * render "—". A `scope: 'session'` filter blocks nothing, exactly as the
  * compiler reads it. Queries that would lose every metric are left alone:
  * their per-query error names the conflict.
+ *
+ * The blockers are judged PER QUERY: the view's chips, plus that query's own
+ * widget-level filters, plus its (possibly pivoted) grouping dimensions. A
+ * widget filtered to one page must lose its bounce column while the widget
+ * beside it keeps its own — a view-wide answer here is how filtered KPI tiles
+ * used to blank confusingly.
  */
 export function withoutBlockedMetrics(
   queries: readonly Query[],
   filters: readonly Filter[],
 ): Query[] {
-  const hit = filters.filter((filter) => filter.scope !== 'session');
-  // `prop:` dims live only on event rows, so they block session metrics exactly
-  // as the enumerated event-only dimensions do (docs/03 § Props).
-  const blocksSessions = hit.some(
-    (filter) => EVENT_ONLY_DIMS.has(filter.dim) || isPropDimension(filter.dim),
-  );
-  const blocksEvents = hit.some((filter) => SESSION_ONLY_DIMS.has(filter.dim));
-  if (!blocksSessions && !blocksEvents) return [...queries];
+  const viewDims = filters
+    .filter((filter) => filter.scope !== 'session')
+    .map((filter) => filter.dim);
   return queries.map((query) => {
     if ('kind' in query) return query;
+    const dims = [...viewDims];
+    for (const node of query.filters ?? []) {
+      for (const leaf of filterLeaves(node)) {
+        if (leaf.scope !== 'session') dims.push(leaf.dim);
+      }
+    }
+    if (query.dim !== undefined) dims.push(query.dim);
+    if (query.dim2 !== undefined) dims.push(query.dim2);
+    // `prop:` dims live only on event rows, so they block session metrics
+    // exactly as the enumerated event-only dimensions do (docs/03 § Props).
+    const blocksSessions = dims.some((dim) => EVENT_ONLY_DIMS.has(dim) || isPropDimension(dim));
+    const blocksEvents = dims.some((dim) => SESSION_ONLY_DIMS.has(dim));
+    if (!blocksSessions && !blocksEvents) return query;
     const kept = query.metrics.filter(
       (metric) =>
         !(blocksSessions && SESSION_METRICS.has(metric)) &&
@@ -77,4 +93,14 @@ export function withoutBlockedMetrics(
     if (kept.length === 0 || kept.length === query.metrics.length) return query;
     return { ...query, metrics: kept };
   });
+}
+
+/**
+ * Whether this dashboard's batch should opt in to `meta.annotations`
+ * (docs/04 § 3): exactly when something on it renders the markers. Opt-in per
+ * request so an annotation edit only expires the ETags of dashboards that
+ * actually show one.
+ */
+export function wantsAnnotations(dashboard: Dashboard): boolean {
+  return dashboard.grid.some((spec) => spec.viz === 'timeseries');
 }

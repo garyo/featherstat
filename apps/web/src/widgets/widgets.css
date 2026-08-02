@@ -151,6 +151,42 @@
   cursor: pointer;
 }
 
+/* Pivot control (docs/05 § Pivots): the card title carries the breakdown picker. */
+.pivot-head select {
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px dashed var(--border);
+  padding: 0;
+  cursor: pointer;
+}
+
+/* The secondary filter affordance on a drillable row (docs/05 § Detail views):
+   the primary click navigates, so filtering moves to this hover icon. */
+.bar-row .row-filter {
+  position: relative;
+  z-index: 1;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.bar-row:hover .row-filter,
+.bar-row .row-filter:focus-visible {
+  opacity: 1;
+}
+
+.bar-row .row-filter:hover {
+  color: var(--ink);
+}
+
 /* A row's aside (time on page: the average leads, its honesty numbers follow). */
 .bar-row .sub {
   color: var(--muted);

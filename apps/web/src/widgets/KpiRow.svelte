@@ -37,6 +37,11 @@ const tiles = $derived.by(() => {
 });
 </script>
 
+<!-- Usually a bare strip; a titled row (the detail views' boundary KPIs —
+     "Sessions entering here") says what its tiles are counting. -->
+{#if spec.title !== undefined}
+  <h2>{spec.title}</h2>
+{/if}
 {#if main.kind === 'error'}
   <div class="kpis"><p class="widget-note">{main.message}</p></div>
 {:else if tiles === undefined}

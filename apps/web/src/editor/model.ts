@@ -178,6 +178,9 @@ export function buildWidget(draft: WidgetDraft, id: string): WidgetSpec {
       // Its own query kind, not metric × dimension: the shape IS the answer,
       // and the schema's default ranking depth is the only knob (docs/04 § 3).
       return parseSpec({ ...base, viz: draft.viz, w: 6, query: { id, kind: 'dwell' } });
+    case 'changes':
+      // The changes kind's defaults (visits, all four dims) are the widget.
+      return parseSpec({ ...base, viz: draft.viz, w: 12, query: { id, kind: 'changes' } });
     default:
       // bar-list and the not-yet-implemented vizzes (placeholder cards).
       return parseSpec({

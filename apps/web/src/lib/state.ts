@@ -1,7 +1,11 @@
 import {
+  type BaseDimension,
+  BaseDimensionSchema,
   type Compare,
+  type DetailDimension,
   elapsedThrough,
   type Filter,
+  isDetailDimension,
   type QueryRequest,
   type Range,
   RangeSchema,
@@ -38,8 +42,21 @@ export type CompareChoice = 'previous' | 'year' | 'off' | CustomRange;
  */
 export type DashRef = number | `t:${string}`;
 /** `dash` is the all-sites/site pair; `journeys` the per-site sankey view (M2);
- * `realtime` the SSE tab; `settings` the admin view (WP13). */
-export type ViewName = 'dash' | 'journeys' | 'realtime' | 'settings';
+ * `realtime` the SSE tab; `settings` the admin view (WP13); `detail` one
+ * entity's drill-in (docs/05 § Detail views), named by the `d` param. */
+export type ViewName = 'dash' | 'journeys' | 'realtime' | 'settings' | 'detail';
+
+/** The entity a detail view is about: a drillable dimension and its value. */
+export interface DetailRef {
+  dim: DetailDimension;
+  value: string;
+}
+
+/** One widget's transient breakdown override (docs/05 § Pivots): `pv=<id>:<dim>`. */
+export interface PivotChoice {
+  widget: string;
+  dim: BaseDimension;
+}
 
 export interface ViewState {
   site: SiteScope;
@@ -49,7 +66,11 @@ export interface ViewState {
   /** Library selection; undefined = the scope's default dashboard. */
   dash: DashRef | undefined;
   view: ViewName;
+  /** The entity on screen when `view` is `detail`; undefined everywhere else. */
+  detail: DetailRef | undefined;
   filters: Filter[];
+  /** Transient per-widget breakdown overrides; they name widgets of `dash`. */
+  pivots: PivotChoice[];
 }
 
 /** What a control changes: one axis of the view state at a time. */
@@ -57,11 +78,14 @@ export type ViewStatePatch = Partial<ViewState>;
 
 /**
  * The nav rules of the Scope x View header (docs/05): scope changes keep the
- * view and view changes keep the scope, except the one undefined cell —
- * Journeys has no All-sites rendering, so entering it at All coerces the
- * scope to the last-visited site (the picker then truthfully wears it), and
- * choosing All while on Journeys lands on the overview. A scope change also
- * drops the library selection: `dash` names a dashboard of the OLD scope.
+ * view and view changes keep the scope, except the undefined cells — Journeys
+ * and the detail views have no All-sites rendering, so entering one at All
+ * coerces the scope to the last-visited site (the picker then truthfully wears
+ * it), and choosing All while on one lands on the overview. A scope change
+ * also drops the library selection (`dash` names a dashboard of the OLD
+ * scope), and a scope or library change drops the pivots, which name widgets
+ * of the old document. Naming an entity IS entering its detail view; leaving
+ * the detail view forgets the entity.
  */
 export function resolveNav(
   current: ViewState,
@@ -69,15 +93,30 @@ export function resolveNav(
   siteTab: number,
 ): ViewStatePatch {
   const next = { ...patch };
+  if (next.detail !== undefined) next.view = 'detail';
   const view = next.view ?? current.view;
   const site = next.site ?? current.site;
   // Present-but-undefined, so the `{ ...current, ...patch }` merge still clears it.
   if (next.site !== undefined && next.site !== current.site && !('dash' in next)) {
     next.dash = undefined;
   }
-  if (view === 'journeys' && site === 'all') {
+  if (
+    ((next.site !== undefined && next.site !== current.site) || 'dash' in next) &&
+    !('pivots' in next) &&
+    current.pivots.length > 0
+  ) {
+    next.pivots = [];
+  }
+  if ((view === 'journeys' || view === 'detail') && site === 'all') {
     if (next.site === 'all') next.view = 'dash';
     else next.site = siteTab;
+  }
+  if (
+    (next.view ?? current.view) !== 'detail' &&
+    !('detail' in next) &&
+    current.detail !== undefined
+  ) {
+    next.detail = undefined;
   }
   return next;
 }
@@ -126,7 +165,9 @@ export const DEFAULT_VIEW_STATE: ViewState = {
   cmp: 'previous',
   dash: undefined,
   view: 'dash',
+  detail: undefined,
   filters: [],
+  pivots: [],
 };
 
 // ---------------------------------------------------------------------------
@@ -234,13 +275,18 @@ const RELATIVE_BASE = 'http://view.invalid';
 
 export function parseViewState(href: string): ViewState {
   const params = new URL(href, RELATIVE_BASE).searchParams;
+  const detail = parseDetailRef(params.get('d'));
+  const view = parseView(params.get('view'));
   return {
     site: parseSite(params.get('site')),
     range: parseRange(params.get('range')),
     cmp: parseCompare(params.get('cmp')),
     dash: parseDashRef(params.get('dash')),
-    view: parseView(params.get('view')),
+    // A detail view without its entity is nothing to show — open the dashboard.
+    view: view === 'detail' && detail === undefined ? 'dash' : view,
+    detail: view === 'detail' ? detail : undefined,
     filters: parseFilters(params.getAll('f')),
+    pivots: parsePivots(params.getAll('pv')),
   };
 }
 
@@ -264,8 +310,19 @@ export function applyViewState(state: ViewState, href: string): string {
   );
   set(url.searchParams, 'dash', state.dash);
   set(url.searchParams, 'view', state.view === fallback.view ? undefined : state.view);
+  set(
+    url.searchParams,
+    'd',
+    state.view === 'detail' && state.detail !== undefined
+      ? serializeDetailRef(state.detail)
+      : undefined,
+  );
   url.searchParams.delete('f');
   for (const filter of state.filters) url.searchParams.append('f', serializeFilter(filter));
+  url.searchParams.delete('pv');
+  for (const pivot of state.pivots) {
+    url.searchParams.append('pv', `${pivot.widget}:${pivot.dim}`);
+  }
   return `${url.pathname}${url.search}${url.hash}`;
 }
 
@@ -276,7 +333,10 @@ export function sameViewState(a: ViewState, b: ViewState): boolean {
     sameCompare(a.cmp, b.cmp) &&
     a.dash === b.dash &&
     a.view === b.view &&
-    sameFilters(a.filters, b.filters)
+    sameDetailRef(a.detail, b.detail) &&
+    sameFilters(a.filters, b.filters) &&
+    a.pivots.length === b.pivots.length &&
+    a.pivots.every((p, i) => p.widget === b.pivots[i]?.widget && p.dim === b.pivots[i]?.dim)
   );
 }
 
@@ -336,7 +396,51 @@ export function parseDashRef(raw: string | null): DashRef | undefined {
 }
 
 function parseView(raw: string | null): ViewName {
-  return raw === 'journeys' || raw === 'realtime' || raw === 'settings'
+  return raw === 'journeys' || raw === 'realtime' || raw === 'settings' || raw === 'detail'
     ? raw
     : DEFAULT_VIEW_STATE.view;
+}
+
+/**
+ * `d=<dim>:<encoded value>` — the same dim:value serialization the filter
+ * chips use (`lib/filters.ts`), restricted to the dimensions that have a
+ * detail template. The value is component-encoded, so a path carrying `:` can
+ * never split the ref.
+ */
+export function serializeDetailRef(detail: DetailRef): string {
+  return `${detail.dim}:${encodeURIComponent(detail.value)}`;
+}
+
+export function parseDetailRef(raw: string | null): DetailRef | undefined {
+  if (raw === null) return undefined;
+  const cut = raw.indexOf(':');
+  if (cut === -1) return undefined;
+  const dim = raw.slice(0, cut);
+  if (!isDetailDimension(dim)) return undefined;
+  let value: string;
+  try {
+    value = decodeURIComponent(raw.slice(cut + 1));
+  } catch {
+    return undefined;
+  }
+  return value === '' ? undefined : { dim, value };
+}
+
+export function sameDetailRef(a: DetailRef | undefined, b: DetailRef | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  return a.dim === b.dim && a.value === b.value;
+}
+
+/** `pv=<widgetId>:<dim>`, repeatable; the dim anchors the split from the right
+ * because a widget id may itself carry a `:`. Junk entries are dropped, and a
+ * widget named twice keeps its last pivot — the one clicked most recently. */
+function parsePivots(raw: readonly string[]): PivotChoice[] {
+  const byWidget = new Map<string, BaseDimension>();
+  for (const entry of raw) {
+    const cut = entry.lastIndexOf(':');
+    if (cut <= 0) continue;
+    const dim = BaseDimensionSchema.safeParse(entry.slice(cut + 1));
+    if (dim.success) byWidget.set(entry.slice(0, cut), dim.data);
+  }
+  return [...byWidget.entries()].map(([widget, dim]) => ({ widget, dim }));
 }

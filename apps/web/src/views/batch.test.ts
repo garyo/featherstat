@@ -6,7 +6,13 @@ import {
   type QueryResponse,
 } from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
-import { collectBatch, hourlyWhenIntraday, widgetData, withoutBlockedMetrics } from './batch.ts';
+import {
+  collectBatch,
+  hourlyWhenIntraday,
+  wantsAnnotations,
+  widgetData,
+  withoutBlockedMetrics,
+} from './batch.ts';
 
 const siteOverview = overviewTemplate.build(1);
 const allSites = (siteIds: readonly number[]) => allSitesTemplate.build('all', siteIds);
@@ -17,6 +23,7 @@ describe('collectBatch', () => {
     expect(queries.map((query) => query.id)).toEqual([
       'kpis',
       'kpis~spark',
+      'changes',
       'series',
       'pages',
       'refs',
@@ -240,6 +247,58 @@ describe('withoutBlockedMetrics', () => {
     expect(kpis.metrics).toContain('engaged_ms'); // input untouched
   });
 
+  it('trims a widget-filtered query by ITS filters while the rest of the view keeps theirs', () => {
+    // The pre-existing sharp edge (v2 plan risk 7): blockers are per query, so
+    // a widget scoped to one page loses its session metrics and the unscoped
+    // widget beside it keeps every one.
+    const scoped = [
+      {
+        id: 'page-kpis',
+        metrics: ['pageviews', 'bounce_rate'] as ('pageviews' | 'bounce_rate')[],
+        filters: [{ dim: 'path' as const, op: 'eq' as const, value: '/x' }],
+      },
+      { id: 'kpis', metrics: ['pageviews', 'bounce_rate'] as ('pageviews' | 'bounce_rate')[] },
+    ];
+    const trimmed = withoutBlockedMetrics(scoped, []);
+    const filtered = trimmed[0];
+    const plain = trimmed[1];
+    if (filtered === undefined || 'kind' in filtered || plain === undefined || 'kind' in plain) {
+      throw new Error('metric queries expected');
+    }
+    expect(filtered.metrics).toEqual(['pageviews']);
+    expect(plain.metrics).toEqual(['pageviews', 'bounce_rate']);
+  });
+
+  it("a widget's scope:'session' filter blocks nothing, like the view's", () => {
+    const scoped = [
+      {
+        id: 'q',
+        metrics: ['pageviews', 'bounce_rate'] as ('pageviews' | 'bounce_rate')[],
+        filters: [
+          { dim: 'path' as const, op: 'eq' as const, value: '/x', scope: 'session' as const },
+        ],
+      },
+    ];
+    expect(withoutBlockedMetrics(scoped, [])).toEqual(scoped);
+  });
+
+  it('trims by a PIVOTED grouping dimension, so a pivot cannot blank a mixed list', () => {
+    // Pivoting a referrers list (session-capable dim) onto `path` groups by an
+    // event-only dimension; its session metric goes, its counts stay.
+    const pivoted = [
+      {
+        id: 'refs',
+        metrics: ['visitors', 'bounce_rate'] as ('visitors' | 'bounce_rate')[],
+        dim: 'path' as const,
+        limit: 8,
+      },
+    ];
+    const trimmed = withoutBlockedMetrics(pivoted, []);
+    const refs = trimmed[0];
+    if (refs === undefined || 'kind' in refs) throw new Error('metric query expected');
+    expect(refs.metrics).toEqual(['visitors']);
+  });
+
   it('leaves a query alone when trimming would empty it — the per-query error is honest', () => {
     const trimmed = withoutBlockedMetrics(
       [{ id: 'only-session', metrics: ['engaged_ms', 'bounce_rate'] }],
@@ -248,5 +307,20 @@ describe('withoutBlockedMetrics', () => {
     const only = trimmed[0];
     if (only === undefined || 'kind' in only) throw new Error('metric query expected');
     expect(only.metrics).toEqual(['engaged_ms', 'bounce_rate']);
+  });
+});
+
+describe('wantsAnnotations', () => {
+  it('opts in exactly when the dashboard renders a timeseries', () => {
+    // The markers draw on time charts; a dashboard without one must not widen
+    // its ETag to the annotations version (docs/04 § 3 — opt-in delivery).
+    expect(wantsAnnotations(siteOverview)).toBe(true);
+    expect(wantsAnnotations(allSites([1]))).toBe(false);
+    expect(
+      wantsAnnotations({
+        ...siteOverview,
+        grid: siteOverview.grid.filter((spec) => spec.viz !== 'timeseries'),
+      }),
+    ).toBe(false);
   });
 });

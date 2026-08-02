@@ -1,4 +1,5 @@
 <script lang="ts">
+import { elapsedThrough } from '@featherstat/shared';
 import { resultAxes, sharedKeys } from './axis.ts';
 import { bucketLabel, bucketTitle, exactNumber, metricLabel } from './format.ts';
 import { num, seriesOf } from './series.ts';
@@ -26,6 +27,29 @@ const axis = $derived(
   slice.kind === 'ready' ? sharedKeys(resultAxes(slice.result, env.windows ?? [], env.now)) : [],
 );
 const points = $derived(slice.kind === 'ready' ? seriesOf(slice.result.rows, metrics, axis) : []);
+
+/**
+ * Annotation markers (docs/05 § Annotations): the notes the batch opted in to
+ * (`meta.annotations`), placed on the bucket their instant falls in — the same
+ * clock→bucket derivation the axis trim uses, in the site's own timezone. Keyed
+ * by point index; the texts join the existing hover tooltip.
+ */
+const noted = $derived.by(() => {
+  const map = new Map<number, string[]>();
+  const bucket = slice.kind === 'ready' ? slice.result.bucket : undefined;
+  if (env.annotations === null || bucket === undefined) return map;
+  const zones = new Map((env.windows ?? []).map((w) => [w.siteId, w.timezone]));
+  const fallback = env.windows?.[0]?.timezone ?? 'UTC';
+  const index = new Map(points.map((point, i) => [point.bucket, i]));
+  for (const ann of env.annotations) {
+    if (typeof env.scope === 'number' && ann.siteId !== null && ann.siteId !== env.scope) continue;
+    const zone = (ann.siteId === null ? undefined : zones.get(ann.siteId)) ?? fallback;
+    const at = index.get(elapsedThrough(bucket, zone, ann.ts));
+    if (at === undefined) continue;
+    map.set(at, [...(map.get(at) ?? []), ann.text]);
+  }
+  return map;
+});
 
 let width = $state(0);
 let svgEl: SVGSVGElement | undefined = $state();
@@ -161,6 +185,9 @@ const tipPos = $derived.by(() => {
           style="stroke: {SERIES_COLORS[si]};"
         />
       {/each}
+      {#each [...noted.keys()] as i (i)}
+        <circle class="ann-mark" cx={geom.x(i)} cy={MARGIN.t + 4} r="3.5" />
+      {/each}
       {#if hover !== undefined && hover < geom.n}
         <g class="xhair">
           <line x1={geom.x(hover)} x2={geom.x(hover)} y1={MARGIN.t} y2={MARGIN.t + geom.ih} />
@@ -200,6 +227,9 @@ const tipPos = $derived.by(() => {
             <span class="tip-val">{exactNumber(num(hoverPoint.values[metric]))}</span>
             <span class="tip-name">{metricLabel(metric).toLowerCase()}</span>
           </div>
+        {/each}
+        {#each noted.get(hover ?? -1) ?? [] as text, n (n)}
+          <div class="tip-full">◦ {text}</div>
         {/each}
       </div>
     {/if}
@@ -243,5 +273,11 @@ const tipPos = $derived.by(() => {
   .xhair circle {
     stroke: var(--surface);
     stroke-width: 2;
+  }
+
+  .ann-mark {
+    fill: var(--s2);
+    stroke: var(--surface);
+    stroke-width: 1.5;
   }
 </style>

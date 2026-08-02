@@ -65,12 +65,25 @@ const SHARED_PAGE: AppEnv = {
 
 /** What the grid hands one widget: the view's environment plus its batch share. */
 const widgetEnv = (
-  env: Omit<WidgetEnv, 'data' | 'headless' | 'highlight' | 'windows'>,
+  env: Omit<WidgetEnv, 'data' | 'headless' | 'highlight' | 'windows' | 'annotations'>,
 ): WidgetEnv =>
-  ({ ...env, windows: null, data: null, headless: false, highlight: null }) satisfies WidgetEnv;
+  ({
+    ...env,
+    windows: null,
+    annotations: null,
+    data: null,
+    headless: false,
+    highlight: null,
+  }) satisfies WidgetEnv;
 
 describe('a site dashboard gets the whole live stream', () => {
-  const env = dashboardEnv(APP, { scope: 3, range: '30d', onfilter: () => undefined });
+  const env = dashboardEnv(APP, {
+    scope: 3,
+    range: '30d',
+    onfilter: () => undefined,
+    ondrill: null,
+    onpivot: null,
+  });
 
   it('reads the live count for its own site, not 0', () => {
     // `active-now` on a site dashboard read 0 forever: the view passed the feed
@@ -88,7 +101,15 @@ describe('a site dashboard gets the whole live stream', () => {
 });
 
 describe('a shared page says what it lacks', () => {
-  const env = widgetEnv(dashboardEnv(SHARED_PAGE, { scope: 3, range: '30d', onfilter: null }));
+  const env = widgetEnv(
+    dashboardEnv(SHARED_PAGE, {
+      scope: 3,
+      range: '30d',
+      onfilter: null,
+      ondrill: null,
+      onpivot: null,
+    }),
+  );
 
   it('names the missing stream for every realtime viz', () => {
     for (const viz of ['feed', 'active-now', 'visitor-tally', 'realtime-countries'] as const) {
@@ -117,7 +138,13 @@ describe('the editor preview and the dashboard share one environment', () => {
     // The editor's caller passed a shorter list of props than the grid's, so the
     // preview lost these four. There is one value now, and both consumers get it.
     const onfilter = () => undefined;
-    const env = dashboardEnv(APP, { scope: 3, range: '7d', onfilter });
+    const env = dashboardEnv(APP, {
+      scope: 3,
+      range: '7d',
+      onfilter,
+      ondrill: null,
+      onpivot: null,
+    });
     expect(env).toEqual({
       now: NOW,
       realtime: APP.realtime,
@@ -127,13 +154,21 @@ describe('the editor preview and the dashboard share one environment', () => {
       scope: 3,
       rangeLabel: 'last 7 days',
       onfilter,
+      ondrill: null,
+      onpivot: null,
     });
   });
 
   it('labels the range it was given, so a title cannot describe another window', () => {
-    expect(dashboardEnv(APP, { scope: 'all', range: 'today', onfilter: null }).rangeLabel).toBe(
-      'today',
-    );
+    expect(
+      dashboardEnv(APP, {
+        scope: 'all',
+        range: 'today',
+        onfilter: null,
+        ondrill: null,
+        onpivot: null,
+      }).rangeLabel,
+    ).toBe('today');
   });
 });
 
@@ -153,7 +188,9 @@ describe('needs', () => {
   });
 
   it('withholds a batch reader from a page that runs no batch', () => {
-    const realtimePage = widgetEnv(dashboardEnv(APP, { scope: 3, range: '30d', onfilter: null }));
+    const realtimePage = widgetEnv(
+      dashboardEnv(APP, { scope: 3, range: '30d', onfilter: null, ondrill: null, onpivot: null }),
+    );
     expect(missingCapability('timeseries', realtimePage)).toBe('data');
     expect(missingCapability('feed', realtimePage)).toBeUndefined();
   });
@@ -163,7 +200,13 @@ describe('gridEnv', () => {
   it('takes the windows off the response on screen, never from the caller', () => {
     const windows = [{ siteId: 3, timezone: 'UTC', from: '2026-07-01', to: '2026-07-29' }];
     const response = { results: {}, meta: { generatedInMs: 1, dataVersion: 2, windows } };
-    const env = dashboardEnv(APP, { scope: 3, range: '30d', onfilter: null });
+    const env = dashboardEnv(APP, {
+      scope: 3,
+      range: '30d',
+      onfilter: null,
+      ondrill: null,
+      onpivot: null,
+    });
     expect(gridEnv(env, response as QueryResponse).windows).toBe(windows);
     expect(gridEnv(env, undefined).windows).toBeNull();
   });

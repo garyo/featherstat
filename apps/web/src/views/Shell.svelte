@@ -12,6 +12,8 @@ import { createViewState } from '../lib/state.svelte.ts';
 import {
   type CompareChoice,
   type DashRef,
+  type DetailRef,
+  type PivotChoice,
   resolveNav,
   type SiteScope,
   type ViewName,
@@ -144,16 +146,31 @@ $effect(() => {
   }
 });
 
+// The detail views (docs/05 § Detail views) split the same way — the entity
+// templates and the view around them load on the first drill, not on boot.
+let DetailPanel = $state<typeof import('./DetailView.svelte').default | undefined>(undefined);
+$effect(() => {
+  if (current === 'detail' && DetailPanel === undefined) {
+    void import('./DetailView.svelte').then((chunk) => {
+      DetailPanel = chunk.default;
+    });
+  }
+});
+
 // Which site the switcher points at: the one being viewed, or the last one
 // visited while the overview is up — including after a back/forward move.
 let siteTab = $state(typeof view.current.site === 'number' ? view.current.site : FIRST_SITE);
 $effect(() => {
   if (typeof site === 'number') siteTab = site;
 });
-// Deep links can still say ?view=journeys&site=all — snap the scope to the
-// fallback site once, so the picker never wears a scope the page ignores.
+// Deep links can still say ?view=journeys&site=all (or a detail view at all) —
+// snap the scope to the fallback site once, so the picker never wears a scope
+// the page ignores.
 $effect(() => {
-  if (view.current.view === 'journeys' && view.current.site === 'all') {
+  if (
+    (view.current.view === 'journeys' || view.current.view === 'detail') &&
+    view.current.site === 'all'
+  ) {
     view.update({ site: siteTab });
   }
 });
@@ -167,9 +184,11 @@ $effect(() => {
         ? 'Settings'
         : current === 'journeys'
           ? 'Journeys'
-          : site === 'all'
-            ? 'All sites'
-            : directory.nameOf(site);
+          : current === 'detail'
+            ? (view.current.detail?.value ?? 'Detail')
+            : site === 'all'
+              ? 'All sites'
+              : directory.nameOf(site);
   document.title = `${place} · featherstat`;
 });
 
@@ -182,8 +201,13 @@ const selectView = (next: ViewName): void =>
   view.update(resolveNav(view.current, { view: next }, siteTab));
 const selectRange = (range: ViewRange): void => view.update({ range });
 const selectCompare = (cmp: CompareChoice): void => view.update({ cmp });
-const selectDash = (dash: DashRef | undefined): void => view.update({ dash });
+const selectDash = (dash: DashRef | undefined): void =>
+  view.update(resolveNav(view.current, { dash }, siteTab));
 const setFilters = (filters: Filter[]): void => view.update({ filters });
+const setPivots = (pivots: PivotChoice[]): void => view.update({ pivots });
+/** A drill is a history push — back returns to the dashboard that was left. */
+const openDetail = (detail: DetailRef): void =>
+  view.update(resolveNav(view.current, { detail }, siteTab));
 const logout = (): void => {
   void auth.logout();
 };
@@ -245,6 +269,25 @@ const app = $derived<AppEnv>({
       onselectrange={selectRange}
       onfilters={setFilters}
     />
+  {:else if current === 'detail'}
+    {@const detailSite = typeof site === 'number' ? site : siteTab}
+    {#if DetailPanel !== undefined && view.current.detail !== undefined}
+      <DetailPanel
+        {app}
+        {client}
+        {live}
+        site={detailSite}
+        timezone={directory.byId.get(detailSite)?.timezone}
+        detail={view.current.detail}
+        range={view.current.range}
+        cmp={view.current.cmp}
+        filters={view.current.filters}
+        onselectrange={selectRange}
+        onselectcmp={selectCompare}
+        onfilters={setFilters}
+        onopendetail={openDetail}
+      />
+    {/if}
   {:else if site === 'all'}
     <AllSitesView
       {admin}
@@ -270,10 +313,13 @@ const app = $derived<AppEnv>({
       range={view.current.range}
       cmp={view.current.cmp}
       filters={view.current.filters}
+      pivots={view.current.pivots}
       onselectrange={selectRange}
       onselectcmp={selectCompare}
       onselectdash={selectDash}
       onfilters={setFilters}
+      onpivots={setPivots}
+      onopendetail={openDetail}
     />
   {/if}
 

@@ -73,6 +73,12 @@ export const RENDERINGS: readonly Rendering[] = [
     instead: 'add a line to CAPABILITY_NOTE rather than a guard inside the widget',
   },
   {
+    what: 'a what-changed mover row',
+    marks: ['class="chg-row"'],
+    owners: ['widgets/Changes.svelte'],
+    instead: 'render the changes viz; sections and rows come from widgets/changes.ts',
+  },
+  {
     what: 'the per-visitor tally row',
     marks: ['class="visitor-row"'],
     owners: ['widgets/VisitorTally.svelte'],

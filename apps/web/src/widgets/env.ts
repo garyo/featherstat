@@ -25,6 +25,7 @@ export const NEEDS: Record<VizType, readonly Capability[]> = {
   devices: ['data'],
   dwell: ['data'],
   histogram: ['data'],
+  changes: ['data'],
   map: ['data'],
   'site-cards': ['data'],
   feed: ['realtime'],
@@ -50,11 +51,14 @@ export const CAPABILITY_NOTE: Record<Capability, string> = {
 };
 
 /** What only the view knows: the scope and range on screen, and whether a
- *  breakdown row can add a filter chip. */
+ *  breakdown row can add a filter chip, drill into a detail view, or pivot
+ *  its widget's breakdown. */
 export interface ViewContext {
   scope: SiteScope;
   range: ViewRange;
   onfilter: ((filter: Filter) => void) | null;
+  ondrill: WidgetEnv['ondrill'];
+  onpivot: WidgetEnv['onpivot'];
 }
 
 /**
@@ -71,14 +75,20 @@ export function dashboardEnv(app: AppEnv, view: ViewContext): ViewEnv {
     scope: view.scope,
     rangeLabel: rangeQualifier(view.range),
     onfilter: view.onfilter,
+    ondrill: view.ondrill,
+    onpivot: view.onpivot,
   };
 }
 
 /**
- * The environment a grid renders from: the view's, plus the windows of the
- * response on screen — read here rather than passed, so the axes a widget draws
- * always belong to the answer beside them.
+ * The environment a grid renders from: the view's, plus the windows and
+ * annotations of the response on screen — read here rather than passed, so the
+ * axes and markers a widget draws always belong to the answer beside them.
  */
 export function gridEnv(env: ViewEnv, response: QueryResponse | undefined): GridEnv {
-  return { ...env, windows: response?.meta.windows ?? null };
+  return {
+    ...env,
+    windows: response?.meta.windows ?? null,
+    annotations: response?.meta.annotations ?? null,
+  };
 }

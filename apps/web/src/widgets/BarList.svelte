@@ -1,4 +1,7 @@
 <script lang="ts">
+import type { BaseDimension } from '@featherstat/shared';
+import { dimLabel } from '../lib/filters.ts';
+import { isPivotable, pivotDims } from '../lib/pivots.ts';
 import BarRows from './BarRows.svelte';
 import { barRows } from './bar-rows.ts';
 import { metricLabel } from './format.ts';
@@ -10,6 +13,10 @@ const slice = $derived(sliceOf(env.data, 'main'));
 const query = $derived(
   spec.query !== undefined && !('kind' in spec.query) ? spec.query : undefined,
 );
+/** An `adjacency` result renders through the same rows: label × sessions. */
+const adjacency = $derived(
+  spec.query !== undefined && 'kind' in spec.query && spec.query.kind === 'adjacency',
+);
 const metric = $derived(query?.metrics[0]);
 const extraMetric = $derived(query?.metrics[1]);
 const dim = $derived(query?.dim);
@@ -19,13 +26,20 @@ const nullLabel = $derived(
 );
 /** Country-code rows get flag + display name (geo card). */
 const flags = $derived(spec.options.flags === true);
-const unit = $derived(metric === undefined ? '' : metricLabel(metric).toLowerCase());
+const unit = $derived(
+  adjacency ? 'sessions' : metric === undefined ? '' : metricLabel(metric).toLowerCase(),
+);
 const extraUnit = $derived(
   extraMetric === undefined ? undefined : metricLabel(extraMetric).toLowerCase(),
 );
 
+/** The pivot control (docs/05 § Pivots): the title becomes a breakdown picker. */
+const pivotable = $derived(env.onpivot !== null && isPivotable(spec) && query?.dim !== undefined);
+
 const rows = $derived.by(() => {
-  if (slice.kind !== 'ready' || metric === undefined || dim === undefined) return [];
+  if (slice.kind !== 'ready') return [];
+  if (adjacency) return barRows(slice.result.rows, 'sessions', 'label', '(none)');
+  if (metric === undefined || dim === undefined) return [];
   const merged = barRows(slice.result.rows, metric, dim, nullLabel, {
     dim2: query?.dim2,
     extraMetric,
@@ -36,7 +50,21 @@ const rows = $derived.by(() => {
 });
 </script>
 
-<h2>{spec.title ?? spec.id}</h2>
+<h2 class="pivot-head">
+  {spec.title ?? spec.id}
+  {#if pivotable && query !== undefined}
+    ·
+    <select
+      aria-label="Breakdown"
+      value={query.dim}
+      onchange={(event) => env.onpivot?.(spec.id, event.currentTarget.value as BaseDimension)}
+    >
+      {#each pivotDims(query.metrics) as option (option)}
+        <option value={option}>{dimLabel(option)}</option>
+      {/each}
+    </select>
+  {/if}
+</h2>
 <div class="list-pane">
   {#if slice.kind === 'loading'}
     <p class="widget-note">Loading…</p>
@@ -44,7 +72,9 @@ const rows = $derived.by(() => {
     <p class="widget-note">{slice.message}</p>
   {:else if rows.length === 0}
     <p class="widget-note">No data in this range.</p>
+  {:else if adjacency}
+    <BarRows {rows} {unit} onfilter={null} />
   {:else}
-    <BarRows {rows} {unit} {extraUnit} {flags} {dim} onfilter={env.onfilter} />
+    <BarRows {rows} {unit} {extraUnit} {flags} {dim} onfilter={env.onfilter} ondrill={env.ondrill} />
   {/if}
 </div>

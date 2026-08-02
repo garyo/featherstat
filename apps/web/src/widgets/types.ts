@@ -1,4 +1,7 @@
 import {
+  type AnnotationInfo,
+  type BaseDimension,
+  type DetailDimension,
   type Filter,
   isQueryError,
   type QueryErrorResult,
@@ -89,6 +92,18 @@ export interface WidgetEnv {
   onselectsite: ((site: number) => void) | null;
   /** Click-to-filter (docs/05); null on a page with no filter row. */
   onfilter: ((filter: Filter) => void) | null;
+  /** Drill into an entity's detail view (docs/05 § Detail views); null where
+   * there is nowhere to navigate — share pages, the all-sites overview. */
+  ondrill: ((dim: DetailDimension, value: string) => void) | null;
+  /** Swap this widget's breakdown (docs/05 § Pivots); null on a page whose URL
+   * carries no `pv` state — rows then keep plain click-to-filter titles. */
+  onpivot: ((widget: string, dim: BaseDimension) => void) | null;
+  /**
+   * `meta.annotations` of the response on screen (docs/04 § 3) — filled from
+   * the response like `windows`, so a marker always belongs to the answer
+   * beside it. Null when the batch did not opt in (or there is no batch).
+   */
+  annotations: readonly AnnotationInfo[] | null;
   /** A composing page supplies the heading itself; the widget then omits its own. */
   headless: boolean;
   /** Highlight shared with the page's other realtime widgets; null on a grid. */
@@ -103,11 +118,11 @@ export interface WidgetEnv {
 export type GridEnv = Omit<WidgetEnv, 'data' | 'headless' | 'highlight'>;
 
 /**
- * What a view assembles — a `GridEnv` minus the windows, which are filled in by
- * whichever component holds the response (`gridEnv`), so a widget's axis always
- * belongs to the answer beside it.
+ * What a view assembles — a `GridEnv` minus the windows and annotations, which
+ * are filled in by whichever component holds the response (`gridEnv`), so a
+ * widget's axis and markers always belong to the answer beside it.
  */
-export type ViewEnv = Omit<GridEnv, 'windows'>;
+export type ViewEnv = Omit<GridEnv, 'windows' | 'annotations'>;
 
 /**
  * What the authenticated app offers every view: the one SSE stream, the one

@@ -78,6 +78,8 @@ const APP_PAGE: ViewEnv = {
   onopenrealtime: () => undefined,
   onselectsite: () => undefined,
   onfilter: () => undefined,
+  ondrill: null,
+  onpivot: null,
 };
 
 /**
@@ -94,6 +96,8 @@ const SHARED_PAGE: ViewEnv = {
   onopenrealtime: null,
   onselectsite: null,
   onfilter: null,
+  ondrill: null,
+  onpivot: null,
 };
 
 // `satisfies` rather than an annotation: `Measures` is keyed by string, so an

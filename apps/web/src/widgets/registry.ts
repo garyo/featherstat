@@ -2,6 +2,7 @@ import type { VizType } from '@featherstat/shared';
 import type { Component } from 'svelte';
 import ActiveNow from './ActiveNow.svelte';
 import BarList from './BarList.svelte';
+import Changes from './Changes.svelte';
 import Devices from './Devices.svelte';
 import Dwell from './Dwell.svelte';
 import Feed from './Feed.svelte';
@@ -47,6 +48,7 @@ export const REGISTRY: Partial<Record<VizType, RegistryEntry>> = {
   devices: { component: Devices, frame: 'card' },
   dwell: { component: Dwell, frame: 'card' },
   histogram: { component: Histogram, frame: 'card' },
+  changes: { component: Changes, frame: 'card' },
   'site-cards': { component: SiteCards, frame: 'wide' },
 };
 
