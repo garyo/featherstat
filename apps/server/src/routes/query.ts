@@ -78,8 +78,29 @@ export type ExecuteQuery = (
   goals?: GoalDefinitions,
 ) => QueryResponse | Promise<QueryResponse>;
 
+/**
+ * The three query budgets as one sharable object: `/api/query` and `/mcp` are
+ * two surfaces over the same synchronous read path, so a token keeps ONE
+ * budget across both — separate limiter instances would double every ceiling.
+ */
+export interface QueryRateLimits {
+  session: RateLimiter;
+  token: RateLimiter;
+  global: RateLimiter;
+}
+
+export function createQueryRateLimits(): QueryRateLimits {
+  return {
+    session: new RateLimiter(QUERY_BATCHES_PER_SESSION, QUERY_WINDOW_MS),
+    token: new RateLimiter(TOKEN_BATCHES_PER_MIN, QUERY_WINDOW_MS),
+    global: new RateLimiter(QUERY_BATCHES_GLOBAL, QUERY_WINDOW_MS),
+  };
+}
+
 export interface QueryRouteOptions {
   execute?: ExecuteQuery;
+  /** Shared with the MCP routes by the ops shell; defaults to a private set. */
+  limits?: QueryRateLimits;
 }
 
 export function createQueryRoutes(db: Db, options: QueryRouteOptions = {}): Hono<QueryEnv> {
@@ -88,9 +109,11 @@ export function createQueryRoutes(db: Db, options: QueryRouteOptions = {}): Hono
     ((request, now, allowedSites, derived, goals) =>
       executeQueryRequest(db, request, { now, allowedSites, derived, goals }));
   const app = new Hono<QueryEnv>();
-  const sessionBatches = new RateLimiter(QUERY_BATCHES_PER_SESSION, QUERY_WINDOW_MS);
-  const tokenBatches = new RateLimiter(TOKEN_BATCHES_PER_MIN, QUERY_WINDOW_MS);
-  const globalBatches = new RateLimiter(QUERY_BATCHES_GLOBAL, QUERY_WINDOW_MS);
+  const {
+    session: sessionBatches,
+    token: tokenBatches,
+    global: globalBatches,
+  } = options.limits ?? createQueryRateLimits();
 
   app.post('/api/query', bodyLimit({ maxSize: MAX_QUERY_BODY_BYTES }), async (c) => {
     let body: unknown;

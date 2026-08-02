@@ -164,6 +164,28 @@ describe('token principals', () => {
     expect(res.status).toBe(200);
   });
 
+  it('reaches /mcp — the one surface that is token-ONLY', async () => {
+    const minted = await mintToken('all');
+    const res = await secured.app.request('/mcp', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${minted.token}`,
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }),
+    });
+    expect(res.status).toBe(200);
+    // A cookie session is 403'd there: no CSRF story, so no cookies at all.
+    const admin = await adminSession();
+    const cookie = await secured.app.request('/mcp', {
+      method: 'POST',
+      headers: { cookie: admin.cookie, 'content-type': 'application/json' },
+      body: '{}',
+    });
+    expect(cookie.status).toBe(403);
+  });
+
   it('is walled out of the whole admin surface', async () => {
     const minted = await mintToken('all');
     for (const [path, method] of [
@@ -171,6 +193,7 @@ describe('token principals', () => {
       ['/api/admin/sites', 'POST'],
       ['/api/admin/diagnostics', 'GET'],
       ['/api/admin/dashboards', 'GET'],
+      ['/api/admin/viewers', 'GET'],
     ] as const) {
       const res = await bearerRequest(minted.token, path, {
         method,
@@ -254,6 +277,16 @@ describe('viewer principals', () => {
     expect(outOfScope.status).toBe(404);
   });
 
+  it('is 403d from /mcp like any cookie session', async () => {
+    const cookie = await viewerCookie([2]);
+    const res = await secured.app.request('/mcp', {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: '{}',
+    });
+    expect(res.status).toBe(403);
+  });
+
   it('dies when the viewer is revoked, even with a live session', async () => {
     const cookie = await viewerCookie([2]);
     withWriteTransaction(db, () => {
@@ -261,5 +294,100 @@ describe('viewer principals', () => {
     });
     const res = await secured.app.request('/api/sites', { headers: { cookie } });
     expect(res.status).toBe(401);
+  });
+});
+
+describe('dashboards reads (GET /api/dashboards — docs/04 § 5)', () => {
+  /** Stores one dashboard per scope; returns ids keyed by scope. */
+  async function seedDashboards(): Promise<Record<'one' | 'two' | 'all', number>> {
+    const admin = await adminSession();
+    const ids: number[] = [];
+    for (const site of [1, 2, 'all'] as const) {
+      const res = await secured.app.request('/api/admin/dashboards', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie: admin.cookie,
+          'x-csrf-token': admin.csrf,
+        },
+        body: JSON.stringify({ name: `dash-${site}`, site, grid: [] }),
+      });
+      expect(res.status).toBe(201);
+      ids.push(((await res.json()) as { id: number }).id);
+    }
+    return { one: ids[0] as number, two: ids[1] as number, all: ids[2] as number };
+  }
+
+  async function namesSeenBy(headers: Record<string, string>): Promise<string[]> {
+    const res = await secured.app.request('/api/dashboards', { headers });
+    expect(res.status).toBe(200);
+    return ((await res.json()) as Array<{ name: string }>).map((row) => row.name).sort();
+  }
+
+  /** Mint with an existing admin session — the login limiter's clock is frozen. */
+  async function mintWith(
+    admin: { cookie: string; csrf: string },
+    sites: 'all' | number[],
+  ): Promise<ApiTokenMinted> {
+    const res = await secured.app.request('/api/admin/tokens', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        cookie: admin.cookie,
+        'x-csrf-token': admin.csrf,
+      },
+      body: JSON.stringify({ name: 'test token', sites }),
+    });
+    expect(res.status).toBe(201);
+    return (await res.json()) as ApiTokenMinted;
+  }
+
+  it('scopes the list per principal; all-sites dashboards need an all scope', async () => {
+    const ids = await seedDashboards();
+    const admin = await adminSession();
+    expect(await namesSeenBy({ cookie: admin.cookie })).toEqual(['dash-1', 'dash-2', 'dash-all']);
+
+    const token = await mintWith(admin, [2]);
+    const bearer = { authorization: `Bearer ${token.token}` };
+    expect(await namesSeenBy(bearer)).toEqual(['dash-2']);
+
+    const wideToken = await mintWith(admin, 'all');
+    expect(await namesSeenBy({ authorization: `Bearer ${wideToken.token}` })).toEqual([
+      'dash-1',
+      'dash-2',
+      'dash-all',
+    ]);
+
+    // Out of scope answers exactly like nonexistent, on the detail route too.
+    expect((await bearerRequest(token.token, `/api/dashboards/${ids.two}`)).status).toBe(200);
+    expect((await bearerRequest(token.token, `/api/dashboards/${ids.one}`)).status).toBe(404);
+    expect((await bearerRequest(token.token, `/api/dashboards/${ids.all}`)).status).toBe(404);
+  });
+
+  it('shows a viewer its scoped rows and keeps the admin paths admin-only', async () => {
+    const ids = await seedDashboards();
+    const viewerId = withWriteTransaction(db, () => {
+      db.prepare('INSERT INTO viewers (email, site_scope, created_at) VALUES (?, ?, ?)').run(
+        'client@example.com',
+        serializeSiteScope([2]),
+        T0,
+      );
+      return Number(db.prepare('SELECT max(id) FROM viewers').pluck().get());
+    });
+    const issued = issueSession(db, ensureAuthSecret(db), T0, { kind: 'viewer', viewerId });
+    const cookie = `__Host-session=${issued.cookieValue}`;
+
+    expect(await namesSeenBy({ cookie })).toEqual(['dash-2']);
+    const detail = await secured.app.request(`/api/dashboards/${ids.two}`, {
+      headers: { cookie },
+    });
+    expect(detail.status).toBe(200);
+    expect(
+      (await secured.app.request(`/api/dashboards/${ids.all}`, { headers: { cookie } })).status,
+    ).toBe(404);
+    // The legacy admin read path stays walled.
+    expect(
+      (await secured.app.request('/api/admin/dashboards', { headers: { cookie } })).status,
+    ).toBe(403);
   });
 });

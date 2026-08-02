@@ -12,10 +12,13 @@ import { createCampaignRoutes } from '../routes/campaigns.ts';
 import { createDashboardRoutes } from '../routes/dashboards.ts';
 import { createDerivedMetricRoutes } from '../routes/derived.ts';
 import { createGoalRoutes } from '../routes/goals.ts';
+import { createMcpRoutes } from '../routes/mcp.ts';
 import { createMetricsRoutes, Metrics } from '../routes/metrics.ts';
+import { createQueryRateLimits } from '../routes/query.ts';
 import { createSegmentRoutes } from '../routes/segments.ts';
 import { createShareRoutes } from '../routes/share.ts';
 import { createSpaRoutes } from '../routes/spa.ts';
+import { createViewerRoutes } from '../routes/viewers.ts';
 import { type Auth, type AuthEnv, type AuthOptions, createAuth } from './auth.ts';
 
 /**
@@ -51,7 +54,9 @@ const PUBLIC_API_PATHS = new Set([
  * (The CSP's `connect-src 'self'` is response-side — it governs what OUR pages
  * may fetch, and says nothing to a third-party caller. This allowlist does.)
  */
-const CORS_API_PATHS = new Set(['/api/query', '/api/sites']);
+// `/mcp` rides along: MCP clients authenticate with the same Bearer tokens and
+// may be browser-based, so it gets exactly the on-Bearer CORS treatment.
+const CORS_API_PATHS = new Set(['/api/query', '/api/sites', '/mcp']);
 
 const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
@@ -153,7 +158,12 @@ export function createSecuredApp(options: SecuredAppOptions = {}): SecuredApp {
     observeWriteTransactions(db, (ms) => metrics.flush.observe(ms));
     const createdAuth = createAuth(db, authOptions);
     auth = createdAuth;
+    // One set of query budgets for BOTH executing surfaces (/api/query, /mcp):
+    // a token keeps a single budget however it asks.
+    const queryLimits = createQueryRateLimits();
+    appOptions.queryLimits = queryLimits;
     app.use('/api/*', corsOnBearer);
+    app.use('/mcp', corsOnBearer);
     app.use('/api/*', (c, next) =>
       PUBLIC_API_PATHS.has(c.req.path) ? next() : createdAuth.gate(c, next),
     );
@@ -182,6 +192,13 @@ export function createSecuredApp(options: SecuredAppOptions = {}): SecuredApp {
     // Minting/revoking are admin surfaces; `GET /share/:token` rides in the same
     // router and stays public — it is not under `/api/`, so the prefix gate skips it.
     app.route('/', createShareRoutes(db, createdAuth));
+    // Same shape again: viewer admin under the wall, `GET /invite/:token` public.
+    app.route('/', createViewerRoutes(db, createdAuth));
+    // MCP (docs/04 § 6): outside /api, token-Bearer only, gated in its router.
+    app.route(
+      '/',
+      createMcpRoutes(db, createdAuth, { execute: appOptions.executeQuery, limits: queryLimits }),
+    );
     const notifications = createNtfyIntegration(db, pipeline, createdAuth, ntfyOptions);
     ntfy = notifications.notifier;
     app.route('/', notifications.routes);

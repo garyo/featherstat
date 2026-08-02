@@ -693,7 +693,14 @@ single stream.
 
 Conventional REST under `/api/admin` (session auth + CSRF): sites CRUD,
 dashboards CRUD (layout JSON — writes validate the schema AND the batch
-invariants: unique query ids, derived-query count within the batch cap),
+invariants: unique query ids, derived-query count within the batch cap;
+**reads also live outside the wall** at `GET /api/dashboards` and
+`GET /api/dashboards/:id`, open to every gated principal and scope-filtered:
+a site-scoped dashboard is visible to any principal that can read its site,
+an `'all'`-sites dashboard — which aggregates every site — only to principals
+whose own scope is `'all'`, and out of scope answers 404 exactly like
+nonexistent; the `/api/admin/dashboards` read paths remain for the SPA until
+it migrates),
 segments, derived-metrics, goals and campaigns CRUD (`/api/admin/segments`,
 `/api/admin/derived-metrics`, `/api/admin/goals?site=`,
 `/api/admin/campaigns?site=`; the read lists ride outside the wall at
@@ -755,6 +762,33 @@ refusals are never charged, over budget answers 429 with `Retry-After: 60`.
 A token's `last_used_at` is written at most hourly — an audit column, not a
 log.
 
+**Viewers: read-only humans, invited without SMTP.** A viewer is an email plus
+a site scope (`'all'` or a site-id list), managed under the admin wall:
+`GET /api/admin/viewers` lists them, `POST /api/admin/viewers` creates one —
+or re-invites an existing email, updating the scope and clearing any
+revocation — and mints a **single-use magic link** (raw token
+`fsv_<43 base64url>`, sha256-at-rest like every other token, 7-day expiry);
+`POST /api/admin/viewers/:id/invite` re-mints; `DELETE /api/admin/viewers/:id`
+revokes the viewer and expires their outstanding links (live sessions die at
+the gate, which re-reads the viewer row on every request). The mint response
+carries the claim path `/invite/<token>` **exactly once** — the admin copies
+it out of band. `deliverInvite` (routes/viewers.ts) is the one-function seam
+where SMTP/ntfy delivery slots in later.
+
+Visiting `GET /invite/:token` (public, per-IP rate-limited like
+`/share/:token`) consumes the link atomically — used, expired, unknown,
+malformed and revoked-viewer all answer the same 410, so a probe learns
+nothing — issues a viewer session and 302s to `/`. Viewer sessions get their
+own **90-day sliding TTL** (admin sessions keep 14 fixed days): a viewer
+cannot log back in, their link was single-use, so an active viewer's session
+renews itself whenever it has burned half its life, and only 90 days of true
+absence ends it. The `__Host-` cookie pair is the same as the admin's, and
+`GET /api/admin/me` answers a viewer session `authenticated: true` with
+`principal: "viewer"` so the SPA can adapt. What a viewer reaches is the read
+surface exactly as a token does — queries, sites, realtime, dashboards reads,
+segment/goal/derived listings — scoped through the same `readableSites`
+chokepoint; the whole `/api/admin/*` write surface answers 403.
+
 First-run setup (`POST /api/admin/setup`) additionally requires the one-time
 **setup token** the server prints to its log at first boot: between `docker
 run` and the owner opening the page, an unconfigured install is reachable by
@@ -763,3 +797,47 @@ login share the same rate limits (per-IP plus a global budget). The client
 address comes from the `TRUSTED_PROXY_HOPS`-th `X-Forwarded-For` entry from
 the end (default 1 — one trusted proxy); with `0`, forwarded headers are
 ignored entirely.
+
+## 6. MCP — analysts hook up their LLM
+
+`POST /mcp` (outside `/api`) is a **streamable-HTTP MCP endpoint** on the same
+process (`@modelcontextprotocol/sdk`, MIT), **stateless**: every POST
+constructs its own server + transport and stands alone — no session id, no
+handshake ordering, no load-balancer affinity. Responses are plain JSON
+(`enableJsonResponse`), so a curl-shaped JSON-RPC POST is a complete client.
+
+**Auth: the same Bearer API tokens, and ONLY those.** The route runs the
+ordinary gate, then requires `principal.kind === 'token'`: anonymous is 401,
+a cookie session is 403 — a Bearer token carries no ambient credential, so
+there is no CSRF question, and MCP clients may be browser-based, so the route
+gets the same CORS-on-Bearer treatment as `/api/query`. Site scoping is the
+same `readableSites` chokepoint; an out-of-scope site answers like a
+nonexistent one, as a tool-level error the model can read.
+
+Two tools, deliberately few — the vocabulary is the product, and no free text
+ever becomes SQL (invariant 9 holds because MCP is a thin shim over the closed
+vocabulary):
+
+- **`describe_analytics`** (no input) → one compact document: the sites this
+  token reads (id/name/domains/timezone), every metric — built-ins from
+  `MetricSchema`, live `goal:<id>:…` refs for goals on readable sites, live
+  `d:<name>` derived metrics — every dimension (`BaseDimensionSchema` plus the
+  `prop:<key>` keys actually in use per readable site), the filter grammar
+  (ops, `all`/`any`/`not`/`segment`, `scope: "session"`, depth/leaf caps),
+  range presets and `{from, to}`, compare forms, buckets, and the semantics
+  notes (engagement-aware bounce, accrued attention, `~`-approximate
+  distincts, the refusal philosophy). Every enumerable part is pulled from the
+  live shared enums and DB rows, never restated — `routes/mcp.test.ts` asserts
+  every `MetricSchema`/`BaseDimension` option appears, so the document cannot
+  drift from what the query route accepts.
+- **`query`** — the input schema **is `QueryRequestSchema`** (zod → JSON
+  Schema via the SDK), executed through the same path as `/api/query`: segment
+  expansion, derived/goal resolution, token scoping, and the same
+  `ExecuteQuery` seam, so the worker read pool serves MCP too. Rate limiting
+  shares the **same limiter instances** as the REST route: one
+  30-batches/minute budget per token across both surfaces, one global bucket
+  for the instance. Per-query `{error}` entries pass through verbatim —
+  refusals teach the model the vocabulary's edges.
+
+A `what_changed` tool is deliberately absent until the `changes` query kind
+lands; it will be sugar over that kind, not a third path into the data.

@@ -17,10 +17,12 @@ const GOAL_REF_PATTERN = /^goal:([1-9]\d{0,8}):(conversions|cr|value)$/;
 /** `goal:<id>:<aspect>` — how a query names a goal metric beside the built-ins. */
 export type GoalMetricRef = `goal:${number}:${GoalAspect}`;
 
-export const GoalMetricRefSchema = z.custom<GoalMetricRef>(
-  (raw) => typeof raw === 'string' && GOAL_REF_PATTERN.test(raw),
-  'not a goal metric reference (goal:<id>:conversions|cr|value)',
-);
+// A pattern-checked string rather than `z.custom`, so the schema stays
+// representable in JSON Schema (the MCP tool listing converts it).
+export const GoalMetricRefSchema = z
+  .string()
+  .regex(GOAL_REF_PATTERN, 'not a goal metric reference (goal:<id>:conversions|cr|value)')
+  .transform((raw) => raw as GoalMetricRef);
 
 export function isGoalMetricRef(metric: string): metric is GoalMetricRef {
   return GOAL_REF_PATTERN.test(metric);

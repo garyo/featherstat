@@ -3,6 +3,7 @@ import {
   AdminChangePasswordSchema,
   type AdminDiagnostics,
   AdminLoginSchema,
+  type AdminMe,
   type AdminPropsResponse,
   AdminSetupSchema,
   AdminSiteCreateSchema,
@@ -91,9 +92,19 @@ export function createAdminRoutes(
 
   app.get('/api/admin/me', (c) => {
     const needsSetup = !auth.disabled && !auth.hasPassword();
-    const sessionId = auth.sessionOf(c);
-    if (sessionId === undefined) return c.json({ authenticated: false, needsSetup });
-    return c.json({ authenticated: true, needsSetup, csrf: auth.csrfTokenOf(sessionId) });
+    // Viewer sessions answer here too: `me` is the auth bootstrap for every
+    // cookie principal, and `principal` is how the SPA tells the two apart.
+    const who = auth.cookiePrincipal(c);
+    if (who === undefined || who.kind === 'token') {
+      return c.json({ authenticated: false, needsSetup });
+    }
+    const me: AdminMe = {
+      authenticated: true,
+      needsSetup,
+      csrf: auth.csrfTokenOf(who.sessionId),
+      principal: who.kind,
+    };
+    return c.json(me);
   });
 
   app.post('/api/admin/setup', async (c) => {

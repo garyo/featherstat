@@ -32,10 +32,12 @@ const REF_PATTERN = /^d:[a-z][a-z0-9_]{0,31}$/;
 /** `d:<name>` — how a request names a derived metric beside the built-in ones. */
 export type DerivedMetricRef = `d:${string}`;
 
-export const DerivedMetricRefSchema = z.custom<DerivedMetricRef>(
-  (raw) => typeof raw === 'string' && REF_PATTERN.test(raw),
-  'not a derived metric reference (d:<name>)',
-);
+// A pattern-checked string rather than `z.custom`, so the schema stays
+// representable in JSON Schema (the MCP tool listing converts it).
+export const DerivedMetricRefSchema = z
+  .string()
+  .regex(REF_PATTERN, 'not a derived metric reference (d:<name>)')
+  .transform((raw) => raw as DerivedMetricRef);
 
 export function isDerivedMetricRef(metric: string): metric is DerivedMetricRef {
   return REF_PATTERN.test(metric);

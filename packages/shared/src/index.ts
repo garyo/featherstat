@@ -389,8 +389,11 @@ const isoDate = z
  * `mtd` are partial — their compare period is the complete one before, as every
  * calendar-range analytics product reads it.
  */
+export const RangePresetSchema = z.enum(['today', '24h', '7d', '30d', '90d', 'mtd']);
+export type RangePreset = z.infer<typeof RangePresetSchema>;
+
 export const RangeSchema = z.union([
-  z.object({ preset: z.enum(['today', '24h', '7d', '30d', '90d', 'mtd']) }),
+  z.object({ preset: RangePresetSchema }),
   z.object({ from: isoDate, to: isoDate }),
 ]);
 export type Range = z.infer<typeof RangeSchema>;
@@ -613,6 +616,9 @@ export interface AdminMe {
   needsSetup: boolean;
   /** Present when authenticated: the token mutations echo as `x-csrf-token`. */
   csrf?: string;
+  /** Present when authenticated: which kind of session this is, so the SPA
+   * can hide the admin surface from a viewer instead of 403-ing into it. */
+  principal?: 'admin' | 'viewer';
 }
 
 /** Login/setup success: the session rides in cookies, the CSRF token in the body. */
@@ -692,6 +698,35 @@ export interface ApiTokenInfo {
 /** `POST /api/admin/tokens` — `token` is shown once and never retrievable. */
 export interface ApiTokenMinted extends ApiTokenInfo {
   token: string;
+}
+
+// ---------------------------------------------------------------------------
+// Viewers (docs/04 § 5) — invited read-only principals, claimed by magic link
+// ---------------------------------------------------------------------------
+
+export const ViewerInviteSchema = z.object({
+  email: z.email().max(254),
+  /** `'all'` or an explicit site-id list — never empty, like a token's scope. */
+  sites: z.union([z.literal('all'), z.array(z.number().int().positive()).min(1).max(100)]),
+});
+export type ViewerInvite = z.infer<typeof ViewerInviteSchema>;
+
+/** `GET /api/admin/viewers` row. */
+export interface ViewerInfo {
+  id: number;
+  email: string;
+  sites: 'all' | number[];
+  createdAt: number;
+  revokedAt: number | null;
+}
+
+/** Mint response: `url` is the single-use claim path, shown exactly once —
+ * the admin copies it out of band (no SMTP; see `deliverInvite`). */
+export interface MagicLinkMinted {
+  viewerId: number;
+  /** Relative claim path (`/invite/<token>`); prefix with the instance origin. */
+  url: string;
+  expiresAt: number;
 }
 
 // ---------------------------------------------------------------------------

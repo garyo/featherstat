@@ -1003,6 +1003,16 @@ export function getAdminSession(db: Db, id: string): AdminSessionRow | undefined
   return stmt<AdminSessionRow>(db, SQL_GET_ADMIN_SESSION).get(id);
 }
 
+/** Sliding renewal (viewer sessions): pushes `expires_at` forward, never back. */
+export function extendAdminSession(db: Db, id: string, expiresAt: number): void {
+  assertWritable(db);
+  stmt(db, 'UPDATE admin_sessions SET expires_at = ? WHERE id = ? AND expires_at < ?').run(
+    expiresAt,
+    id,
+    expiresAt,
+  );
+}
+
 export function deleteAdminSession(db: Db, id: string): void {
   assertWritable(db);
   stmt(db, SQL_DELETE_ADMIN_SESSION).run(id);
@@ -1087,7 +1097,96 @@ export interface ViewerRow {
 
 const VIEWER_COLUMNS = 'id, email, site_scope, created_at, revoked_at';
 const SQL_GET_VIEWER = `SELECT ${VIEWER_COLUMNS} FROM viewers WHERE id = ?`;
+const SQL_GET_VIEWER_BY_EMAIL = `SELECT ${VIEWER_COLUMNS} FROM viewers WHERE email = ?`;
+const SQL_LIST_VIEWERS = `SELECT ${VIEWER_COLUMNS} FROM viewers ORDER BY id`;
+const SQL_INSERT_VIEWER = 'INSERT INTO viewers (email, site_scope, created_at) VALUES (?, ?, ?)';
+// Re-inviting is a decision to restore access, so it clears any revocation.
+const SQL_REINVITE_VIEWER = `UPDATE viewers SET site_scope = ?, revoked_at = NULL WHERE id = ? RETURNING ${VIEWER_COLUMNS}`;
+const SQL_REVOKE_VIEWER = 'UPDATE viewers SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL';
 
 export function getViewer(db: Db, id: number): ViewerRow | undefined {
   return stmt<ViewerRow>(db, SQL_GET_VIEWER).get(id);
+}
+
+export function getViewerByEmail(db: Db, email: string): ViewerRow | undefined {
+  return stmt<ViewerRow>(db, SQL_GET_VIEWER_BY_EMAIL).get(email);
+}
+
+export function listViewers(db: Db): ViewerRow[] {
+  return stmt<ViewerRow>(db, SQL_LIST_VIEWERS).all() as ViewerRow[];
+}
+
+export function insertViewer(
+  db: Db,
+  row: Pick<ViewerRow, 'email' | 'site_scope' | 'created_at'>,
+): ViewerRow {
+  assertWritable(db);
+  const info = stmt(db, SQL_INSERT_VIEWER).run(row.email, row.site_scope, row.created_at);
+  return { id: Number(info.lastInsertRowid), ...row, revoked_at: null };
+}
+
+/** Re-invite: updates the scope and clears a revocation. Undefined if unknown. */
+export function reinviteViewer(db: Db, id: number, siteScope: string): ViewerRow | undefined {
+  assertWritable(db);
+  return stmt<ViewerRow>(db, SQL_REINVITE_VIEWER).get(siteScope, id);
+}
+
+/** Revokes a live viewer; false if unknown or already revoked. */
+export function revokeViewer(db: Db, id: number, now: number): boolean {
+  assertWritable(db);
+  return stmt(db, SQL_REVOKE_VIEWER).run(now, id).changes > 0;
+}
+
+export interface MagicLinkRow {
+  /** sha256 of the raw link token — the raw value exists only in the mint response. */
+  token_hash: Uint8Array;
+  viewer_id: number;
+  created_at: number;
+  expires_at: number;
+  used_at: number | null;
+}
+
+const MAGIC_LINK_COLUMNS = 'token_hash, viewer_id, created_at, expires_at, used_at';
+const SQL_INSERT_MAGIC_LINK =
+  'INSERT INTO magic_links (token_hash, viewer_id, created_at, expires_at) VALUES (?, ?, ?, ?)';
+const SQL_GET_MAGIC_LINK = `SELECT ${MAGIC_LINK_COLUMNS} FROM magic_links WHERE token_hash = ?`;
+// Single use: the UPDATE is the claim — `changes === 1` means WE consumed it,
+// so two concurrent claims of one link cannot both win.
+const SQL_CONSUME_MAGIC_LINK =
+  'UPDATE magic_links SET used_at = ? WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?';
+const SQL_EXPIRE_VIEWER_MAGIC_LINKS =
+  'UPDATE magic_links SET expires_at = ? WHERE viewer_id = ? AND used_at IS NULL AND expires_at > ?';
+const SQL_PRUNE_MAGIC_LINKS =
+  'DELETE FROM magic_links WHERE expires_at <= ? OR used_at IS NOT NULL';
+
+export function insertMagicLink(db: Db, row: Omit<MagicLinkRow, 'used_at'>): void {
+  assertWritable(db);
+  stmt(db, SQL_INSERT_MAGIC_LINK).run(
+    row.token_hash,
+    row.viewer_id,
+    row.created_at,
+    row.expires_at,
+  );
+}
+
+export function getMagicLink(db: Db, tokenHash: Uint8Array): MagicLinkRow | undefined {
+  return stmt<MagicLinkRow>(db, SQL_GET_MAGIC_LINK).get(tokenHash);
+}
+
+/** Atomically consumes an unused, unexpired link; false = used, expired or unknown. */
+export function consumeMagicLink(db: Db, tokenHash: Uint8Array, now: number): boolean {
+  assertWritable(db);
+  return stmt(db, SQL_CONSUME_MAGIC_LINK).run(now, tokenHash, now).changes > 0;
+}
+
+/** Expires every outstanding link of a viewer — the revocation companion. */
+export function expireViewerMagicLinks(db: Db, viewerId: number, now: number): void {
+  assertWritable(db);
+  stmt(db, SQL_EXPIRE_VIEWER_MAGIC_LINKS).run(now, viewerId, now);
+}
+
+/** Drops expired and consumed links — opportunistic sweep, mirrors the session one. */
+export function pruneMagicLinks(db: Db, now: number): void {
+  assertWritable(db);
+  stmt(db, SQL_PRUNE_MAGIC_LINKS).run(now);
 }

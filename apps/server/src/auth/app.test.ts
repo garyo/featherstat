@@ -122,6 +122,13 @@ describe('route matrix — no session', () => {
     for (const path of gated) {
       expect((await secured.app.request(path)).status, path).toBe(401);
     }
+    // /mcp lives OUTSIDE the /api prefix and must still be born authenticated.
+    const mcp = await secured.app.request('/mcp', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    expect(mcp.status).toBe(401);
     expect((await postQuery()).status).toBe(401);
     const logout = await secured.app.request('/api/admin/logout', { method: 'POST' });
     expect(logout.status).toBe(401);

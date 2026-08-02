@@ -52,10 +52,12 @@ const PROP_DIMENSION_PATTERN = /^prop:[a-z0-9_-]{1,32}$/;
  */
 export type PropDimension = `prop:${string}`;
 
-export const PropDimensionSchema = z.custom<PropDimension>(
-  (value) => typeof value === 'string' && PROP_DIMENSION_PATTERN.test(value),
-  'not a prop:<key> dimension',
-);
+// A pattern-checked string rather than `z.custom`, so the schema stays
+// representable in JSON Schema (the MCP tool listing converts it).
+export const PropDimensionSchema = z
+  .string()
+  .regex(PROP_DIMENSION_PATTERN, 'not a prop:<key> dimension')
+  .transform((value) => value as PropDimension);
 
 export const DimensionSchema = z.union([BaseDimensionSchema, PropDimensionSchema]);
 export type Dimension = BaseDimension | PropDimension;

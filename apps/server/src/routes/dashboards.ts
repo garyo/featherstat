@@ -8,6 +8,7 @@ import {
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { Auth, AuthEnv } from '../auth/auth.ts';
+import { canReadSite, type Principal } from '../auth/principal.ts';
 import {
   createDashboard,
   type DashboardRow,
@@ -55,6 +56,37 @@ export function createDashboardRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
   app.use('/api/admin/*', auth.gate);
   app.use('/api/admin/*', auth.csrfGuard);
 
+  // --- Reads for any principal (docs/04 § 5) --------------------------------
+  // A viewer or token reads dashboards here; the `/api/admin/dashboards` paths
+  // below keep serving the SPA unchanged (its migration is a later concern).
+  // Scope rule, simplest honest one: a site-scoped dashboard is visible to any
+  // principal that can read its site; an 'all'-sites dashboard aggregates
+  // every site, so it is visible only to principals whose own scope is 'all'.
+  // Out of scope answers exactly like nonexistent (404), as everywhere else.
+
+  app.get('/api/dashboards', (c) =>
+    c.json(
+      listDashboards(db)
+        .filter((row) => visibleTo(c.get('principal'), row))
+        .map(toInfo),
+    ),
+  );
+
+  app.get('/api/dashboards/:id', (c) => {
+    const id = parseDashboardId(c.req.param('id'));
+    if (id === undefined) return c.json({ error: 'invalid dashboard id' }, 400);
+    const row = getDashboard(db, id);
+    if (row === undefined || !visibleTo(c.get('principal'), row)) {
+      return c.json({ error: `unknown dashboard ${id}` }, 404);
+    }
+    const detail = toDetail(row);
+    if (detail === undefined) {
+      console.error(`dashboards: stored dashboard ${id} has an invalid layout`);
+      return c.json({ error: `stored dashboard ${id} is invalid — save a fresh layout` }, 500);
+    }
+    return c.json(detail);
+  });
+
   app.get('/api/admin/dashboards', (c) => c.json(listDashboards(db).map(toInfo)));
 
   app.get('/api/admin/dashboards/:id', (c) => {
@@ -98,6 +130,13 @@ export function createDashboardRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
   });
 
   return app;
+}
+
+/** The scope rule above. Undefined = mounted without the gate (bare tests) — open, like sites.ts. */
+function visibleTo(who: Principal | undefined, row: DashboardRow): boolean {
+  if (who === undefined || who.kind === 'admin') return true;
+  const site = siteOf(row);
+  return site === 'all' ? who.sites === 'all' : canReadSite(who, site);
 }
 
 /** A positive integer path param, or undefined — shared with the share routes. */

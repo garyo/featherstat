@@ -3,6 +3,7 @@ import type { Context, MiddlewareHandler } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import {
   type Db,
+  extendAdminSession,
   getApiTokenByHash,
   getSetting,
   getViewer,
@@ -21,7 +22,8 @@ import {
   issueSession,
   revokeSession,
   SESSION_COOKIE,
-  SESSION_TTL_MS,
+  sessionTtlOf,
+  VIEWER_SESSION_TTL_MS,
   verifyCsrfToken,
   verifySessionCookie,
 } from './session.ts';
@@ -76,11 +78,17 @@ export interface Auth {
   /** True only while no password exists AND the presented token matches the logged one. */
   verifySetupToken(token: string): boolean;
   setPassword(password: string): Promise<void>;
-  login(c: Context): IssuedSession;
+  login(c: Context, principal?: SessionPrincipal): IssuedSession;
   logout(c: Context, sessionId: string): void;
   csrfTokenOf(sessionId: string): string;
   sessionOf(c: Context): string | undefined;
+  /** The request's cookie principal, or undefined — for the public `me` route,
+   * which answers before the gate and needs the kind, not just the id. */
+  cookiePrincipal(c: Context): Principal | undefined;
 }
+
+/** What a session can be issued as — the magic-link claim passes the viewer form. */
+export type SessionPrincipal = { kind: 'admin' } | { kind: 'viewer'; viewerId: number };
 
 export function createAuth(db: Db, options: AuthOptions = {}): Auth {
   const env = options.env ?? process.env;
@@ -135,6 +143,14 @@ export function createAuth(db: Db, options: AuthOptions = {}): Auth {
     if (session.principal_kind === 'viewer' && session.viewer_id !== null) {
       const viewer = getViewer(db, session.viewer_id);
       if (viewer === undefined || viewer.revoked_at !== null) return undefined;
+      // Sliding TTL: a viewer cannot log back in (their magic link was single
+      // use), so an ACTIVE viewer's session renews itself once it has burned
+      // half its life — at most one write per half-TTL, not one per request.
+      if (session.expires_at - now() < VIEWER_SESSION_TTL_MS / 2) {
+        withWriteTransaction(db, () =>
+          extendAdminSession(db, session.id, now() + VIEWER_SESSION_TTL_MS),
+        );
+      }
       return {
         kind: 'viewer',
         sessionId: session.id,
@@ -210,9 +226,9 @@ export function createAuth(db: Db, options: AuthOptions = {}): Auth {
       withWriteTransaction(db, () => setSetting(db, PASSWORD_SETTING, hash));
       setupToken = undefined; // consumed — the window closes with the first password
     },
-    login(c) {
-      const issued = issueSession(db, secret, now());
-      const maxAge = Math.floor(SESSION_TTL_MS / 1000);
+    login(c, principal = { kind: 'admin' }) {
+      const issued = issueSession(db, secret, now(), principal);
+      const maxAge = Math.floor(sessionTtlOf(principal.kind) / 1000);
       const base = { path: '/', secure: true, sameSite: 'Lax', maxAge } as const;
       setCookie(c, SESSION_COOKIE, issued.cookieValue, { ...base, httpOnly: true });
       // Readable on purpose: the double-submit copy the client echoes as a header.
@@ -227,5 +243,9 @@ export function createAuth(db: Db, options: AuthOptions = {}): Auth {
     },
     csrfTokenOf: (sessionId) => csrfTokenFor(secret, sessionId),
     sessionOf,
+    cookiePrincipal(c) {
+      if (disabled) return { kind: 'admin', sessionId: DEV_SESSION_ID };
+      return cookiePrincipalOf(c);
+    },
   };
 }

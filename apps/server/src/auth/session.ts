@@ -25,6 +25,17 @@ export const SESSION_COOKIE = '__Host-session';
 export const CSRF_COOKIE = '__Host-csrf';
 export const CSRF_HEADER = 'x-csrf-token';
 export const SESSION_TTL_MS = 14 * DAY_MS;
+/**
+ * Viewer sessions live longer and SLIDE (auth.ts renews one that has burned
+ * half its life): a viewer has no password to log back in with — their magic
+ * link was single-use — so expiry means asking the admin for a new invite.
+ * 90 days of inactivity is the honest cost of that reset.
+ */
+export const VIEWER_SESSION_TTL_MS = 90 * DAY_MS;
+
+export function sessionTtlOf(kind: 'admin' | 'viewer'): number {
+  return kind === 'viewer' ? VIEWER_SESSION_TTL_MS : SESSION_TTL_MS;
+}
 
 const SESSION_ID_BYTES = 32;
 const SECRET_SETTING = 'auth.secret';
@@ -54,7 +65,7 @@ export function issueSession(
   principal: { kind: 'admin' } | { kind: 'viewer'; viewerId: number } = { kind: 'admin' },
 ): IssuedSession {
   const id = randomBytes(SESSION_ID_BYTES).toString('hex');
-  const expiresAt = now + SESSION_TTL_MS;
+  const expiresAt = now + sessionTtlOf(principal.kind);
   withWriteTransaction(db, () => {
     deleteExpiredAdminSessions(db, now); // opportunistic sweep — no timer needed
     insertAdminSession(db, {
