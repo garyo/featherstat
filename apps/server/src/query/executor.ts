@@ -34,6 +34,7 @@ import {
 } from '../db/index.ts';
 import { rawHorizonTs, rollupNeedsRebuild } from '../rollup/apply.ts';
 import { type CompiledAdjacency, compileAdjacencyQuery } from './adjacency.ts';
+import { runChangesQuery } from './changes.ts';
 import {
   boundsParams,
   type CompilableMetricQuery,
@@ -153,6 +154,24 @@ export function executeQueryRequest(
     for (const query of request.queries) {
       const queryStarted = performance.now();
       if ('kind' in query) {
+        if (query.kind === 'changes') {
+          // The one kind that NEEDS the compare windows: it runs each grouped
+          // sub-query over both and joins in JS (query/changes.ts). Handled
+          // before the blanket horizon refusal below — its sub-queries mostly
+          // ride rollups, which keep answering below the raw floor.
+          const entry = runChangesQuery(query, {
+            filters: request.filters ?? [],
+            windows,
+            compareWindows,
+            compare,
+            sessionRollupsStale,
+            run: (compiled, runWindows) => runCompiled(db, compiled, runWindows),
+            horizonRefusal: (checked) => rawHorizonRefusal(checked, horizonTs),
+          });
+          if (!isQueryError(entry)) entry.ms = elapsed(queryStarted);
+          results[query.id] = entry;
+          continue;
+        }
         // Session-scoped kinds answer only the primary window: a journey (or a
         // per-page dwell) comparison has no defined shape (docs/04), so
         // `compare` is never fabricated.

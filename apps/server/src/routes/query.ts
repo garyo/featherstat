@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
+  type AnnotationInfo,
   isQueryError,
   localClock,
   type Query,
@@ -14,7 +15,14 @@ import { bodyLimit } from 'hono/body-limit';
 import type { AuthVariables } from '../auth/auth.ts';
 import { readableSites } from '../auth/principal.ts';
 import { RateLimiter } from '../auth/ratelimit.ts';
-import { type Db, dataVersion, listSites, schemaVersion } from '../db/index.ts';
+import {
+  annotationsVersion,
+  type Db,
+  dataVersion,
+  listAnnotations,
+  listSites,
+  schemaVersion,
+} from '../db/index.ts';
 import { executeQueryRequest, resolveSiteWindows, UnknownSiteError } from '../query/executor.ts';
 import type { GoalDefinitions } from '../query/goals.ts';
 import { PoolSaturatedError } from '../query/pool/pool.ts';
@@ -168,12 +176,16 @@ export function createQueryRoutes(db: Db, options: QueryRouteOptions = {}): Hono
     // The format (and the selected query) is part of what the tag covers: a
     // CSV body and a JSON body answer the same question differently, and a 304
     // minted against one must never validate a cache holding the other.
+    // `annotations_version` joins the hash ONLY for annotation-opted requests
+    // (the flag itself is in `request`): an annotation edit must expire the
+    // dashboards that show notes, not every cached batch on the instance.
     const canonicalBody = canonicalize({
       request,
       compareFilter: expansion.compareFilter,
       derived,
       goals,
       format: csvQuery === undefined ? undefined : `csv:${csvQuery.id}`,
+      annotationsVersion: request.annotations === true ? annotationsVersion(db) : undefined,
     });
     const schema = schemaVersion(db);
     const current = etag(dataVersion(db), schema, canonicalBody, windows, now);
@@ -209,6 +221,13 @@ export function createQueryRoutes(db: Db, options: QueryRouteOptions = {}): Hono
         });
       }
       throw error;
+    }
+    // Annotations attach HERE, on the main thread: `executeQueryRequest` may
+    // have run on the worker pool, whose protocol carries pure query work, and
+    // an annotation is a cheap read the route can make itself. The share route
+    // never sets the flag — share links stay minimal (docs/04 § 3).
+    if (request.annotations === true) {
+      response.meta.annotations = annotationsFor(db, windows);
     }
     // Re-derived from the executed snapshot's version, in case a flush landed in between.
     const tag = etag(response.meta.dataVersion, schema, canonicalBody, windows, now);
@@ -276,6 +295,28 @@ function principal(c: Context<QueryEnv>): string {
   const who = c.get('principal');
   if (who?.kind === 'token') return `token:${who.tokenId}`;
   return c.get('sessionId') ?? clientIp(c);
+}
+
+/**
+ * The stored notes this request's resolved windows cover (docs/04 § 3): a note
+ * matches a window when its site matches (a null-site note matches every site)
+ * and its instant falls inside it — by the window's own instants for a rolling
+ * window, otherwise by the note's site-local date, the same calendar the
+ * window's bounds are stated in.
+ */
+function annotationsFor(db: Db, windows: readonly SiteWindow[]): AnnotationInfo[] {
+  return listAnnotations(db)
+    .filter((row) =>
+      windows.some((window) => {
+        if (row.site_id !== null && row.site_id !== window.siteId) return false;
+        if (window.fromTs !== undefined && window.toTs !== undefined) {
+          return row.ts >= window.fromTs && row.ts < window.toTs;
+        }
+        const date = localClock(window.timezone, row.ts).date;
+        return date >= window.from && date <= window.to;
+      }),
+    )
+    .map((row) => ({ id: row.id, siteId: row.site_id, ts: row.ts, text: row.text }));
 }
 
 function anyMatch(ifNoneMatch: string | undefined, current: string): boolean {

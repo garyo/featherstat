@@ -15,6 +15,7 @@
       "hours x weekday @ 90d": 30,
       "paths x day @ 90d, all sites": 20,
       "all-sites dashboard @ 90d + compare": 125,
+      "what changed @ 30d vs previous": 20,
       "journeys @ 90d, all sites": 650,
       "journeys @ 90d, busiest site": 100
     }

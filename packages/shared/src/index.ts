@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { RealtimeVisitor } from './alias.ts';
 import { DerivedMetricRefSchema } from './derived.ts';
 import {
+  BaseDimensionSchema,
   type Dimension,
   DimensionSchema,
   FiltersSchema,
@@ -364,11 +365,43 @@ export const DistributionQuerySchema = z.object({
 });
 export type DistributionQuery = z.infer<typeof DistributionQuerySchema>;
 
+/** The metrics `changes` can rank movers by — additive counts plus the one distinct. */
+export const ChangesMetricSchema = z.enum(['visits', 'visitors', 'pageviews']);
+export type ChangesMetric = z.infer<typeof ChangesMetricSchema>;
+
+/** The dimensions `changes` scans — the axes a traffic shift is usually explained on. */
+export const CHANGES_DIMENSIONS = ['path', 'ref_domain', 'utm_campaign', 'country'] as const;
+export const ChangesDimensionSchema = z.enum(CHANGES_DIMENSIONS);
+export type ChangesDimension = z.infer<typeof ChangesDimensionSchema>;
+
+/**
+ * "What changed" (docs/04 § 3): per dimension, group BOTH compare windows
+ * unlimited, outer-join on the dimension value, and keep the top `limit`
+ * movers by |delta|. Server-side because the union of keys is the point: a
+ * page that fell out of the current period's top N is exactly the mover a
+ * client composing two top-N lists would miss. Requires `compare` on the
+ * request; a `{segment}` compare has no second window and refuses.
+ */
+export const ChangesQuerySchema = z.object({
+  id: z.string().min(1).max(64),
+  kind: z.literal('changes'),
+  metric: ChangesMetricSchema.default('visits'),
+  dims: z
+    .array(ChangesDimensionSchema)
+    .min(1)
+    .max(4)
+    .default([...CHANGES_DIMENSIONS]),
+  /** Movers kept PER dimension; rows from all dims ride in one result. */
+  limit: z.number().int().min(1).max(20).default(8),
+});
+export type ChangesQuery = z.infer<typeof ChangesQuerySchema>;
+
 export const QuerySchema = z.union([
   SequenceQuerySchema,
   DwellQuerySchema,
   AdjacencyQuerySchema,
   DistributionQuerySchema,
+  ChangesQuerySchema,
   MetricQuerySchema,
 ]);
 export type Query = z.infer<typeof QuerySchema>;
@@ -418,9 +451,28 @@ export const QueryRequestSchema = z.object({
   range: RangeSchema,
   compare: CompareSchema.optional(),
   filters: FiltersSchema.optional(),
+  /**
+   * Opt in to `meta.annotations` (docs/04 § 3): the stored operator notes
+   * whose site and timestamp fall inside this request's resolved windows.
+   * Opt-in so the ETag only hashes the annotations version for requests that
+   * actually deliver them — an annotation edit must not expire every cached
+   * dashboard that never shows one.
+   */
+  annotations: z.literal(true).optional(),
   queries: z.array(QuerySchema).min(1).max(MAX_QUERIES_PER_BATCH),
 });
 export type QueryRequest = z.infer<typeof QueryRequestSchema>;
+
+/**
+ * The MCP `what_changed` tool's input (docs/04 § 6): sugar over the `changes`
+ * kind, so its compare is the time forms only — the two-window question.
+ */
+export const WhatChangedInputSchema = z.object({
+  site: z.union([z.number().int().positive(), z.literal('all')]),
+  range: RangeSchema,
+  compare: z.enum(['previous', 'year']).default('previous'),
+});
+export type WhatChangedInput = z.infer<typeof WhatChangedInputSchema>;
 
 /** One result row: dimension/bucket columns plus one column per requested metric.
  * Flows rows (sequence queries) carry their step signature as a string array. */
@@ -549,6 +601,14 @@ export interface QueryResponse {
     dataVersion: number;
     /** What the server resolved this request's `range` to, per site in scope. */
     windows: SiteWindow[];
+    /**
+     * Present exactly when the request set `annotations: true` (docs/04 § 3):
+     * the stored notes whose site matches a window in scope (a null-site note
+     * matches every site) and whose instant falls inside that window. Attached
+     * on the main thread by the query route — the share route never sets the
+     * flag, so share links stay minimal.
+     */
+    annotations?: AnnotationInfo[];
   };
 }
 
@@ -751,6 +811,68 @@ export interface SegmentInfo {
   filter: SegmentFilterNode;
   updatedAt: number;
 }
+
+// ---------------------------------------------------------------------------
+// Annotations (docs/04 § 3, § 5) — operator notes pinned to a moment, listed
+// through the admin CRUD and delivered opt-in on the query batch.
+// ---------------------------------------------------------------------------
+
+export const ANNOTATION_TEXT_MAX = 300;
+
+export const AnnotationCreateSchema = z.object({
+  /** `null` = the note applies to every site (a deploy, an outage). */
+  siteId: z.number().int().positive().nullable(),
+  /** UTC ms — the instant the note marks, not when it was written. */
+  ts: z.number().int().positive(),
+  text: z.string().min(1).max(ANNOTATION_TEXT_MAX),
+});
+export type AnnotationCreate = z.infer<typeof AnnotationCreateSchema>;
+
+/** One annotation as the admin list and `meta.annotations` carry it. */
+export interface AnnotationInfo {
+  id: number;
+  siteId: number | null;
+  ts: number;
+  text: string;
+}
+
+// ---------------------------------------------------------------------------
+// Alert rules (docs/04 § 5) — stored as one settings row like the ntfy rules,
+// evaluated hourly by jobs/alerts.ts through the ordinary query executor.
+// ---------------------------------------------------------------------------
+
+export const MAX_ALERT_RULES = 20;
+
+export const AlertConditionSchema = z.enum(['above', 'below', 'delta_pct']);
+export type AlertCondition = z.infer<typeof AlertConditionSchema>;
+
+/** The window a rule reads: a site-local day so far, or the rolling 24 hours. */
+export const AlertWindowSchema = z.enum(['day', 'hour']);
+export type AlertWindow = z.infer<typeof AlertWindowSchema>;
+
+/**
+ * One alert rule: compute `metric` over `window` for `site` (narrowed to
+ * `dim = value` when present) and compare the total against `threshold`.
+ * `above`/`below` compare the number itself; `delta_pct` compares the
+ * absolute percent change against the same-length previous window.
+ */
+export const AlertRuleSchema = z
+  .object({
+    site: z.number().int().positive(),
+    metric: MetricSchema,
+    dim: BaseDimensionSchema.optional(),
+    value: z.string().min(1).max(2048).optional(),
+    condition: AlertConditionSchema,
+    threshold: z.number().finite(),
+    window: AlertWindowSchema,
+  })
+  .refine((rule) => (rule.dim === undefined) === (rule.value === undefined), {
+    message: "'dim' and 'value' come together — a value needs its dimension",
+  });
+export type AlertRule = z.infer<typeof AlertRuleSchema>;
+
+/** Shape of the `alert_rules` settings row. */
+export const AlertRulesSchema = z.array(AlertRuleSchema).max(MAX_ALERT_RULES);
 
 // ---------------------------------------------------------------------------
 // ntfy notifications (docs/01 R16) — configured through the settings table

@@ -8,6 +8,8 @@ import {
 } from '../notify/index.ts';
 import type { Pipeline } from '../pipeline/index.ts';
 import { createAdminRoutes } from '../routes/admin.ts';
+import { createAlertRoutes } from '../routes/alerts.ts';
+import { createAnnotationRoutes } from '../routes/annotations.ts';
 import { createCampaignRoutes } from '../routes/campaigns.ts';
 import { createDashboardRoutes } from '../routes/dashboards.ts';
 import { createDerivedMetricRoutes } from '../routes/derived.ts';
@@ -189,6 +191,11 @@ export function createSecuredApp(options: SecuredAppOptions = {}): SecuredApp {
       '/',
       createCampaignRoutes(db, createdAuth, { aliasCache: pipeline?.campaignAliases }),
     );
+    // Annotations (docs/04 § 3, § 5) and alert rules (docs/04 § 5): admin-only
+    // writes under the wall above; annotations reach readers opt-in on the
+    // query batch, alerts reach them through ntfy.
+    app.route('/', createAnnotationRoutes(db, createdAuth));
+    app.route('/', createAlertRoutes(db, createdAuth));
     // Minting/revoking are admin surfaces; `GET /share/:token` rides in the same
     // router and stays public — it is not under `/api/`, so the prefix gate skips it.
     app.route('/', createShareRoutes(db, createdAuth));

@@ -547,6 +547,37 @@ batch itself still succeeds, and never returns wrong numbers.
   deciles `0–9` (100 % belongs to 9). Rows are sparse — empty buckets are
   omitted — and scroll counts only measured legs: an unmeasured leg is in no
   bucket, never in bucket 0.
+- **What changed** is the contribution-ranking kind:
+  `{ "id": "ch", "kind": "changes", "metric": "visits", "dims": ["path",
+  "ref_domain", "utm_campaign", "country"], "limit": 8 }` (every field past
+  `kind` defaults to exactly those values). It **requires a time `compare`** on
+  the request — that pair of windows is the question — and refuses a
+  `{segment}` compare, which has no second window. Per dimension the server
+  runs the ordinary grouped metric query over BOTH windows **unlimited**,
+  outer-joins the two row sets on the dimension value, and keeps the top
+  `limit` movers by |delta| (ties: higher current first). Rows are
+  `{ dim, value, current, previous, delta, share }`, all dims concatenated in
+  request order with `dim` separating the sections.
+  - **Server-side because of the union of keys**: a page that fell out of the
+    current period's top N is exactly the mover that explains a drop, and a
+    client composing two top-N answers structurally cannot see it. Absent
+    keys read as 0 on the side they are absent from.
+  - **`share`** = the row's delta over the dimension's WHOLE net change
+    (Σcurrent − Σprevious before the limit), so the kept rows state how much
+    of the move they explain. Shares over the full row set sum to 1; a single
+    row's can exceed ±1 when movers cancel. `null` when the totals net to
+    zero — shares of nothing are not numbers.
+  - **`visitors` deltas wear the `~`**: each window's number is a per-window
+    distinct, so the delta is a difference of two approximations. The
+    `measures` header declares `current`/`previous`/`delta` with the metric's
+    own measure (`visitors` → aggregate `distinct`) and `share` as `computed`;
+    the metric's measure is declared from its preferred table, though a
+    dimension may route a sub-query to the other store — the rows here are a
+    ranking, not inputs to client-side re-aggregation.
+  - Request filters apply inside every sub-query, and the sub-queries route
+    through the ordinary planner — day-grain shapes ride the rollups, and a
+    raw-needing shape (e.g. `visitors` over a multi-day window) below the
+    retention horizon refuses the whole query honestly.
 - **Click-to-filter falls out for free**: clicking a row in any breakdown adds
   a `filters` entry and re-issues the same batch.
 - **Caching**: response ETag = hash(max event rowid, schema version,
@@ -569,6 +600,20 @@ batch itself still succeeds, and never returns wrong numbers.
     fold, a dashboard left open overnight would 304 forever while today's
     rows drained into a day the cached body shows empty. A fully past range's
     fold equals its own `to`, so those tags stay stable and cacheable.
+  - **`annotations_version` joins the hash only for annotation-opted
+    requests** (below): an annotation edit expires exactly the cached answers
+    that show notes, and no others.
+- **Annotations ride the batch, opt-in.** `"annotations": true` on the request
+  adds `meta.annotations`: `[{ id, siteId, ts, text }]`, filtered to the
+  request's sites (a null-site note matches every site) and to the resolved
+  windows — by instants for the rolling `24h`, otherwise by the note's
+  site-local date. Opt-in keeps the one-fetch contract (the notes arrive with
+  the batch that renders them) without taxing every dashboard's cache with a
+  counter it never shows. Delivery happens on the main thread after execution —
+  annotations are settings-grade rows, not query work — and the **share route
+  never sets the flag**: share links stay minimal. Writes live under
+  `/api/admin/annotations` (§ 5); every write bumps the monotonic
+  `annotations_version` settings counter the ETag folds in.
 - **Rate limit.** A stored dashboard is a client-authored query plan executed
   server-side, and better-sqlite3 is synchronous — while a batch runs it owns
   the event loop that also answers beacons. The response-size budget above
@@ -720,7 +765,36 @@ site's `prop_keys` stats plus its last week of `prop_drops`
 `DELETE /api/admin/props/:site/:key` drops the key's registry rows (and the
 live registry's cache) immediately, then scrubs stored bags with a chunked,
 watermarked `json_remove` job (`jobs/prop-scrub.ts` — resumed at boot after a
-crash) that bumps the data epoch on completion so pre-scrub ETags expire. Read-only
+crash) that bumps the data epoch on completion so pre-scrub ETags expire.
+
+**Annotations** (`/api/admin/annotations`): operator notes pinned to a UTC
+instant — `GET` lists (optional `?site=` keeps that site's plus the
+install-wide null-site notes), `POST`/`PUT /:id`/`DELETE /:id` write
+`{ siteId: id|null, ts, text ≤300 }`. Every write bumps the monotonic
+`annotations_version` settings counter in the same transaction — its own
+counter, NOT the data epoch, because an annotation changes no data: only the
+annotation-opted query ETags hash it (§ 3). Delivery to readers is the opt-in
+`meta.annotations` on the query batch; there is no separate read endpoint to
+poll.
+
+**Alert rules** (`GET`/`PUT /api/admin/alerts`): one settings row
+(`alert_rules`, ≤ 20 rules, stored exactly like the ntfy hit rules — validated
+on write, re-parsed on read, failing closed to no alerts). A rule is
+`{ site, metric, dim?+value?, condition: above|below|delta_pct, threshold,
+window: day|hour }`; `jobs/alerts.ts` evaluates hourly by running each rule as
+an ordinary one-query batch (`today` for `day`, the rolling `24h` for `hour`,
+`dim=value` as an `eq` filter, `compare: 'previous'` for `delta_pct`, whose
+threshold is the **absolute percent change**). A breach posts through the ntfy
+notifier under a per-rule cooldown key (6 h), so a condition that stays
+breached repeats at most that often; a per-query refusal never alerts — a
+shape the vocabulary refuses must not page anyone with a made-up number. The
+**weekly digest** (`jobs/digest.ts`) rides the same notifier: one notification,
+one sentence per site (7d vs previous via the `changes` kind + the visits
+totals), formatted by the same `summarizeChanges` the MCP tool uses; its last
+run persists in the `digest_last_run` settings row so a restart mid-week stays
+quiet. Both jobs skip themselves entirely while ntfy is unconfigured.
+
+Read-only
 dashboard access via `GET /share/:token`: the server re-validates the stored
 layout and assembles the SAME batch the in-app view would run (widget queries
 plus derived companions, previous-period compare), so the link cannot be
@@ -838,6 +912,13 @@ vocabulary):
   30-batches/minute budget per token across both surfaces, one global bucket
   for the instance. Per-query `{error}` entries pass through verbatim —
   refusals teach the model the vocabulary's edges.
-
-A `what_changed` tool is deliberately absent until the `changes` query kind
-lands; it will be sugar over that kind, not a third path into the data.
+- **`what_changed(site, range, compare?)`** — sugar over the `changes` kind
+  (§ 3), not a third path into the data: it composes the standard batch (the
+  four default dimensions over `visits`, limit 8, plus the window totals),
+  runs it through the SAME rate-limited, scope-checked seam as the `query`
+  tool, and answers `{ summary, windows, rows }` — the rows verbatim, and a
+  one-sentence natural-language summary produced by the same formatter the
+  weekly digest uses (`query/changes.ts` § summarizeChanges), so the two
+  surfaces can never phrase a movement differently. `compare` defaults to
+  `"previous"` and accepts `"year"`; anything richer (other metrics, custom
+  compare windows, filters) is what the `query` tool is for.

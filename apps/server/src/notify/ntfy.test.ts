@@ -176,6 +176,48 @@ describe('cooldown', () => {
   });
 });
 
+describe('post — caller-keyed notifications (alerts, digest)', () => {
+  it('delivers under a per-key cooldown, keys independent', async () => {
+    configure([]);
+    const { calls, fetchFn } = stubFetch();
+    const notifier = createNtfyNotifier(db, { fetchFn, now: () => clock });
+
+    expect(notifier.configured()).toBe(true);
+    expect(notifier.post('alert:a', 'A', 'body', 60_000)).toBe(true);
+    expect(notifier.post('alert:a', 'A', 'body', 60_000)).toBe(false); // inside cooldown
+    expect(notifier.post('alert:b', 'B', 'body', 60_000)).toBe(true); // other key unaffected
+    clock += 60_000;
+    expect(notifier.post('alert:a', 'A', 'body', 60_000)).toBe(true);
+    await settle();
+
+    expect(calls).toHaveLength(3);
+    expect(calls[0]?.url).toBe(ENDPOINT);
+    expect(calls[0]?.init.headers.Title).toBe('A');
+    expect(notifier.stats()).toMatchObject({ sent: 3, suppressed: 1 });
+  });
+
+  it('keeps post cooldowns across a rules reload — the caller owns those keys', async () => {
+    configure([]);
+    const { calls, fetchFn } = stubFetch();
+    const notifier = createNtfyNotifier(db, { fetchFn, now: () => clock });
+
+    expect(notifier.post('alert:a', 'A', 'body', 60_000)).toBe(true);
+    configure([{ eventCategory: 'signup' }]);
+    notifier.reload();
+    expect(notifier.post('alert:a', 'A', 'body', 60_000)).toBe(false);
+    await settle();
+    expect(calls).toHaveLength(1);
+  });
+
+  it('reports unconfigured instead of queueing into nowhere', () => {
+    const { calls, fetchFn } = stubFetch();
+    const notifier = createNtfyNotifier(db, { fetchFn, now: () => clock });
+    expect(notifier.configured()).toBe(false);
+    expect(notifier.post('digest', 'D', 'body')).toBe(false);
+    expect(calls).toHaveLength(0);
+  });
+});
+
 describe('delivery', () => {
   it('bounds the backlog, dropping oldest, and never blocks the caller', async () => {
     configure([{ eventCategory: 'signup' }]);

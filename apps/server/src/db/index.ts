@@ -964,6 +964,81 @@ export function deleteGoal(db: Db, id: number): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Annotations (docs/04 § 3, § 5): operator notes pinned to a moment. Writes
+// bump `annotations_version` — its own counter, NOT `data_epoch`, because an
+// annotation edit changes no data and only requests that opted into
+// `meta.annotations` hash it into their ETag (routes/query.ts).
+// ---------------------------------------------------------------------------
+
+export interface AnnotationRow {
+  id: number;
+  /** NULL = every site. */
+  site_id: number | null;
+  ts: number;
+  text: string;
+  updated_at: number;
+}
+
+const ANNOTATION_COLUMNS = 'id, site_id, ts, text, updated_at';
+const SQL_LIST_ANNOTATIONS = `SELECT ${ANNOTATION_COLUMNS} FROM annotations ORDER BY ts, id`;
+const SQL_LIST_SITE_ANNOTATIONS = `SELECT ${ANNOTATION_COLUMNS} FROM annotations
+WHERE site_id = ? OR site_id IS NULL ORDER BY ts, id`;
+const SQL_CREATE_ANNOTATION =
+  'INSERT INTO annotations (site_id, ts, text, created_at, updated_at) VALUES (?, ?, ?, ?, ?)';
+const SQL_UPDATE_ANNOTATION = `UPDATE annotations SET site_id = ?, ts = ?, text = ?, updated_at = ?
+WHERE id = ? RETURNING ${ANNOTATION_COLUMNS}`;
+const SQL_DELETE_ANNOTATION = 'DELETE FROM annotations WHERE id = ?';
+
+/** All annotations, or one site's plus the install-wide (NULL-site) ones. */
+export function listAnnotations(db: Db, siteId?: number): AnnotationRow[] {
+  if (siteId === undefined) {
+    return stmt<AnnotationRow>(db, SQL_LIST_ANNOTATIONS).all() as AnnotationRow[];
+  }
+  return stmt<AnnotationRow>(db, SQL_LIST_SITE_ANNOTATIONS).all(siteId) as AnnotationRow[];
+}
+
+export function createAnnotation(
+  db: Db,
+  siteId: number | null,
+  ts: number,
+  text: string,
+  now: number,
+): AnnotationRow {
+  assertWritable(db);
+  const info = stmt(db, SQL_CREATE_ANNOTATION).run(siteId, ts, text, now, now);
+  return { id: Number(info.lastInsertRowid), site_id: siteId, ts, text, updated_at: now };
+}
+
+export function updateAnnotation(
+  db: Db,
+  id: number,
+  siteId: number | null,
+  ts: number,
+  text: string,
+  now: number,
+): AnnotationRow | undefined {
+  assertWritable(db);
+  return stmt<AnnotationRow>(db, SQL_UPDATE_ANNOTATION).get(siteId, ts, text, now, id);
+}
+
+export function deleteAnnotation(db: Db, id: number): boolean {
+  assertWritable(db);
+  return stmt(db, SQL_DELETE_ANNOTATION).run(id).changes > 0;
+}
+
+const ANNOTATIONS_VERSION_SETTING = 'annotations_version';
+
+/** Monotonic counter the ETag hashes for annotation-opted requests. */
+export function annotationsVersion(db: Db): number {
+  return Number(getSetting(db, ANNOTATIONS_VERSION_SETTING) ?? 0);
+}
+
+/** Every annotation write calls this once, inside its own transaction. */
+export function bumpAnnotationsVersion(db: Db): void {
+  setSetting(db, ANNOTATIONS_VERSION_SETTING, String(annotationsVersion(db) + 1));
+}
+
+// ---------------------------------------------------------------------------
 // Admin sessions (docs/02 § Security posture)
 // ---------------------------------------------------------------------------
 

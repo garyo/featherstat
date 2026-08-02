@@ -94,6 +94,8 @@ function knownColumns(query: Query): readonly string[] {
       return ['label', 'sessions'];
     case 'distribution':
       return ['bucket', 'legs'];
+    case 'changes':
+      return ['dim', 'value', 'current', 'previous', 'delta', 'share'];
   }
 }
 

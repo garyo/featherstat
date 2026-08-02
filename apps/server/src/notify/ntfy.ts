@@ -70,6 +70,15 @@ export interface NtfyTestResult {
 export interface NtfyNotifier {
   /** The pipeline `onHit` hook: synchronous, cheap when unconfigured, never throws. */
   record(event: EventRow): void;
+  /**
+   * Deliver an arbitrary notification (alerts, the weekly digest) under a
+   * caller-chosen cooldown key, through the same bounded queue as rule hits.
+   * Returns false when unconfigured or still inside the key's cooldown —
+   * cooldown keys here are the CALLER's namespace, untouched by `reload`.
+   */
+  post(key: string, title: string, body: string, cooldownMs?: number): boolean;
+  /** True when a url and topic are stored — the jobs' skip-entirely guard. */
+  configured(): boolean;
   /** Re-reads the settings rows — the admin PUT calls this, no restart needed. */
   reload(): void;
   /** Delivers one notification now with the stored settings, and awaits the answer. */
@@ -92,6 +101,8 @@ export function createNtfyNotifier(db: Db, options: NtfyNotifierOptions = {}): N
   const maxInFlight = options.maxInFlight ?? DEFAULT_MAX_IN_FLIGHT;
   const queue: Delivery[] = [];
   const firedAt = new Map<string, number>();
+  /** `post()` cooldowns — a separate map, so `reload`'s rule pruning never resets them. */
+  const postedAt = new Map<string, number>();
   let settings: NtfySettings = readNtfySettings(db, options.warn);
   let inFlight = 0;
   let sent = 0;
@@ -144,10 +155,16 @@ export function createNtfyNotifier(db: Db, options: NtfyNotifierOptions = {}): N
     }
     firedAt.set(key, at);
     const siteName = getSite(db, event.site_id)?.name ?? `site ${event.site_id}`;
+    enqueue(titleOf(siteName, event), bodyOf(event));
+  };
+
+  /** Shared tail of `record` and `post`: bound the backlog, start delivering. */
+  const enqueue = (title: string, body: string): void => {
+    if (settings.url === undefined || settings.topic === undefined) return;
     const delivery: Delivery = {
       url: endpointOf(settings.url, settings.topic),
-      title: titleOf(siteName, event),
-      body: bodyOf(event),
+      title,
+      body,
     };
     if (settings.token !== undefined) delivery.token = settings.token;
     queue.push(delivery);
@@ -156,6 +173,19 @@ export function createNtfyNotifier(db: Db, options: NtfyNotifierOptions = {}): N
       dropped += 1;
     }
     pump();
+  };
+
+  const post = (key: string, title: string, body: string, cooldown = cooldownMs): boolean => {
+    if (settings.url === undefined || settings.topic === undefined) return false;
+    const at = now();
+    const last = postedAt.get(key);
+    if (last !== undefined && at - last < cooldown) {
+      suppressed += 1;
+      return false;
+    }
+    postedAt.set(key, at);
+    enqueue(title, body);
+    return true;
   };
 
   /**
@@ -189,6 +219,8 @@ export function createNtfyNotifier(db: Db, options: NtfyNotifierOptions = {}): N
 
   return {
     record,
+    post,
+    configured: () => settings.url !== undefined && settings.topic !== undefined,
     test,
     reload: () => {
       settings = readNtfySettings(db, options.warn);

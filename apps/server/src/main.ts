@@ -45,7 +45,7 @@ const port = Number(process.env.PORT ?? 8080);
 // The secured shell, NEVER bare createApp: it adds the session gate in front of
 // every dashboard read, the admin API, /metrics and the SPA (docs/02 § Security
 // posture). src/auth/app.test.ts + main.test.ts hold this wiring in place.
-const { app, metrics } = createSecuredApp({
+const { app, metrics, ntfy } = createSecuredApp({
   sink: tee?.sink ?? pipeline.sink,
   db,
   hub,
@@ -63,6 +63,8 @@ const jobs = startJobs(db, {
   installMissingMmdb: process.env.GEOIP_AUTO === '1' || process.env.GEOIP_AUTO === 'true',
   onError: (job, error) => console.error(`job ${job} failed:`, error),
   onRollupRepairs: (days) => metrics.recordRollupRepairs(days),
+  // Alerts + weekly digest ride the notifier; both skip while ntfy is unconfigured.
+  notify: ntfy,
 });
 
 // ntfy delivery turns on from the settings rows (docs/01 R16), editable at

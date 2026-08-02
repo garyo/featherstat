@@ -164,7 +164,7 @@ describe('auth (deny-by-default)', () => {
 });
 
 describe('protocol surface', () => {
-  it('initializes statelessly and lists exactly the two tools', async () => {
+  it('initializes statelessly and lists exactly the three tools', async () => {
     const minted = await mintToken('all');
     const init = await resultOf(
       await rpc(minted.token, 'initialize', {
@@ -178,10 +178,15 @@ describe('protocol surface', () => {
     // Stateless: a fresh POST with no session header still answers.
     const list = await resultOf(await rpc(minted.token, 'tools/list', {}));
     const tools = list.result?.tools ?? [];
-    expect(tools.map((tool) => tool.name).sort()).toEqual(['describe_analytics', 'query']);
+    expect(tools.map((tool) => tool.name).sort()).toEqual([
+      'describe_analytics',
+      'query',
+      'what_changed',
+    ]);
     // The query tool's schema IS QueryRequestSchema, zod → JSON Schema.
     const query = tools.find((tool) => tool.name === 'query');
     expect(Object.keys(query?.inputSchema.properties ?? {}).sort()).toEqual([
+      'annotations',
       'compare',
       'filters',
       'queries',
@@ -231,6 +236,38 @@ describe('query tool', () => {
       await rpc(minted.token, 'tools/call', {
         name: 'query',
         arguments: { ...QUERY_PARAMS.arguments, site: 2 },
+      }),
+    );
+    expect(refused.result?.isError).toBe(true);
+    expect(textOf(refused)).toContain('unknown site');
+  });
+
+  it('runs what_changed — the changes kind plus the shared summary sentence', async () => {
+    const minted = await mintToken([1]);
+    const answered = await resultOf(
+      await rpc(minted.token, 'tools/call', {
+        name: 'what_changed',
+        arguments: { site: 1, range: { from: '2023-11-14', to: '2023-11-14' } },
+      }),
+    );
+    expect(answered.result?.isError).toBeFalsy();
+    const payload = JSON.parse(textOf(answered)) as {
+      summary: string;
+      rows: Array<{ dim: string; value: string | null; delta: number }>;
+    };
+    // One visit against an empty previous day: up, and /a is among the movers.
+    expect(payload.summary).toContain('one: visits up');
+    expect(
+      payload.rows.some((row) => row.dim === 'path' && row.value === '/a' && row.delta === 1),
+    ).toBe(true);
+  });
+
+  it('scopes what_changed like everything else — out of scope reads as unknown', async () => {
+    const minted = await mintToken([1]);
+    const refused = await resultOf(
+      await rpc(minted.token, 'tools/call', {
+        name: 'what_changed',
+        arguments: { site: 2, range: { preset: '7d' } },
       }),
     );
     expect(refused.result?.isError).toBe(true);

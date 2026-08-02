@@ -96,6 +96,45 @@ describe('startJobs', () => {
     expect(urls).toEqual([]);
   });
 
+  it('registers alerts + weekly digest when a notifier is passed, and runs both at boot', async () => {
+    const posted: string[] = [];
+    withWriteTransaction(db, () =>
+      setSetting(
+        db,
+        'alert_rules',
+        JSON.stringify([
+          { site: 1, metric: 'pageviews', condition: 'below', threshold: 5, window: 'day' },
+        ]),
+      ),
+    );
+    scheduler = startJobs(db, {
+      mmdbPath,
+      fetch: stubFetch().fetch,
+      now: () => NOW,
+      notify: {
+        configured: () => true,
+        post: (key) => {
+          posted.push(key);
+          return true;
+        },
+      },
+    });
+    await scheduler.tick();
+
+    // The below-threshold rule fires on the empty corpus; the digest posts once
+    // and records its run so a restart inside the week stays quiet.
+    expect(posted.some((key) => key.startsWith('alert:'))).toBe(true);
+    expect(posted).toContain('digest');
+    expect(logged.join('\n')).toContain('alerts: 1/1 rule(s) fired');
+    expect(logged.join('\n')).toContain('weekly-digest');
+  });
+
+  it('registers neither notification job without a notifier', async () => {
+    scheduler = startJobs(db, { mmdbPath, fetch: stubFetch().fetch, now: () => NOW });
+    await scheduler.tick();
+    expect(logged.join('\n')).not.toContain('weekly-digest');
+  });
+
   it('prunes at boot once retention is configured', async () => {
     const old = NOW - 100 * DAY_MS;
     withWriteTransaction(db, () => {

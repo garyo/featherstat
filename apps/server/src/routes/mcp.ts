@@ -1,9 +1,11 @@
 import {
   BaseDimensionSchema,
   BucketSchema,
+  CHANGES_DIMENSIONS,
   ENGAGEMENT_THRESHOLD_MS,
   FilterOpSchema,
   GOAL_ASPECTS,
+  isQueryError,
   MAX_FILTER_DEPTH,
   MAX_FILTER_LEAVES,
   MAX_QUERIES_PER_BATCH,
@@ -14,6 +16,8 @@ import {
   type QueryResponse,
   RangePresetSchema,
   SESSION_ONLY_DIMENSIONS,
+  type WhatChangedInput,
+  WhatChangedInputSchema,
 } from '@featherstat/shared';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
@@ -21,6 +25,7 @@ import { Hono } from 'hono';
 import type { Auth, AuthEnv } from '../auth/auth.ts';
 import { canReadSite, type Principal, readableSites } from '../auth/principal.ts';
 import { type Db, listDerivedMetrics, listGoals, listPropKeys, listSites } from '../db/index.ts';
+import { type ChangesMover, summarizeChanges } from '../query/changes.ts';
 import { executeQueryRequest, UnknownSiteError } from '../query/executor.ts';
 import { PoolSaturatedError } from '../query/pool/pool.ts';
 import { expandSegments, resolveDerived, resolveGoals } from '../query/stored.ts';
@@ -34,13 +39,15 @@ import {
 /**
  * `/mcp` — the MCP surface (docs/04 § 6): an analyst points their LLM at the
  * instance with an ordinary API token and it composes queries in the same
- * closed vocabulary as everyone else. Two tools, deliberately few — the
+ * closed vocabulary as everyone else. Three tools, deliberately few — the
  * vocabulary is the product, and no free text ever becomes SQL (invariant 9):
  *
  * - `describe_analytics` — the vocabulary as a document the model reads once,
  *   pulled LIVE from the shared enums and the DB so it cannot drift.
  * - `query` — input schema IS `QueryRequestSchema`; executes through the same
  *   expansion, scoping, rate-limit and ExecuteQuery path as `/api/query`.
+ * - `what_changed` — sugar over the `changes` kind: the standard mover batch
+ *   plus the digest's own summary sentence, through the same execution seam.
  *
  * Token-only by design: Bearer tokens carry no ambient credential, so there is
  * no CSRF question, and a cookie session pointed here is a mistake to surface
@@ -114,6 +121,39 @@ function buildServer(
     }),
   );
 
+  /**
+   * The shared execution tail: charge the SAME budget as /api/query, keyed
+   * identically — one token, one budget across both surfaces, charged before
+   * the work like the route — then execute under the token's readable sites.
+   */
+  const runBatch = async (
+    request: QueryRequest,
+    derived?: Readonly<Record<string, string>>,
+    goals?: Parameters<ExecuteQuery>[4],
+  ): Promise<QueryResponse | { refused: string }> => {
+    const key = `token:${who.tokenId}`;
+    const at = now();
+    if (limits.token.exhausted(key, at) || limits.global.exhausted('*', at)) {
+      return { refused: `too many query batches — try again in ${QUERY_WINDOW_MS / 1000} seconds` };
+    }
+    limits.token.charge(key, at);
+    limits.global.charge('*', at);
+    const allowedSites = readableSites(
+      who,
+      listSites(db).map((site) => site.id),
+    );
+    try {
+      return await execute(request, at, allowedSites, derived, goals);
+    } catch (error) {
+      // Out of scope answers exactly like nonexistent, here as everywhere.
+      if (error instanceof UnknownSiteError) return { refused: error.message };
+      if (error instanceof PoolSaturatedError) {
+        return { refused: 'the query pool is saturated — try again in a minute' };
+      }
+      throw error;
+    }
+  };
+
   server.registerTool(
     'query',
     {
@@ -127,37 +167,89 @@ function buildServer(
       const expansion = expandSegments(db, request);
       if (!expansion.ok) return refusal(expansion.message);
       const expanded = expansion.request;
-      const derived = resolveDerived(db, expanded);
-      const goals = resolveGoals(db, expanded);
-      // The SAME budget as /api/query, keyed identically — one token, one
-      // budget across both surfaces. Charged before the work, like the route.
-      const key = `token:${who.tokenId}`;
-      const at = now();
-      if (limits.token.exhausted(key, at) || limits.global.exhausted('*', at)) {
-        return refusal(`too many query batches — try again in ${QUERY_WINDOW_MS / 1000} seconds`);
-      }
-      limits.token.charge(key, at);
-      limits.global.charge('*', at);
-      const allowedSites = readableSites(
-        who,
-        listSites(db).map((site) => site.id),
+      const response = await runBatch(
+        expanded,
+        resolveDerived(db, expanded),
+        resolveGoals(db, expanded),
       );
-      let response: QueryResponse;
-      try {
-        response = await execute(expanded, at, allowedSites, derived, goals);
-      } catch (error) {
-        // Out of scope answers exactly like nonexistent, here as everywhere.
-        if (error instanceof UnknownSiteError) return refusal(error.message);
-        if (error instanceof PoolSaturatedError) {
-          return refusal('the query pool is saturated — try again in a minute');
-        }
-        throw error;
-      }
+      if ('refused' in response) return refusal(response.refused);
       return { content: [{ type: 'text' as const, text: JSON.stringify(response) }] };
     },
   );
 
+  server.registerTool(
+    'what_changed',
+    {
+      description:
+        'What moved between a range and its compare window, and by how much: for each of ' +
+        `${CHANGES_DIMENSIONS.join(', ')} the top movers by |delta| in visits — including ` +
+        'entries that fell out of the current top N — plus a one-sentence summary. Sugar ' +
+        "over the 'changes' query kind; use query directly for other metrics or limits.",
+      inputSchema: WhatChangedInputSchema,
+    },
+    async (input: WhatChangedInput) => {
+      const request: QueryRequest = {
+        site: input.site,
+        range: input.range,
+        compare: input.compare,
+        queries: [
+          {
+            id: 'changes',
+            kind: 'changes',
+            metric: 'visits',
+            dims: [...CHANGES_DIMENSIONS],
+            limit: 8,
+          },
+          { id: 'totals', metrics: ['visits'] },
+        ],
+      };
+      const response = await runBatch(request);
+      if ('refused' in response) return refusal(response.refused);
+      const changes = response.results.changes;
+      const totals = response.results.totals;
+      if (changes === undefined || isQueryError(changes)) {
+        return refusal(changes?.error.message ?? 'no changes result');
+      }
+      const label =
+        input.site === 'all'
+          ? 'all sites'
+          : (listSites(db).find((site) => site.id === input.site)?.name ?? `site ${input.site}`);
+      const current = totalOf(totals, 'rows');
+      const previous = totalOf(totals, 'compare');
+      const summary = summarizeChanges(label, 'visits', current, previous, moversOf(changes.rows));
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({ summary, windows: response.meta.windows, rows: changes.rows }),
+          },
+        ],
+      };
+    },
+  );
+
   return server;
+}
+
+function totalOf(
+  entry: QueryResponse['results'][string] | undefined,
+  side: 'rows' | 'compare',
+): number {
+  if (entry === undefined || isQueryError(entry)) return 0;
+  const row = (side === 'rows' ? entry.rows : (entry.compare ?? []))[0];
+  const value = row?.visits;
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function moversOf(rows: readonly Record<string, unknown>[]): ChangesMover[] {
+  return rows.flatMap((row) => {
+    const delta = row.delta;
+    if (typeof delta !== 'number') return [];
+    const value = row.value;
+    return [
+      { value: typeof value === 'string' || typeof value === 'number' ? value : null, delta },
+    ];
+  });
 }
 
 /** A refusal the model can learn from — an MCP tool error, never a thrown 500. */
@@ -234,6 +326,9 @@ index from the start and meta.windows labels the mismatch).
 - { kind: "adjacency", path, direction: "in"|"out" } — what came just before/after one page
 - { kind: "dwell", path?, limit } — time on page over measured page legs
 - { kind: "distribution", of: "dwell"|"scroll", path? } — fixed-bucket histograms
+- { kind: "changes", metric?: "visits"|"visitors"|"pageviews", dims?, limit? } —
+  top movers per dimension between the request's window and its compare window
+  (requires a time compare; the what_changed tool is sugar over this kind)
 
 ## Semantics worth knowing
 - bounce_rate is engagement-aware: a single-page session with >= ${ENGAGEMENT_THRESHOLD_MS / 1000}s

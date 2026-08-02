@@ -1,6 +1,8 @@
 import { DAY_MS } from '@featherstat/shared';
 import type { Db } from '../db/index.ts';
+import { type AlertNotifier, runAlerts } from './alerts.ts';
 import { runCampaignBackfill } from './campaign-backfill.ts';
+import { digestLastRunAt, runDigest } from './digest.ts';
 import {
   DEFAULT_MMDB_PATH,
   type Fetcher,
@@ -13,10 +15,19 @@ import { runRetention } from './retention.ts';
 import { type Job, type Scheduler, type SchedulerOptions, startScheduler } from './scheduler.ts';
 
 export {
+  ALERT_RULES_KEY,
+  type AlertNotifier,
+  type AlertsResult,
+  readAlertRules,
+  runAlerts,
+  writeAlertRules,
+} from './alerts.ts';
+export {
   type CampaignBackfillResult,
   requestCampaignBackfill,
   runCampaignBackfill,
 } from './campaign-backfill.ts';
+export { DIGEST_LAST_RUN_KEY, type DigestResult, digestLastRunAt, runDigest } from './digest.ts';
 export { DEFAULT_MMDB_PATH, type Fetcher, refreshGeoipDatabase } from './geoip-refresh.ts';
 export { type PropScrubResult, requestPropScrub, runPropScrubs } from './prop-scrub.ts';
 export { type ReconcileResult, runReconcile } from './reconcile.ts';
@@ -28,6 +39,9 @@ export type { Job, Scheduler, SchedulerOptions } from './scheduler.ts';
  * not downloaded yet, instead of re-fetching the edition already installed.
  */
 const GEOIP_INTERVAL_MS = 31 * DAY_MS;
+
+const HOUR_MS = 3_600_000;
+const WEEK_MS = 7 * DAY_MS;
 
 export interface JobsOptions extends SchedulerOptions {
   /** The `.mmdb` the pipeline reads — the refresh replaces exactly this file. */
@@ -41,6 +55,12 @@ export interface JobsOptions extends SchedulerOptions {
   fetch?: Fetcher;
   /** Feeds /metrics' repair counter (routes/metrics.ts) — drift is a defect signal. */
   onRollupRepairs?: (days: number) => void;
+  /**
+   * The ntfy notifier's post/configured pair (createSecuredApp returns it) —
+   * turns on the hourly alert evaluation and the weekly digest. Both jobs skip
+   * themselves while ntfy is unconfigured, so registering them is free.
+   */
+  notify?: AlertNotifier;
 }
 
 /**
@@ -111,6 +131,30 @@ export function startJobs(db: Db, options: JobsOptions = {}): Scheduler {
       }
     },
   });
+
+  const notify = options.notify;
+  if (notify !== undefined) {
+    jobs.push({
+      name: 'alerts',
+      everyMs: HOUR_MS,
+      run: () => {
+        const { evaluated, fired } = runAlerts(db, notify, { now: options.now });
+        if (fired > 0) console.log(`alerts: ${fired}/${evaluated} rule(s) fired`);
+      },
+    });
+
+    // Weekly, with the last run persisted in a settings row — a restart
+    // mid-week must not re-send, and a boot past the boundary must catch up.
+    jobs.push({
+      name: 'weekly-digest',
+      everyMs: WEEK_MS,
+      lastRunAt: () => digestLastRunAt(db),
+      run: () => {
+        const { skipped, sites } = runDigest(db, notify, { now: options.now });
+        if (!skipped) console.log(`weekly-digest: posted for ${sites} site(s)`);
+      },
+    });
+  }
 
   jobs.push({
     name: 'retention',

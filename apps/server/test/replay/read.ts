@@ -111,6 +111,25 @@ const READ_SHAPES: readonly ReadShape[] = [
     request: (corpus) => batchOf(allSitesDashboard(corpus), 'all', '90d', 'previous'),
   },
   {
+    // the changes kind: eight grouped sub-queries (four dims × two windows),
+    // unlimited group-bys that mostly ride the rollups, joined in JS
+    name: 'what changed @ 30d vs previous',
+    request: () => ({
+      site: SITE,
+      range: { preset: '30d' },
+      compare: 'previous',
+      queries: [
+        {
+          id: 'changes',
+          kind: 'changes',
+          metric: 'visits',
+          dims: ['path', 'ref_domain', 'utm_campaign', 'country'],
+          limit: 8,
+        },
+      ],
+    }),
+  },
+  {
     // the sequence kinds, which no other shape exercises, at the JourneysView's
     // own depth and limit
     name: 'journeys @ 90d, all sites',
