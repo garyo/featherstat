@@ -611,6 +611,9 @@ deletes anything. Below that floor, rollup-answerable queries keep answering;
 a question only raw rows can answer (a raw-only dimension, `dim2`, joint
 filters, a cross-day distinct, session-scoped filters, the sequence kinds)
 returns an honest per-query `unsupported` error instead of partial numbers.
+The same run ages the prop registry: keys (with their values) last seen before
+the horizon and `prop_drops` counters older than it describe rows the prune is
+deleting, so they go too.
 The query engine's vocabulary (metric × dimension × range) is designed so
 rollups slot in behind it without any API change — and a rolled-up day's
 visitor count is *exact* for the day it covers, since the salt turns over on

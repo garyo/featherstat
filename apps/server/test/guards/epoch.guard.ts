@@ -1,0 +1,102 @@
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+/**
+ * CLAUDE.md invariant 10 as a scan: **every history-rewriting job bumps
+ * `data_epoch`**.
+ *
+ * @guard epoch-discipline
+ *
+ * `dataVersion` is `epoch · 2^40 + MAX(events.id)` (db/index.ts): appends move
+ * the high-water mark, but a job that rewrites or deletes stored rows in place
+ * leaves it still — and every ETag minted before the rewrite would answer 304
+ * forever. So each rewriter must call `bumpDataEpoch` after its last chunk.
+ *
+ * The scan reads every job source in `apps/server/src/jobs` and asks two
+ * questions of each: does it look like it rewrites history (an UPDATE/DELETE
+ * against events, sessions, or a `${table}` template over them), and does it
+ * bump the epoch? `REWRITERS` names the files that must do both; anything else
+ * that matches the rewrite shape needs either the bump + a REWRITERS entry, or
+ * an explained exemption. The rollup-rebuild-after-backfill case rides inside
+ * campaign-backfill.ts, which owns that bump.
+ *
+ * The scan takes its files as an argument so `test/guards/inventory.ts` can
+ * hand it a mutated set and check that this actually objects.
+ */
+
+const JOBS_DIR = fileURLToPath(new URL('../../src/jobs', import.meta.url));
+
+export interface JobSource {
+  /** File name within `apps/server/src/jobs`. */
+  name: string;
+  source: string;
+}
+
+/** Every job implementation (tests excluded — they quote SQL to assert on it). */
+export function jobSources(dir: string = JOBS_DIR): JobSource[] {
+  return readdirSync(dir)
+    .filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'))
+    .map((name) => ({ name, source: readFileSync(join(dir, name), 'utf8') }));
+}
+
+/** The shape of an in-place history rewrite, template-table variants included. */
+export const HISTORY_REWRITE = /\b(?:UPDATE|DELETE\s+FROM)\s+(?:(?:events|sessions)\b|\$\{table\})/;
+
+/** The call every rewriter must make after its last chunk commits. */
+const EPOCH_BUMP = 'bumpDataEpoch(';
+
+/** The known rewrite entry points. A new one is added HERE, with its bump. */
+export const REWRITERS = ['campaign-backfill.ts', 'prop-scrub.ts', 'site-purge.ts'] as const;
+
+/**
+ * Files that match the rewrite shape but legitimately never bump. Each needs a
+ * reason; an empty entry is not allowed.
+ */
+export const EXEMPT: Readonly<Record<string, string>> = {
+  'retention.ts':
+    'deletes only rows below the raw horizon it records first — the query engine ' +
+    'refuses to answer under that floor, so pruned history is refused, never re-served stale',
+};
+
+/** The guard is worth exactly what it reads; below this the walk broke. */
+export const MIN_JOB_FILES = 10;
+
+/** Every way the epoch discipline is currently broken, as one line each. */
+export function epochBreaches(files: readonly JobSource[]): string[] {
+  const breaches: string[] = [];
+  if (files.length < MIN_JOB_FILES) {
+    breaches.push(`only ${files.length} job sources scanned — the walk broke`);
+  }
+  const byName = new Map(files.map((file) => [file.name, file]));
+
+  for (const name of REWRITERS) {
+    const file = byName.get(name);
+    if (file === undefined) {
+      breaches.push(`rewriter ${name} is gone — update REWRITERS with its successor`);
+      continue;
+    }
+    if (!HISTORY_REWRITE.test(file.source)) {
+      breaches.push(
+        `${name} no longer matches the rewrite shape — if it stopped rewriting, drop it ` +
+          'from REWRITERS; if the SQL moved, teach HISTORY_REWRITE the new shape',
+      );
+    }
+    if (!file.source.includes(EPOCH_BUMP)) {
+      breaches.push(`${name} rewrites history without calling bumpDataEpoch — ETags will lie`);
+    }
+  }
+
+  const registered = new Set<string>(REWRITERS);
+  for (const file of files) {
+    if (registered.has(file.name) || !HISTORY_REWRITE.test(file.source)) continue;
+    const reason = EXEMPT[file.name];
+    if (reason === undefined || reason.length < 20) {
+      breaches.push(
+        `${file.name} rewrites events/sessions but is neither in REWRITERS (with a ` +
+          'bumpDataEpoch call) nor exempted with a reason in EXEMPT',
+      );
+    }
+  }
+  return breaches;
+}

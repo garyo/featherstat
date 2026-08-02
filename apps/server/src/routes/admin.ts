@@ -1,6 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto';
 import {
   AdminChangePasswordSchema,
+  type AdminDataSettings,
+  AdminDataSettingsSchema,
   type AdminDiagnostics,
   AdminLoginSchema,
   type AdminMe,
@@ -23,23 +25,42 @@ import { parseSiteScope, serializeSiteScope } from '../auth/principal.ts';
 import { RateLimiter } from '../auth/ratelimit.ts';
 import {
   type ApiTokenRow,
+  bumpAnnotationsVersion,
   countEvents,
   createSite,
   type Db,
   databaseSizeBytes,
   deleteAdminSessionsExcept,
+  deleteDashboard,
   deletePropKey,
+  deleteSetting,
+  deleteSiteAnnotations,
+  deleteSiteConfigRows,
+  getSetting,
   insertApiToken,
   listApiTokens,
   listBotDrops,
+  listDashboards,
   listPropDrops,
   listPropKeys,
   revokeApiToken,
   type Site,
+  setSetting,
+  tombstoneSite,
   updateSite,
   withWriteTransaction,
 } from '../db/index.ts';
+import { readAlertRules, writeAlertRules } from '../jobs/alerts.ts';
+import {
+  BACKUP_DIR_KEY,
+  BACKUP_KEEP_KEY,
+  backupKeep,
+  DEFAULT_BACKUP_KEEP,
+} from '../jobs/backup.ts';
 import { requestPropScrub, runPropScrubs } from '../jobs/prop-scrub.ts';
+import { RETENTION_DAYS_KEY, retentionDays } from '../jobs/retention.ts';
+import { requestSitePurge, runSitePurges } from '../jobs/site-purge.ts';
+import type { AliasCache } from '../pipeline/campaigns.ts';
 import type { PropRegistry } from '../pipeline/props.ts';
 import { clientIp } from './track.ts';
 
@@ -65,6 +86,8 @@ export interface AdminRouteOptions {
   /** The live pipeline's prop registry — a delete must invalidate its cache too.
    * Absent (a query-only server, tests), the governance rows alone are dropped. */
   propRegistry?: PropRegistry;
+  /** The live pipeline's campaign-alias cache — a site delete drops its rows. */
+  campaignAliases?: AliasCache;
 }
 
 export function createAdminRoutes(
@@ -174,6 +197,60 @@ export function createAdminRoutes(
     const site = withWriteTransaction(db, () => updateSite(db, id, body.data));
     if (site === undefined) return c.json({ error: `unknown site ${id}` }, 404);
     return c.json(toSiteInfo(site));
+  });
+
+  // Site deletion (docs/04 § 5): tombstone + inline config-row deletes in ONE
+  // transaction, then the chunked purge job for the bulk data. The tombstone
+  // takes effect immediately — ingest drops the site's beacons like an unknown
+  // site's, and it vanishes from every directory and query scope.
+  app.delete('/api/admin/sites/:id', (c) => {
+    const id = Number(c.req.param('id'));
+    if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'invalid site id' }, 400);
+    const known = withWriteTransaction(db, () => {
+      if (!tombstoneSite(db, id, auth.now())) return false;
+      deleteSiteConfigRows(db, id);
+      options.propRegistry?.forgetSite(id);
+      if (deleteSiteAnnotations(db, id) > 0) bumpAnnotationsVersion(db);
+      // deleteDashboard revokes the dashboard's share tokens with it.
+      for (const dashboard of listDashboards(db)) {
+        if (dashboard.site_scope === String(id)) deleteDashboard(db, dashboard.id);
+      }
+      const rules = readAlertRules(db);
+      const kept = rules.filter((rule) => rule.site !== id);
+      if (kept.length !== rules.length) writeAlertRules(db, kept);
+      requestSitePurge(db, id);
+      return true;
+    });
+    if (!known) return c.json({ error: `unknown site ${id}` }, 404);
+    options.campaignAliases?.invalidate();
+    // Kick the chunked purge now; the scheduler's job resumes it after a crash.
+    void runSitePurges(db).catch((error) => console.error('site purge failed:', error));
+    return c.json({ ok: true });
+  });
+
+  // --- Data settings (docs/02 § Background jobs): retention + backup knobs ---
+
+  const dataSettings = (): AdminDataSettings => ({
+    retentionDays: retentionDays(db) ?? null,
+    backupDir: getSetting(db, BACKUP_DIR_KEY) ?? null,
+    backupKeep: backupKeep(db),
+  });
+
+  app.get('/api/admin/data-settings', (c) => c.json(dataSettings()));
+
+  app.put('/api/admin/data-settings', async (c) => {
+    const body = await parseBody(c, AdminDataSettingsSchema);
+    if (body.ok === false) return body.response;
+    const next = body.data;
+    withWriteTransaction(db, () => {
+      if (next.retentionDays === null) deleteSetting(db, RETENTION_DAYS_KEY);
+      else setSetting(db, RETENTION_DAYS_KEY, String(next.retentionDays));
+      if (next.backupDir === null) deleteSetting(db, BACKUP_DIR_KEY);
+      else setSetting(db, BACKUP_DIR_KEY, next.backupDir);
+      if (next.backupKeep === DEFAULT_BACKUP_KEEP) deleteSetting(db, BACKUP_KEEP_KEY);
+      else setSetting(db, BACKUP_KEEP_KEY, String(next.backupKeep));
+    });
+    return c.json(dataSettings());
   });
 
   // --- API tokens (docs/04 § 5): mint shows the raw value exactly once ------

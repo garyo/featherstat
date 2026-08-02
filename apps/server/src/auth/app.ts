@@ -180,7 +180,13 @@ export function createSecuredApp(options: SecuredAppOptions = {}): SecuredApp {
     // Order matters: these routers gate `/api/admin/*` wholesale, so they mount
     // AFTER the admin router — its public lifecycle handlers (`me`, `setup`,
     // `login`) are then reached first and end the chain before those gates run.
-    app.route('/', createAdminRoutes(db, createdAuth, { propRegistry: pipeline?.props }));
+    app.route(
+      '/',
+      createAdminRoutes(db, createdAuth, {
+        propRegistry: pipeline?.props,
+        campaignAliases: pipeline?.campaignAliases,
+      }),
+    );
     app.route('/', createDashboardRoutes(db, createdAuth));
     // Query-layer objects (docs/04 § 3): reads for any gated principal, writes
     // under the admin wall above.

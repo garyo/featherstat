@@ -1,6 +1,7 @@
 import { DAY_MS } from '@featherstat/shared';
 import type { Db } from '../db/index.ts';
 import { type AlertNotifier, runAlerts } from './alerts.ts';
+import { backupLastRunAt, runBackup } from './backup.ts';
 import { runCampaignBackfill } from './campaign-backfill.ts';
 import { digestLastRunAt, runDigest } from './digest.ts';
 import {
@@ -13,6 +14,7 @@ import { runPropScrubs } from './prop-scrub.ts';
 import { runReconcile } from './reconcile.ts';
 import { runRetention } from './retention.ts';
 import { type Job, type Scheduler, type SchedulerOptions, startScheduler } from './scheduler.ts';
+import { runSitePurges } from './site-purge.ts';
 
 export {
   ALERT_RULES_KEY,
@@ -22,6 +24,14 @@ export {
   runAlerts,
   writeAlertRules,
 } from './alerts.ts';
+export {
+  BACKUP_DIR_KEY,
+  BACKUP_KEEP_KEY,
+  type BackupResult,
+  backupKeep,
+  DEFAULT_BACKUP_KEEP,
+  runBackup,
+} from './backup.ts';
 export {
   type CampaignBackfillResult,
   requestCampaignBackfill,
@@ -33,6 +43,7 @@ export { type PropScrubResult, requestPropScrub, runPropScrubs } from './prop-sc
 export { type ReconcileResult, runReconcile } from './reconcile.ts';
 export { RETENTION_DAYS_KEY, retentionDays, runRetention } from './retention.ts';
 export type { Job, Scheduler, SchedulerOptions } from './scheduler.ts';
+export { requestSitePurge, runSitePurges, type SitePurgeResult } from './site-purge.ts';
 
 /**
  * A hair longer than the longest month: every run then lands in a month we have
@@ -119,6 +130,19 @@ export function startJobs(db: Db, options: JobsOptions = {}): Scheduler {
     },
   });
 
+  // Same shape as prop-scrub: the site-delete route kicks the purge directly;
+  // this entry is the resume path for a watermark a crash left behind.
+  jobs.push({
+    name: 'site-purge',
+    everyMs: DAY_MS,
+    run: async () => {
+      const { completed, rows } = await runSitePurges(db);
+      if (completed > 0) {
+        console.log(`site-purge: removed ${rows} row(s) across ${completed} deleted site(s)`);
+      }
+    },
+  });
+
   // Same shape as prop-scrub: the alias route kicks the backfill directly;
   // this entry is the resume path for a watermark a crash left behind.
   jobs.push({
@@ -155,6 +179,20 @@ export function startJobs(db: Db, options: JobsOptions = {}): Scheduler {
       },
     });
   }
+
+  // Nightly VACUUM INTO copy, off until Settings → Data names a directory. The
+  // last run persists in a settings row so a restart never re-vacuums a night.
+  jobs.push({
+    name: 'backup',
+    everyMs: DAY_MS,
+    lastRunAt: () => backupLastRunAt(db),
+    run: () => {
+      const { skipped, file, pruned } = runBackup(db, { now: options.now });
+      if (!skipped) {
+        console.log(`backup: wrote ${file}${pruned.length > 0 ? `, pruned ${pruned.length}` : ''}`);
+      }
+    },
+  });
 
   jobs.push({
     name: 'retention',

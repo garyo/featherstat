@@ -4,15 +4,21 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { event, openTestDb, T0 } from '../../test/rows.ts';
 import { type Auth, type AuthEnv, createAuth } from '../auth/auth.ts';
 import {
+  createDashboard,
   type Db,
+  getSetting,
   getSite,
   incrementBotDrops,
   insertEvents,
+  insertShareToken,
   listPropKeys,
+  listSites,
   stmt,
   withWriteTransaction,
 } from '../db/index.ts';
+import { readAlertRules, writeAlertRules } from '../jobs/alerts.ts';
 import { runPropScrubs } from '../jobs/prop-scrub.ts';
+import { runSitePurges } from '../jobs/site-purge.ts';
 import { PropRegistry } from '../pipeline/props.ts';
 import { createAdminRoutes } from './admin.ts';
 
@@ -277,5 +283,132 @@ describe('diagnostics', () => {
       { siteId: 1, localDate: '2026-07-27', count: 4 },
       { siteId: 2, localDate: '2026-07-25', count: 1 },
     ]);
+  });
+});
+
+describe('site deletion (docs/04 § 5)', () => {
+  function seedSiteObjects(): number {
+    return withWriteTransaction(db, () => {
+      insertEvents(db, [event(), event({ seq: 2 }), { ...event(), site_id: 2 }]);
+      stmt(
+        db,
+        'INSERT INTO goals (site_id, name, filters, created_at, updated_at) VALUES (1, ?, ?, 0, 0)',
+      ).run('signup', '[]');
+      stmt(db, 'INSERT INTO campaigns (site_id, name, created_at) VALUES (1, ?, 0)').run('spring');
+      stmt(
+        db,
+        'INSERT INTO campaign_aliases (site_id, field, alias, canonical) VALUES (1, ?, ?, ?)',
+      ).run('source', 'em', 'email');
+      stmt(
+        db,
+        'INSERT INTO prop_keys (site_id, key, first_seen, last_seen, events, distinct_values) VALUES (1, ?, 0, 0, 1, 1)',
+      ).run('plan');
+      stmt(
+        db,
+        'INSERT INTO annotations (site_id, ts, text, created_at, updated_at) VALUES (1, 0, ?, 0, 0)',
+      ).run('launch');
+      stmt(
+        db,
+        'INSERT INTO annotations (site_id, ts, text, created_at, updated_at) VALUES (NULL, 0, ?, 0, 0)',
+      ).run('install-wide');
+      const dashboard = createDashboard(db, {
+        name: 'Site one',
+        site_scope: '1',
+        layout: '{}',
+        template: null,
+        updated_at: 0,
+      });
+      insertShareToken(db, {
+        token_hash: new Uint8Array(32),
+        dashboard_id: dashboard.id,
+        created_at: 0,
+      });
+      writeAlertRules(db, [
+        { site: 1, metric: 'pageviews', condition: 'above', threshold: 10, window: 'day' },
+        { site: 2, metric: 'pageviews', condition: 'above', threshold: 10, window: 'day' },
+      ]);
+      return dashboard.id;
+    });
+  }
+
+  it('tombstones, clears every site-scoped object, and purges the data', async () => {
+    const session = await login();
+    seedSiteObjects();
+
+    const res = await mutate(session, 'DELETE', '/api/admin/sites/1', undefined);
+    expect(res.status).toBe(200);
+
+    // Immediately invisible: directory, getSite (ingest's gate), query scope.
+    expect(listSites(db).map((site) => site.id)).toEqual([2]);
+    expect(getSite(db, 1)).toBeUndefined();
+
+    // Config rows fell inline, in the same transaction as the tombstone.
+    const count = (sql: string): number => stmt(db, sql).pluck().get() as number;
+    expect(count('SELECT COUNT(*) FROM goals')).toBe(0);
+    expect(count('SELECT COUNT(*) FROM campaigns')).toBe(0);
+    expect(count('SELECT COUNT(*) FROM campaign_aliases')).toBe(0);
+    expect(count('SELECT COUNT(*) FROM prop_keys')).toBe(0);
+    // The site's annotation went; the install-wide one stays.
+    expect(count('SELECT COUNT(*) FROM annotations')).toBe(1);
+    // The scoped dashboard and its share token went together.
+    expect(count('SELECT COUNT(*) FROM dashboards')).toBe(0);
+    expect(count('SELECT COUNT(*) FROM share_tokens')).toBe(0);
+    // Only the other site's alert rule survives.
+    expect(readAlertRules(db).map((rule) => rule.site)).toEqual([2]);
+
+    // The route kicked the chunked purge; joining it proves the bulk data went.
+    await runSitePurges(db);
+    expect(count('SELECT COUNT(*) FROM events WHERE site_id = 1')).toBe(0);
+    expect(count('SELECT COUNT(*) FROM events WHERE site_id = 2')).toBe(1);
+    expect(count('SELECT COUNT(*) FROM sites WHERE id = 1')).toBe(0);
+  });
+
+  it('404s an unknown site and a repeat delete', async () => {
+    const session = await login();
+    expect((await mutate(session, 'DELETE', '/api/admin/sites/99', undefined)).status).toBe(404);
+    expect((await mutate(session, 'DELETE', '/api/admin/sites/1', undefined)).status).toBe(200);
+    await runSitePurges(db);
+    expect((await mutate(session, 'DELETE', '/api/admin/sites/1', undefined)).status).toBe(404);
+    expect((await mutate(session, 'DELETE', '/api/admin/sites/nope', undefined)).status).toBe(400);
+  });
+});
+
+describe('data settings (docs/02 § Background jobs)', () => {
+  it('reads the defaults: keep forever, backups off, keep 7', async () => {
+    const { cookie } = await login();
+    const res = await app.request('/api/admin/data-settings', { headers: { cookie } });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ retentionDays: null, backupDir: null, backupKeep: 7 });
+  });
+
+  it('stores a full replacement and clears settings back to null', async () => {
+    const session = await login();
+    const put = await mutate(session, 'PUT', '/api/admin/data-settings', {
+      retentionDays: 90,
+      backupDir: '/backups',
+      backupKeep: 3,
+    });
+    expect(put.status).toBe(200);
+    expect(await put.json()).toEqual({ retentionDays: 90, backupDir: '/backups', backupKeep: 3 });
+
+    const cleared = await mutate(session, 'PUT', '/api/admin/data-settings', {
+      retentionDays: null,
+      backupDir: null,
+      backupKeep: 7,
+    });
+    expect(await cleared.json()).toEqual({ retentionDays: null, backupDir: null, backupKeep: 7 });
+    expect(getSetting(db, 'retention_days')).toBeUndefined();
+    expect(getSetting(db, 'backup_dir')).toBeUndefined();
+    expect(getSetting(db, 'backup_keep')).toBeUndefined();
+  });
+
+  it('400s an out-of-vocabulary body', async () => {
+    const session = await login();
+    const res = await mutate(session, 'PUT', '/api/admin/data-settings', {
+      retentionDays: -1,
+      backupDir: null,
+      backupKeep: 7,
+    });
+    expect(res.status).toBe(400);
   });
 });

@@ -27,7 +27,9 @@ dashboards — with none of the weight.
 ## Design principles
 
 1. **One process, one file.** Node + SQLite (WAL). No database server, no
-   Redis, no cron container, no worker fleet. Backup = copy one file.
+   Redis, no cron container, no worker fleet. Backup = one nightly
+   `VACUUM INTO` copy, built in (never `cp` a live WAL file — see
+   docs/10).
 2. **A dashboard is one query.** The client sends a single batched query
    request describing every widget; the server answers all of them from SQLite
    in one read transaction. Target: p95 < 50 ms server-side on an e2-small.
@@ -75,8 +77,24 @@ GitHub as `featherstat` when ready.
 
 ## Status
 
-Implementation in progress — M0 (walking skeleton), following
-[docs/08-implementation-plan.md](docs/08-implementation-plan.md).
+v1 (milestones M0–M1) is complete and running in production. This branch is
+the **v2 line** — breaking changes allowed, reached from a v1 database with
+one offline command (`featherstat import v1 <path>`; stop v1 → import →
+start v2). What v2 adds:
+
+- **Query engine**: a worker-thread read pool (slow queries never block
+  ingest), rollup tables with honest exact distincts, a nested filter grammar
+  with saved segments and derived metrics, custom ranges + compare, and a
+  server-side "what changed" ranking.
+- **Event model**: custom props (capped, governed, scrubable), a campaign
+  normalization + alias layer, goals as saved queries, tracker v2.
+- **Data out**: scoped read-only API tokens (Bearer, CORS-enabled), CSV
+  export, magic-link read-only viewers, an MCP endpoint (`/mcp`) so an LLM can
+  query the same closed vocabulary, and a documented read-only SQLite contract
+  (docs/10).
+- **Operations**: dashboards as a library with shipped templates, site
+  deletion (tombstone + chunked purge), retention that ages every table it
+  should, and nightly `VACUUM INTO` backups configured from Settings → Data.
 
 ## Development
 
@@ -170,7 +188,9 @@ volumes:
 Operations: `GET /healthz` (liveness, used by the image HEALTHCHECK) and
 `GET /metrics` (Prometheus text; `Authorization: Bearer $METRICS_TOKEN`).
 Sessions, CSRF and the admin API are documented in docs/02 § Security posture
-and docs/04 § 5.
+and docs/04 § 5. Backups are settings, not env: name a directory (on the
+volume) in Settings → Data and the server writes a nightly `VACUUM INTO` copy
+there, pruned to the newest N (docs/02 § Background jobs).
 
 ## License
 

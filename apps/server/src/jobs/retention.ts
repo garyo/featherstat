@@ -15,6 +15,15 @@ const SQL_DELETE_EVENTS =
 const SQL_DELETE_SESSIONS =
   'DELETE FROM sessions WHERE id IN (SELECT id FROM sessions WHERE last_seen_at < ? LIMIT ?)';
 
+// Prop-registry ageing (docs/03 § Props): a key not seen since the horizon has
+// no rows left to describe once the events above are gone. Values go first —
+// they hang off keys. The live registry keeps its in-memory copy until restart,
+// which is harmless: a re-appearing key upserts its row right back.
+const SQL_DELETE_STALE_PROP_VALUES = `DELETE FROM prop_values WHERE (site_id, key) IN (
+  SELECT site_id, key FROM prop_keys WHERE last_seen < ?)`;
+const SQL_DELETE_STALE_PROP_KEYS = 'DELETE FROM prop_keys WHERE last_seen < ?';
+const SQL_DELETE_OLD_PROP_DROPS = 'DELETE FROM prop_drops WHERE local_date < ?';
+
 export interface RetentionOptions {
   now?: () => number;
   batchSize?: number;
@@ -26,6 +35,10 @@ export interface RetentionResult {
   days: number | undefined;
   events: number;
   sessions: number;
+  /** Prop keys (with their values) whose `last_seen` fell past the horizon. */
+  propKeys: number;
+  /** Old `prop_drops` diagnostic counters removed. */
+  propDrops: number;
   /** The run hit its batch bound and left older rows for the next one. */
   more: boolean;
 }
@@ -34,6 +47,9 @@ export interface RetentionResult {
  * Optional pruning of raw events past a configurable age (docs/02 § Background
  * jobs). Sessions go with their events: a session row whose events are gone
  * would keep counting toward visit metrics the pageviews no longer support.
+ * The prop registry ages with them: keys (and their values) last seen before
+ * the horizon, and diagnostic drop counters older than it, describe rows this
+ * run is deleting.
  *
  * Rollup rows are NEVER touched — outliving raw is their point (docs/03).
  * The run instead records the raw floor in `rollup_meta.raw_horizon_ts`, so
@@ -45,12 +61,21 @@ export async function runRetention(
   options: RetentionOptions = {},
 ): Promise<RetentionResult> {
   const days = retentionDays(db);
-  if (days === undefined) return { days, events: 0, sessions: 0, more: false };
+  if (days === undefined) {
+    return { days, events: 0, sessions: 0, propKeys: 0, propDrops: 0, more: false };
+  }
 
   const cutoff = (options.now?.() ?? Date.now()) - days * DAY_MS;
   const batchSize = options.batchSize ?? DEFAULT_BATCH_SIZE;
   const maxBatches = options.maxBatches ?? DEFAULT_MAX_BATCHES;
-  const result: RetentionResult = { days, events: 0, sessions: 0, more: false };
+  const result: RetentionResult = {
+    days,
+    events: 0,
+    sessions: 0,
+    propKeys: 0,
+    propDrops: 0,
+    more: false,
+  };
 
   // Advance the floor BEFORE deleting: the batched DELETE takes rows below the
   // cutoff in no particular order, so raw history under it is suspect from the
@@ -59,6 +84,15 @@ export async function runRetention(
   if (cutoff > (rawHorizonTs(db) ?? Number.NEGATIVE_INFINITY)) {
     withWriteTransaction(db, () => setRollupMeta(db, META_RAW_HORIZON, String(cutoff)));
   }
+
+  // The registry tables are capped by construction (30 keys/site), so this is
+  // one short transaction, not a chunked walk like the event prune below.
+  const cutoffDate = new Date(cutoff).toISOString().slice(0, 10);
+  withWriteTransaction(db, () => {
+    stmt(db, SQL_DELETE_STALE_PROP_VALUES).run(cutoff);
+    result.propKeys = stmt(db, SQL_DELETE_STALE_PROP_KEYS).run(cutoff).changes;
+    result.propDrops = stmt(db, SQL_DELETE_OLD_PROP_DROPS).run(cutoffDate).changes;
+  });
 
   for (let batch = 0; batch < maxBatches; batch++) {
     // One transaction per batch, and the event loop back between them: SQLite is

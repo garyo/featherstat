@@ -274,8 +274,15 @@ interface SiteColumns {
   created_at: number;
 }
 
-const SQL_LIST_SITES = 'SELECT id, name, domains, timezone, created_at FROM sites ORDER BY id';
-const SQL_GET_SITE = 'SELECT id, name, domains, timezone, created_at FROM sites WHERE id = ?';
+// A tombstoned site is dead everywhere at once: these two accessors feed the
+// directory, the query engine's scope resolution and the ingest pipeline, so
+// excluding `deleted_at` here is what makes deletion take effect immediately —
+// beacons drop exactly like an unknown site's, queries answer "unknown site".
+// The purge job alone reads around the tombstone (jobs/site-purge.ts).
+const SQL_LIST_SITES =
+  'SELECT id, name, domains, timezone, created_at FROM sites WHERE deleted_at IS NULL ORDER BY id';
+const SQL_GET_SITE =
+  'SELECT id, name, domains, timezone, created_at FROM sites WHERE id = ? AND deleted_at IS NULL';
 const SQL_CREATE_SITE =
   'INSERT INTO sites (id, name, domains, timezone, created_at) VALUES (?, ?, ?, ?, ?)';
 
@@ -339,6 +346,46 @@ export function updateSite(db: Db, id: number, patch: SitePatch): Site | undefin
 
 function decodeSite(row: SiteColumns): Site {
   return { ...row, domains: SiteDomainsSchema.parse(JSON.parse(row.domains)) };
+}
+
+const SQL_TOMBSTONE_SITE = 'UPDATE sites SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL';
+
+/**
+ * Marks a site deleted (docs/04 § 5). The row itself stays until the purge job
+ * has drained the site's data — deleting it first would orphan every chunk the
+ * purge has yet to reach. False when the site is unknown or already tombstoned.
+ */
+export function tombstoneSite(db: Db, id: number, now: number): boolean {
+  assertWritable(db);
+  return stmt(db, SQL_TOMBSTONE_SITE).run(now, id).changes > 0;
+}
+
+/** The small per-site config tables the delete route clears inline — one short
+ * transaction, unlike the bulk data the chunked purge job owns. Dashboards and
+ * alert rules are NOT here: those need their own delete paths (share-token
+ * revocation, the settings-row rewrite), which the route drives. */
+const SITE_CONFIG_TABLES = [
+  'goals',
+  'campaigns',
+  'campaign_aliases',
+  'prop_keys',
+  'prop_values',
+  'prop_drops',
+] as const;
+
+export function deleteSiteConfigRows(db: Db, siteId: number): void {
+  assertWritable(db);
+  for (const table of SITE_CONFIG_TABLES) {
+    stmt(db, `DELETE FROM ${table} WHERE site_id = ?`).run(siteId);
+  }
+}
+
+const SQL_DELETE_SITE_ANNOTATIONS = 'DELETE FROM annotations WHERE site_id = ?';
+
+/** Removes one site's annotations (install-wide NULL-site rows stay); returns how many. */
+export function deleteSiteAnnotations(db: Db, siteId: number): number {
+  assertWritable(db);
+  return stmt(db, SQL_DELETE_SITE_ANNOTATIONS).run(siteId).changes;
 }
 
 // ---------------------------------------------------------------------------

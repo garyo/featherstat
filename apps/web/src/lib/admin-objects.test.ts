@@ -155,6 +155,13 @@ describe('adminObjects', () => {
       { run: (a) => a.alertRules(), method: 'GET', path: '/api/admin/alerts' },
       { run: (a) => a.props(2), method: 'GET', path: '/api/admin/props?site=2' },
       { run: (a) => a.deletePropKey(2, 'plan'), method: 'DELETE', path: '/api/admin/props/2/plan' },
+      { run: (a) => a.dataSettings(), method: 'GET', path: '/api/admin/data-settings' },
+      {
+        run: (a) => a.saveDataSettings({ retentionDays: 90, backupDir: '/b', backupKeep: 7 }),
+        method: 'PUT',
+        path: '/api/admin/data-settings',
+        body: { retentionDays: 90, backupDir: '/b', backupKeep: 7 },
+      },
     ];
     for (const entry of cases) {
       const { api, calls } = objects();

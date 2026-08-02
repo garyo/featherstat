@@ -54,6 +54,8 @@ describe('runRetention', () => {
       days: undefined,
       events: 0,
       sessions: 0,
+      propKeys: 0,
+      propDrops: 0,
       more: false,
     });
     expect(counts()).toEqual({ events: 3, sessions: 3 });
@@ -65,7 +67,14 @@ describe('runRetention', () => {
 
     const result = await runRetention(db, { now: () => NOW });
 
-    expect(result).toEqual({ days: 30, events: 2, sessions: 2, more: false });
+    expect(result).toEqual({
+      days: 30,
+      events: 2,
+      sessions: 2,
+      propKeys: 0,
+      propDrops: 0,
+      more: false,
+    });
     expect(counts()).toEqual({ events: 2, sessions: 2 });
     expect(db.prepare('SELECT MIN(ts) FROM events').pluck().get()).toBe(NOW - 10 * DAY_MS);
   });
@@ -105,11 +114,25 @@ describe('runRetention', () => {
 
     const partial = await runRetention(db, { now: () => NOW, batchSize: 2, maxBatches: 3 });
 
-    expect(partial).toEqual({ days: 30, events: 6, sessions: 6, more: true });
+    expect(partial).toEqual({
+      days: 30,
+      events: 6,
+      sessions: 6,
+      propKeys: 0,
+      propDrops: 0,
+      more: true,
+    });
     expect(counts()).toEqual({ events: 4, sessions: 4 });
 
     const rest = await runRetention(db, { now: () => NOW, batchSize: 2, maxBatches: 3 });
-    expect(rest).toEqual({ days: 30, events: 4, sessions: 4, more: false });
+    expect(rest).toEqual({
+      days: 30,
+      events: 4,
+      sessions: 4,
+      propKeys: 0,
+      propDrops: 0,
+      more: false,
+    });
     expect(counts()).toEqual({ events: 0, sessions: 0 });
   });
 
@@ -120,9 +143,9 @@ describe('runRetention', () => {
 
     await runRetention(db, { now: () => NOW, batchSize: 1 });
 
-    // The raw-horizon stamp, then three batches: two that delete, one that
-    // finds nothing left.
-    expect(transaction).toHaveBeenCalledTimes(4);
+    // The raw-horizon stamp, the prop-registry prune, then three batches:
+    // two that delete, one that finds nothing left.
+    expect(transaction).toHaveBeenCalledTimes(5);
     transaction.mockRestore();
   });
 
@@ -143,6 +166,54 @@ describe('runRetention', () => {
     withWriteTransaction(db, () => setSetting(db, RETENTION_DAYS_KEY, ''));
     await runRetention(db, { now: () => NOW });
     expect(rawHorizonTs(db)).toBe(NOW - 30 * DAY_MS);
+  });
+
+  it('ages the prop registry: stale keys, their values, and old drop counters', async () => {
+    const fresh = NOW - DAY_MS;
+    const stale = NOW - 60 * DAY_MS;
+    withWriteTransaction(db, () => {
+      db.prepare(
+        'INSERT INTO prop_keys (site_id, key, first_seen, last_seen, events, distinct_values) VALUES (?, ?, ?, ?, 1, 1)',
+      ).run(1, 'plan', stale, stale);
+      db.prepare(
+        'INSERT INTO prop_keys (site_id, key, first_seen, last_seen, events, distinct_values) VALUES (?, ?, ?, ?, 1, 1)',
+      ).run(1, 'theme', stale, fresh);
+      db.prepare('INSERT INTO prop_values (site_id, key, value) VALUES (?, ?, ?)').run(
+        1,
+        'plan',
+        '"pro"',
+      );
+      db.prepare('INSERT INTO prop_values (site_id, key, value) VALUES (?, ?, ?)').run(
+        1,
+        'theme',
+        '"dark"',
+      );
+      db.prepare(
+        'INSERT INTO prop_drops (site_id, local_date, reason, count) VALUES (?, ?, ?, 1)',
+      ).run(1, new Date(stale).toISOString().slice(0, 10), 'oversize');
+      db.prepare(
+        'INSERT INTO prop_drops (site_id, local_date, reason, count) VALUES (?, ?, ?, 1)',
+      ).run(1, new Date(fresh).toISOString().slice(0, 10), 'oversize');
+    });
+    setRetention('30');
+
+    const result = await runRetention(db, { now: () => NOW });
+
+    expect(result).toMatchObject({ propKeys: 1, propDrops: 1 });
+    expect(db.prepare('SELECT key FROM prop_keys').pluck().all()).toEqual(['theme']);
+    expect(db.prepare('SELECT key FROM prop_values').pluck().all()).toEqual(['theme']);
+    expect(db.prepare('SELECT COUNT(*) FROM prop_drops').pluck().get()).toBe(1);
+  });
+
+  it('leaves the prop registry alone while retention is unset', async () => {
+    withWriteTransaction(db, () => {
+      db.prepare(
+        'INSERT INTO prop_keys (site_id, key, first_seen, last_seen, events, distinct_values) VALUES (?, ?, ?, ?, 1, 1)',
+      ).run(1, 'plan', 0, 0);
+    });
+
+    expect(await runRetention(db, { now: () => NOW })).toMatchObject({ propKeys: 0 });
+    expect(db.prepare('SELECT COUNT(*) FROM prop_keys').pluck().get()).toBe(1);
   });
 
   it('never touches rollup rows — outliving raw is their point', async () => {

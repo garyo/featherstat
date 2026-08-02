@@ -5,7 +5,8 @@ SQLite file, Matomo-compatible ingestion, a batched one-request query API,
 Svelte dashboards. **The design docs in `docs/` are the source of truth** —
 read the relevant one before implementing in an area: 01 requirements ·
 02 architecture/stack · 03 schema/sessionization · 04 APIs · 05 dashboards ·
-06 migration · 07 roadmap · 08 build order (work packages WP0–WP14).
+06 migration · 07 roadmap · 08 build order (WP0–WP14; both carry a v2
+epilogue) · 09 cutover runbook · 10 the read-only SQLite contract.
 
 The project is named **featherstat** (chosen 2026-07-28). Package scope is
 `@featherstat/*`; the brand mark and favicon sources live in `brand/`
@@ -22,6 +23,8 @@ bun run test         # vitest, all packages
 bun run bench        # replay perf budget (runs Node, see below)
 bun run fix          # biome auto-fix
 bun run --cwd apps/server seed  # seed data/dev.db (90 days × 6 sites, deterministic)
+bun run --cwd apps/server import -- --help      # Matomo importer (docs/06)
+bun run --cwd apps/server import -- v1 <path>   # one-shot v1→v2 rewrite (stop v1 first)
 bun run --cwd apps/server dev   # dev API on :8080 (script runs Node: better-sqlite3
                                 #   crashes under Bun 1.3.4 with a NAPI fatal error)
 bun run --cwd apps/web dev      # dashboard on :5173, proxies /api to :8080
@@ -30,18 +33,22 @@ bun run --cwd apps/web dev      # dashboard on :5173, proxies /api to :8080
 ## Layout
 
 - `apps/server` — Hono app: ingest routes, enrichment pipeline, sessionizer,
-  batcher, query engine, SSE, jobs. Runs on Node ≥ 24; must stay
+  batcher, query engine (`query/`, worker read pool in `query/pool/`), rollup
+  write/rebuild/verify (`rollup/`), SSE, jobs, importers (`import/` Matomo,
+  `import/v1/` the v1→v2 rewrite). Runs on Node ≥ 24; must stay
   bun-compatible (no Bun-only APIs).
 - `apps/web` — Svelte 5 + Vite SPA (starts in WP9).
-- `packages/shared` — zod schemas + constants. **The only cross-package
-  import surface**; server/web/tracker define no duplicate cross-boundary types.
+- `packages/shared` — zod schemas + constants, plus the shipped dashboard
+  templates (`templates/`) the server and web both resolve. **The only
+  cross-package import surface**; server/web/tracker define no duplicate
+  cross-boundary types.
 - `packages/tracker` — matomo.js compatibility shim + modern ESM tracker.
 
 ## Invariants (load-bearing — never violate)
 
-Nine, numbered because the code cites them by number — the numbers are stable
+Ten, numbered because the code cites them by number — the numbers are stable
 even as the prose shrinks. **An invariant a test enforces is documentation; one
-enforced only by memory is a liability.** Five have a guard now and are one line
+enforced only by memory is a liability.** Six have a guard now and are one line
 each: go read the guard, it is the source of truth and this is a map to it. Four
 are still memory, in whole or in part, and those are spelled out — that is the
 list to actually hold in your head.
@@ -70,6 +77,14 @@ list to actually hold in your head.
   SQL text and every op binds its parameters; `routes/query.test.ts` sends
   `'; DELETE FROM events; --` through the live route and checks the table
   survived.
+- **10 · Every history rewrite bumps `data_epoch`.** `dataVersion` is
+  `epoch·2⁴⁰ + MAX(events.id)`, so an in-place rewrite that skips the bump
+  leaves every pre-rewrite ETag answering 304 forever. Current rewriters:
+  campaign backfill (including its post-backfill rollup rebuild), prop scrub,
+  site purge. `apps/server/test/guards/epoch.guard.ts` scans the job sources
+  and objects to a rewriter without the bump — or a new job that rewrites
+  events/sessions unregistered; the meta-guard proves the scan binds.
+  (Residue: a rewriter outside `src/jobs/` is outside the scan.)
 
 ### Memory — no guard, or only half of one
 
@@ -88,10 +103,16 @@ list to actually hold in your head.
   scrub captured data to the documented test ranges (192.0.2.x / 198.51.100.x /
   203.0.113.x). Nothing scans for a leak.
 - **6 · Ratchets only tighten**: the golden corpus
-  (`apps/server/test/fixtures/matomo/`) and the perf thresholds only gain cases
-  / get stricter. Never delete a fixture or loosen a threshold to make a change
-  pass — surface the conflict instead. **Permanently memory**: a test cannot
-  object to being edited, so nothing here can ever enforce this one.
+  (`apps/server/test/fixtures/matomo/`), the perf thresholds, and the
+  rollup-vs-raw equivalence corpora
+  (`apps/server/test/replay/rollup-equivalence.test.ts` and
+  `rollup-read-equivalence.test.ts` — the flush path must agree with a
+  recompute from raw, and the rollup read route with the raw one, adversarial
+  fixtures included) only gain cases / get stricter. Never delete a fixture or
+  loosen a threshold to make a change pass — surface the conflict instead.
+  **Permanently memory**: a test cannot object to being edited, so nothing here
+  can ever enforce this one (`test/guards/meta.test.ts` catches a guard that
+  silently stops binding, but not a deliberate edit).
 - **7 · Everything rendered is a widget.** Anything that draws data belongs in
   `apps/web/src/widgets/`, registered in `registry.ts` and named in the shared
   `VizType` enum — so it is reusable on any dashboard, replaceable, and

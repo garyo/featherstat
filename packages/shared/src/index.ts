@@ -701,6 +701,20 @@ export interface AdminDiagnostics {
   botDrops: AdminBotDrops[];
 }
 
+/**
+ * `GET`/`PUT /api/admin/data-settings` — the retention and backup knobs
+ * (docs/02 § Background jobs), stored as settings rows. A PUT is a full
+ * replacement; `null` means the feature's default: keep raw forever, no backups.
+ */
+export const AdminDataSettingsSchema = z.object({
+  retentionDays: z.number().int().positive().max(36_500).nullable(),
+  /** Directory `VACUUM INTO` writes dated copies to; null = backups off. */
+  backupDir: z.string().trim().min(1).max(500).nullable(),
+  /** Dated copies to keep (newest N). */
+  backupKeep: z.number().int().min(1).max(365),
+});
+export type AdminDataSettings = z.infer<typeof AdminDataSettingsSchema>;
+
 // ---------------------------------------------------------------------------
 // Props governance (docs/03 § Props, docs/04 § 5) — the admin surface's contract
 // ---------------------------------------------------------------------------

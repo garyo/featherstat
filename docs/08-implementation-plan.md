@@ -136,3 +136,16 @@ toggle · site delete · share links · native ESM tracker · ntfy notifications
 3. **Corpus source** — OK to pull scrubbed access-log lines from the GCE
    host for fixtures? (IPs replaced, UA strings kept.)
 4. **Repo home** — `github.com/garyo/<name>`, or a fresh org for the project?
+
+## v2 epilogue (2026-08)
+
+WP0–WP14 shipped v1; this document stays as its record. The **v2 line** (on
+the `worktree-v2` branch) was built in seven phases — foundations (schema
+@ 100, epoch'd data version, worker read pool, principals), query language,
+rollups, event model, data-out + viewers + MCP, analysis UX, and the v1
+importer + ride-alongs (site deletion, retention completeness, backups) —
+each phase landing with its ratchets per the working agreement above. What
+shipped and how it behaves lives in [04-api.md](04-api.md) and
+[05-dashboards.md](05-dashboards.md); CLAUDE.md carries the grown invariant
+list (the epoch discipline is invariant 10, guarded by
+`apps/server/test/guards/epoch.guard.ts`).

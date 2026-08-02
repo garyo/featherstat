@@ -119,3 +119,18 @@ identity at all and is a filtered query.
   events (03) — the query vocabulary already leaves room for them.
 - Nothing in M2/M3 blocks the personal cutover at end of M1; from M1 on, the
   project runs in production while it grows.
+
+## v2 epilogue (2026-08)
+
+The roadmap above is v1's, kept as written. A **v2 line** exists on the
+`worktree-v2` branch: a clean-slate schema (user_version 100) reached by
+`featherstat import v1`, plus the four redesigned pillars — query engine
+(worker-thread read pool, rollups with honest distincts, filter grammar v2,
+segments, derived metrics), event model (props, campaign layer, goals,
+tracker v2), auth & data-out (scoped API tokens with CORS + CSV, magic-link
+viewers, the `/mcp` endpoint), and analysis UX (dashboard library, detail
+views, pivots, custom ranges/compare, "what changed", annotations, alerts).
+Ride-alongs: site deletion, retention completeness, nightly `VACUUM INTO`
+backups. The query and dashboard surfaces are specified in
+[04-api.md](04-api.md) and [05-dashboards.md](05-dashboards.md), which are
+maintained to match.

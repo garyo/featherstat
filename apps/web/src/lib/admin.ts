@@ -53,6 +53,8 @@ export interface AdminClient {
   changePassword(current: string, next: string): Promise<void>;
   createSite(site: AdminSiteCreate): Promise<SiteInfo>;
   updateSite(id: number, patch: AdminSitePatch): Promise<SiteInfo>;
+  /** Tombstones the site and starts the purge of all its data — irreversible. */
+  deleteSite(id: number): Promise<void>;
   diagnostics(): Promise<AdminDiagnostics>;
   listDashboards(): Promise<DashboardInfo[]>;
   getDashboard(id: number): Promise<DashboardDetail>;
@@ -142,6 +144,9 @@ export function createAdminClient(options: AdminClientOptions = {}): AdminClient
     },
     createSite: (site) => call('/api/admin/sites', { method: 'POST', body: site }),
     updateSite: (id, patch) => call(`/api/admin/sites/${id}`, { method: 'PATCH', body: patch }),
+    async deleteSite(id) {
+      await call(`/api/admin/sites/${id}`, { method: 'DELETE' });
+    },
     diagnostics: () => call('/api/admin/diagnostics'),
     listDashboards: () => call('/api/admin/dashboards'),
     getDashboard: (id) => call(`/api/admin/dashboards/${id}`),

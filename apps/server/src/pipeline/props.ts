@@ -217,6 +217,21 @@ export class PropRegistry {
   }
 
   /**
+   * Forget a whole site — the site-deletion companion to `deleteKey`. In-memory
+   * state and queued deltas only: the durable rows fall with the rest of the
+   * site's config in the route's transaction (`deleteSiteConfigRows`).
+   */
+  forgetSite(siteId: number): void {
+    this.sites.delete(siteId);
+    for (const [id, delta] of this.keyDeltas) {
+      if (delta.siteId === siteId) this.keyDeltas.delete(id);
+    }
+    for (const [id, delta] of this.dropDeltas) {
+      if (delta.siteId === siteId) this.dropDeltas.delete(id);
+    }
+  }
+
+  /**
    * Drain every queued delta into the store — called by the batcher INSIDE its
    * flush transaction, right beside the events these deltas describe. The queue
    * is NOT cleared here: `committed()` does that after the transaction lands,

@@ -70,10 +70,15 @@ interface Draft {
 let draft = $state<Draft | undefined>(undefined);
 let siteBusy = $state(false);
 let siteError = $state<string | undefined>(undefined);
+/** The typed-confirmation gate: the name must be re-typed exactly to delete. */
+let deleting = $state(false);
+let deleteConfirm = $state('');
 const timezones = Intl.supportedValuesOf('timeZone');
 
 function startEdit(site: SiteInfo): void {
   siteError = undefined;
+  deleting = false;
+  deleteConfirm = '';
   draft = {
     id: site.id,
     name: site.name,
@@ -109,6 +114,22 @@ async function saveDraft(event: SubmitEvent): Promise<void> {
     onsiteschanged();
   } catch (failure) {
     siteError = failure instanceof Error ? failure.message : 'Saving failed — try again.';
+  } finally {
+    siteBusy = false;
+  }
+}
+
+async function deleteSite(): Promise<void> {
+  if (draft?.id === undefined || deleteConfirm !== nameOf(draft.id)) return;
+  siteBusy = true;
+  siteError = undefined;
+  try {
+    await admin.deleteSite(draft.id);
+    draft = undefined;
+    deleting = false;
+    onsiteschanged();
+  } catch (failure) {
+    siteError = failure instanceof Error ? failure.message : 'Deleting failed — try again.';
   } finally {
     siteBusy = false;
   }
@@ -237,7 +258,36 @@ const nameOf = (id: number): string => sites?.find((s) => s.id === id)?.name ?? 
                 {siteBusy ? 'Saving…' : 'Save'}
               </button>
               <button class="btn" type="button" onclick={() => (draft = undefined)}>Cancel</button>
+              {#if draft.id !== undefined && !deleting}
+                <button class="btn danger spaced" type="button" onclick={() => (deleting = true)}>
+                  Delete site…
+                </button>
+              {/if}
             </div>
+            {#if draft.id !== undefined && deleting}
+              <div class="delete-confirm">
+                <p class="widget-note">
+                  This deletes <strong>{nameOf(draft.id)}</strong> and all its data — every stored
+                  event, session, goal, campaign and dashboard scoped to it. There is no undo. Type
+                  the site's name to confirm.
+                </p>
+                <label class="field">
+                  Site name
+                  <input bind:value={deleteConfirm} placeholder={nameOf(draft.id)} />
+                </label>
+                <div class="row">
+                  <button
+                    class="btn danger"
+                    type="button"
+                    disabled={siteBusy || deleteConfirm !== nameOf(draft.id)}
+                    onclick={() => void deleteSite()}
+                  >
+                    Delete this site and all its data
+                  </button>
+                  <button class="btn" type="button" onclick={() => (deleting = false)}>Keep</button>
+                </div>
+              </div>
+            {/if}
           </form>
         {:else}
           <button class="btn add-site" type="button" onclick={startAdd}>Add site</button>
@@ -359,6 +409,22 @@ const nameOf = (id: number): string => sites?.find((s) => s.id === id)?.name ?? 
   .row {
     display: flex;
     gap: 8px;
+  }
+
+  .danger {
+    color: var(--bad);
+  }
+
+  .spaced {
+    margin-left: auto;
+  }
+
+  .delete-confirm {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    border-top: 1px solid var(--grid);
+    padding-top: 10px;
   }
 
   .add-site {

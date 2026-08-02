@@ -66,6 +66,13 @@ describe('createAdminClient', () => {
     expect(calls[0]?.init?.method).toBe('PATCH');
   });
 
+  it('DELETEs a site to the id path', async () => {
+    const { admin, calls } = client(() => json(200, { ok: true }));
+    await admin.deleteSite(2);
+    expect(calls[0]?.input).toBe('/api/admin/sites/2');
+    expect(calls[0]?.init?.method).toBe('DELETE');
+  });
+
   it('reports a mid-session 401 and still throws with the server message', async () => {
     const onUnauthorized = vi.fn();
     const { admin } = client(() => json(401, { error: 'unauthorized' }), onUnauthorized);

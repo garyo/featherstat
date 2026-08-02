@@ -1,4 +1,5 @@
 import type {
+  AdminDataSettings,
   AdminPropsResponse,
   AlertRule,
   AnnotationCreate,
@@ -71,6 +72,9 @@ export interface AdminObjects {
   props(siteId: number): Promise<AdminPropsResponse>;
   /** Forgets the key AND scrubs it from stored history — irreversible. */
   deletePropKey(siteId: number, key: string): Promise<void>;
+  dataSettings(): Promise<AdminDataSettings>;
+  /** Full replacement, like the alert rules — the three knobs travel together. */
+  saveDataSettings(settings: AdminDataSettings): Promise<AdminDataSettings>;
 }
 
 export function adminObjects(admin: AdminClient): AdminObjects {
@@ -139,5 +143,8 @@ export function adminObjects(admin: AdminClient): AdminObjects {
     async deletePropKey(siteId, key) {
       await call(`/api/admin/props/${siteId}/${encodeURIComponent(key)}`, { method: 'DELETE' });
     },
+    dataSettings: () => call('/api/admin/data-settings'),
+    saveDataSettings: (settings) =>
+      call('/api/admin/data-settings', { method: 'PUT', body: settings }),
   };
 }

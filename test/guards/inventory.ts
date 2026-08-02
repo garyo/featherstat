@@ -11,6 +11,11 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { QueryResponse } from '@featherstat/shared';
+import {
+  epochBreaches,
+  type JobSource,
+  jobSources,
+} from '../../apps/server/test/guards/epoch.guard.ts';
 import { CORPUS_DIR, corpusBreaches } from '../../apps/server/test/matomo-corpus.guard.ts';
 import {
   type IngestMeasurement,
@@ -421,6 +426,31 @@ const responseSize = defineGuard<QueryResponse>({
   },
 });
 
+const epochDiscipline = defineGuard<JobSource[]>({
+  id: 'epoch-discipline',
+  binds: 'every job that rewrites stored history calls bumpDataEpoch, so pre-rewrite ETags expire',
+  source: 'apps/server/test/guards/epoch.guard.ts',
+  tier: 'cheap',
+  stage: () => jobSources(),
+  holds: (files) => epochBreaches(files).length === 0,
+  violations: {
+    'a rewriter stops bumping the epoch': (files) => {
+      const scrub = files.find((file) => file.name === 'prop-scrub.ts');
+      if (scrub === undefined) throw new Error('prop-scrub.ts not staged');
+      scrub.source = scrub.source.replaceAll('bumpDataEpoch', 'neverBumped');
+    },
+    'a new job rewrites history without registering': (files) => {
+      files.push({
+        name: 'sneaky-rewrite.ts',
+        source: "stmt(db, 'DELETE FROM events WHERE site_id = ?').run(siteId);",
+      });
+    },
+    'the walk stops finding job files': (files) => {
+      files.splice(0, files.length);
+    },
+  },
+});
+
 const licenses = defineGuard<string>({
   id: 'licenses',
   binds: 'everything featherstat ships is under a licence an MIT project may ship',
@@ -487,6 +517,7 @@ export const GUARDS: readonly Guard[] = [
   markupOwnership,
   matomoCorpus,
   responseSize,
+  epochDiscipline,
   licenses,
 ];
 

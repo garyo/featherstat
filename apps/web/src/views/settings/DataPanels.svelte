@@ -135,6 +135,54 @@ async function deleteAnnotation(id: number): Promise<void> {
   }
 }
 
+// ---------- data settings (retention + backup) ----------
+let dsLoaded = $state(false);
+let dsFailed = $state(false);
+let dsDraft = $state({ retention: '', backupDir: '', backupKeep: '7' });
+let dsBusy = $state(false);
+let dsSaved = $state(false);
+let dsError = $state<string | undefined>(undefined);
+
+$effect(() => {
+  void api
+    .dataSettings()
+    .then((settings) => {
+      dsDraft = {
+        retention: settings.retentionDays === null ? '' : String(settings.retentionDays),
+        backupDir: settings.backupDir ?? '',
+        backupKeep: String(settings.backupKeep),
+      };
+      dsLoaded = true;
+    })
+    .catch(() => {
+      dsFailed = true;
+    });
+});
+
+async function saveDataSettings(event: SubmitEvent): Promise<void> {
+  event.preventDefault();
+  dsBusy = true;
+  dsError = undefined;
+  dsSaved = false;
+  try {
+    const saved = await api.saveDataSettings({
+      retentionDays: dsDraft.retention.trim() === '' ? null : Number(dsDraft.retention),
+      backupDir: dsDraft.backupDir.trim() === '' ? null : dsDraft.backupDir.trim(),
+      backupKeep: dsDraft.backupKeep.trim() === '' ? 7 : Number(dsDraft.backupKeep),
+    });
+    dsDraft = {
+      retention: saved.retentionDays === null ? '' : String(saved.retentionDays),
+      backupDir: saved.backupDir ?? '',
+      backupKeep: String(saved.backupKeep),
+    };
+    dsSaved = true;
+  } catch (failure) {
+    dsError = said(failure, 'Saving failed — try again.');
+  } finally {
+    dsBusy = false;
+  }
+}
+
 // ---------- diagnostics ----------
 let diagnostics = $state<AdminDiagnostics | undefined>(undefined);
 let diagnosticsError = $state(false);
@@ -276,6 +324,42 @@ const botTotals = $derived(diagnostics === undefined ? [] : botDropTotals(diagno
     {:else}
       <button class="btn addv" type="button" onclick={() => openAnnotation()}>New annotation</button>
     {/if}
+  {/if}
+</div>
+
+<div class="card c6">
+  <h2>Retention &amp; backups</h2>
+  <p class="widget-note">
+    Raw events older than the retention window are pruned nightly (rollup summaries stay). Naming a
+    backup directory turns on a nightly <code>VACUUM INTO</code> copy of the database, kept to the
+    newest N files.
+  </p>
+  {#if dsFailed}
+    <p class="widget-note">Data settings unavailable.</p>
+  {:else if !dsLoaded}
+    <p class="widget-note">Loading…</p>
+  {:else}
+    <form class="oform" onsubmit={saveDataSettings}>
+      <label class="field">
+        Keep raw events for (days — empty keeps everything forever)
+        <input type="number" min="1" bind:value={dsDraft.retention} placeholder="forever" />
+      </label>
+      <label class="field">
+        Backup directory (empty = backups off)
+        <input bind:value={dsDraft.backupDir} placeholder="/data/backups" />
+      </label>
+      <label class="field">
+        Backups to keep
+        <input type="number" min="1" max="365" bind:value={dsDraft.backupKeep} />
+      </label>
+      {#if dsError !== undefined}<p class="form-error" role="alert">{dsError}</p>{/if}
+      {#if dsSaved}<p class="form-ok">Saved.</p>{/if}
+      <div class="row">
+        <button class="btn primary" type="submit" disabled={dsBusy}>
+          {dsBusy ? 'Saving…' : 'Save data settings'}
+        </button>
+      </div>
+    </form>
   {/if}
 </div>
 

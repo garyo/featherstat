@@ -22,7 +22,7 @@ flowchart LR
     DB[("SQLite<br/>WAL")]
     QE["Query engine<br/>/api/query (batched)"]
     RT["Realtime hub<br/>SSE"]
-    JOBS["Jobs<br/>GeoIP refresh · retention ·<br/>backup hook"]
+    JOBS["Jobs<br/>GeoIP refresh · reconcile · retention ·<br/>rewrite resume · alerts · backup"]
     SPA["Static SPA +<br/>/metrics /healthz"]
   end
 
@@ -75,6 +75,12 @@ queue. The accepted trade: a hard crash loses at most ~200 ms of hits.
 Single-writer discipline: all writes go through the batcher; reads happen
 anywhere (WAL readers don't block the writer).
 
+The same flush transaction maintains the rollup tables (docs/03 § Rollups):
+hour-grain traffic, day-grain single-dimension marginals, day-grain session
+metrics, and the exact-distinct presence helpers — so within any committed
+snapshot the rollups can never lag the raw rows they summarize. The nightly
+reconcile job re-derives yesterday from raw and treats any drift as a bug.
+
 ### Query engine
 
 `POST /api/query` takes an array of widget queries (metric + dimension +
@@ -84,6 +90,17 @@ never send SQL. Responses carry an ETag derived from (site id, max event
 rowid, schema version), so an unchanged dashboard revalidates with a 304 and
 zero query work. This endpoint is the entire answer to Matomo's
 36-XHR problem. Spec in [04-api.md](04-api.md).
+
+Execution leaves the event loop: a worker-thread read pool (`query/pool/`,
+N = min(4, parallelism − 1), each worker on its own read-only WAL connection)
+compiles and runs the whole batch inside one read snapshot, so one
+`dataVersion` describes every answer and a slow analytical query never stalls
+ingest or its 200 ms flush. The main thread keeps parse/validation, window
+resolution, segment expansion, rate limiting and the ETag pre-check. A planner
+routes eligible metric shapes to the rollup tables and everything else
+(raw-only dimensions, joint filters, cross-day distincts, session-scoped
+filters, the sequence kinds) to raw — with an honest per-query refusal below
+the retention horizon rather than partial numbers.
 
 ### Realtime hub
 
@@ -99,10 +116,27 @@ site's version moves, and the ETag machinery makes a no-op revalidation free.
 
 - **GeoIP refresh** — monthly, port of the existing shell script: download the
   date-stamped DB-IP City Lite, atomic swap, previous-month fallback.
-- **Retention** — optional pruning/aggregation of raw events past a
-  configurable age (default: keep forever; the data is small).
-- **Backup hook** — nothing built in beyond "the DB is one file";
-  Litestream runs as an optional sidecar if streaming backup is wanted.
+- **Rollup reconcile** — nightly: recompute yesterday from raw per site, repair
+  drift, and alarm — drift is a delta-logic bug, not maintenance (docs/03).
+- **Rewrite resume paths** — the prop scrub, campaign backfill and site purge
+  run chunked, watermarked rewrites; the route that enqueues one also kicks it,
+  and the daily job entries drain whatever a crash left behind. Each bumps
+  `data_epoch` on completion (CLAUDE.md invariant 10).
+- **Alerts + weekly digest** — hourly rule evaluation and a weekly per-site
+  "what changed" sentence, both through the ntfy notifier when configured.
+- **Retention** — optional nightly pruning of raw events/sessions past a
+  configurable age (default: keep forever; the data is small). Records the raw
+  floor in `rollup_meta` first, ages the prop registry with the rows, and never
+  touches rollups (docs/03 § Size & retention).
+- **Backup** — nightly `VACUUM INTO '<dir>/analytics-<date>.db'`, on when
+  Settings → Data names a directory; pruned to the newest N copies
+  (`backup_keep`, default 7). `VACUUM INTO` writes a compacted, consistent
+  snapshot from one read transaction — the only safe way to copy a live WAL
+  file (docs/10) — and runs outside the write transaction discipline because it
+  makes no writes. better-sqlite3 is synchronous, so the copy blocks the
+  process for its duration: fine at target scale, and `db.backup()` is the
+  incremental upgrade path if it stops being fine. Litestream still works as an
+  optional sidecar if *streaming* backup is wanted.
 
 ## Technology decisions
 
@@ -176,6 +210,7 @@ shapes to the rollup tables (docs/03 § Rollups; before it, `paths × day` was
 | hours × weekday @ 90d | 9 ms | 30 ms |
 | paths × day @ 90d, all sites | 5 ms | 20 ms |
 | all-sites dashboard @ 90d + compare | 41 ms | 125 ms |
+| what changed @ 30d vs previous | 6 ms | 20 ms |
 | journeys @ 90d, all sites | **216 ms** | 650 ms |
 | journeys @ 90d, busiest site (steps 4, limit 50) | **68 ms** | 100 ms |
 
