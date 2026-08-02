@@ -30,6 +30,7 @@ export class Metrics {
   private hits = 0;
   private botDrops = 0;
   private sseClients = 0;
+  private rollupRepairs = 0;
   readonly flush = new DurationSummary();
   readonly query = new DurationSummary();
 
@@ -37,6 +38,11 @@ export class Metrics {
   recordFlush(summary: FlushSummary): void {
     this.hits += summary.events;
     this.botDrops += summary.botDrops;
+  }
+
+  /** Feed from the nightly reconcile job: nonzero means a delta-logic bug fired. */
+  recordRollupRepairs(days: number): void {
+    this.rollupRepairs += days;
   }
 
   sseOpened(): void {
@@ -58,6 +64,11 @@ export class Metrics {
       ),
       ...summary('analytics_flush_duration_ms', 'Write-batch flush transaction time.', this.flush),
       ...summary('analytics_query_duration_ms', 'POST /api/query handling time.', this.query),
+      ...counter(
+        'analytics_rollup_repairs_total',
+        'Rollup site-days the nightly reconcile found drifted and rebuilt.',
+        this.rollupRepairs,
+      ),
       ...gauge('analytics_sse_clients', 'Open realtime SSE connections.', this.sseClients),
     ];
     if (db !== undefined) {

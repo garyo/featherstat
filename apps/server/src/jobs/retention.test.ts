@@ -8,6 +8,8 @@ import {
   upsertSessions,
   withWriteTransaction,
 } from '../db/index.ts';
+import { rawHorizonTs } from '../rollup/apply.ts';
+import { rebuildRollupDay } from '../rollup/rebuild.ts';
 import { RETENTION_DAYS_KEY, retentionDays, runRetention } from './retention.ts';
 
 /** Every test measures ages from one fixed instant. */
@@ -118,9 +120,43 @@ describe('runRetention', () => {
 
     await runRetention(db, { now: () => NOW, batchSize: 1 });
 
-    // Three batches: two that delete, one that finds nothing left.
-    expect(transaction).toHaveBeenCalledTimes(3);
+    // The raw-horizon stamp, then three batches: two that delete, one that
+    // finds nothing left.
+    expect(transaction).toHaveBeenCalledTimes(4);
     transaction.mockRestore();
+  });
+
+  it('records the raw floor in rollup_meta and never lowers it', async () => {
+    storeDay(100);
+    setRetention('30');
+
+    await runRetention(db, { now: () => NOW });
+    expect(rawHorizonTs(db)).toBe(NOW - 30 * DAY_MS);
+
+    // Widening retention must not retreat the floor: rows below the old
+    // cutoff are already gone, whatever the setting says now.
+    setRetention('60');
+    await runRetention(db, { now: () => NOW });
+    expect(rawHorizonTs(db)).toBe(NOW - 30 * DAY_MS);
+
+    // Unset retention leaves the recorded floor standing for the same reason.
+    withWriteTransaction(db, () => setSetting(db, RETENTION_DAYS_KEY, ''));
+    await runRetention(db, { now: () => NOW });
+    expect(rawHorizonTs(db)).toBe(NOW - 30 * DAY_MS);
+  });
+
+  it('never touches rollup rows — outliving raw is their point', async () => {
+    storeDay(100);
+    // The fixture rows all carry this local_date, whatever their ts.
+    withWriteTransaction(db, () => rebuildRollupDay(db, 1, '2023-11-14'));
+    const rollupRows = (): number =>
+      db.prepare('SELECT COUNT(*) FROM rollup_dim_day').pluck().get() as number;
+    expect(rollupRows()).toBeGreaterThan(0);
+    setRetention('30');
+
+    expect(await runRetention(db, { now: () => NOW })).toMatchObject({ events: 1 });
+    expect(counts()).toEqual({ events: 0, sessions: 0 });
+    expect(rollupRows()).toBeGreaterThan(0);
   });
 });
 

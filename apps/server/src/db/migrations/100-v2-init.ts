@@ -299,12 +299,16 @@ CREATE TABLE rollup_traffic_hour (
 -- dim_id is a small integer from rollup/tables.ts, never client input
 -- (invariant 9). dim_null=1 encodes SQL NULL (the direct-traffic group);
 -- dim_value is '' for that row, and a literal empty string keeps dim_null=0.
+-- hits counts EVERY stored row (pings included) so the read path emits exactly
+-- the groups a raw query over the events table would — a key only heartbeats
+-- touched still gets its (zero-valued) row.
 CREATE TABLE rollup_dim_day (
   site_id          INTEGER NOT NULL,
   local_date       TEXT    NOT NULL,
   dim_id           INTEGER NOT NULL,
   dim_value        TEXT    NOT NULL,
   dim_null         INTEGER NOT NULL DEFAULT 0,
+  hits             INTEGER NOT NULL DEFAULT 0,   -- every stored row incl. pings
   actions          INTEGER NOT NULL DEFAULT 0,
   pageviews        INTEGER NOT NULL DEFAULT 0,
   events           INTEGER NOT NULL DEFAULT 0,

@@ -7,6 +7,7 @@ import {
   type SessionRow,
   withWriteTransaction,
 } from '../src/db/index.ts';
+import { rebuildRollupDay } from '../src/rollup/rebuild.ts';
 
 /** Fixtures shared by the server test suites — one copy of every factory and scaffold. */
 
@@ -29,6 +30,28 @@ export function openTestDb(siteCount: 1 | 2 = 1): Db {
     }
   });
   return db;
+}
+
+/**
+ * Rebuilds every (site, day)'s rollup rows from whatever raw rows a test
+ * seeded. Production maintains rollups inside the ingest flush (invariant 2's
+ * single writer), so rollups cover all history by construction; a test that
+ * writes `events`/`sessions` directly has stepped around that and must call
+ * this before executing metric queries — the planner routes eligible shapes to
+ * the rollup tables and an unsynced test would read zeros.
+ */
+export function syncRollups(db: Db): void {
+  const days = db
+    .prepare(
+      `SELECT site_id, local_date FROM (
+         SELECT DISTINCT site_id, local_date FROM events
+         UNION SELECT DISTINCT site_id, local_date FROM sessions
+       ) ORDER BY site_id, local_date`,
+    )
+    .all() as Array<{ site_id: number; local_date: string }>;
+  for (const { site_id, local_date } of days) {
+    withWriteTransaction(db, () => rebuildRollupDay(db, site_id, local_date));
+  }
 }
 
 /** Narrows a batch entry to rows, failing loudly on an unexpected error entry. */

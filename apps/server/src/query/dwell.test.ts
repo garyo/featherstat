@@ -1,6 +1,6 @@
 import { type HitType, PING_CLAMP_MS, type QueryRequest } from '@featherstat/shared';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { binId, event, openTestDb, resultOf, session, T0 } from '../../test/rows.ts';
+import { binId, event, openTestDb, resultOf, session, syncRollups, T0 } from '../../test/rows.ts';
 import {
   createSite,
   type Db,
@@ -143,6 +143,7 @@ beforeAll(() => {
       ],
     });
   });
+  syncRollups(db);
 });
 
 const RANGE = { range: { from: DAY, to: DAY } } as const;

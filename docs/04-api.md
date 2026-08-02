@@ -418,6 +418,19 @@ batch itself still succeeds, and never returns wrong numbers.
   (no value — matches the NULL group a breakdown returns, e.g. direct traffic
   under `ref_domain`). The compiler maps this vocabulary to parameterized SQL;
   anything outside it is a 400.
+- **Which store answers is invisible.** Per query, the planner
+  (`query/planner.ts`, rules in 03 § Rollups) routes eligible metric shapes to
+  the rollup tables and everything else to raw rows. The wire never says
+  which: rows, ordering and the `measures` header are identical by
+  construction (a read-equivalence ratchet holds both stores row-for-row
+  equal). One visible edge exists — the retention raw floor: once
+  `retention_days` has pruned old raw rows, a query only raw rows can answer
+  (a raw-only dimension like `title`, `dim2`, joint filters, a cross-day
+  distinct, session-scoped filters, the sequence kinds) refuses a window
+  reaching below the floor with the per-query
+  `{ "error": { "code": "unsupported", "message": "raw events for part of
+  this range have been pruned…" } }` — never partial numbers. Rollup-served
+  shapes keep answering over the whole retained history.
 - **Sequence queries** don't fit metric × dimension, so they are their own
   kinds, still inside the same batch envelope:
   `{ "id": "sankey", "kind": "transitions", "steps": 3 }` — weighted

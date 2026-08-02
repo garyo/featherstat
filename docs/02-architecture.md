@@ -162,41 +162,45 @@ Two halves, both ratchets, both in `apps/server/test/replay/bench-thresholds.jso
   days × 6 sites, 137 487 events, on disk), so the read gate costs the queries
   and nothing else.
 
-Measured 2026-07-30 on an Apple-silicon laptop, 1 warm-up + median of 3, ±10%
-run to run:
+Measured 2026-08-02 on an Apple-silicon laptop, 1 warm-up + median of 3, ±10%
+run to run — the first measurement with the rollup READ path routing eligible
+shapes to the rollup tables (docs/03 § Rollups; before it, `paths × day` was
+107 ms and the all-sites compare 271 ms):
 
 | Read shape | Median | Ratchet |
 | --- | --- | --- |
-| site dashboard @ today (hourly) | 5 ms | 20 ms |
-| site dashboard @ 7d | 23 ms | 70 ms |
-| site dashboard @ 90d | **165 ms** | 490 ms |
-| hours × weekday @ 90d | 12 ms | 40 ms |
-| paths × day @ 90d, all sites | **107 ms** | 340 ms |
-| all-sites dashboard @ 90d + compare | **271 ms** | 820 ms |
-| journeys @ 90d, all sites | **250 ms** | 760 ms |
-| journeys @ 90d, busiest site (steps 4, limit 50) | **83 ms** | 100 ms |
+| site dashboard @ today (hourly) | 2.3 ms | 10 ms |
+| site dashboard @ 24h (rolling, raw) | 3.5 ms | 10 ms |
+| site dashboard @ 7d | 13 ms | 40 ms |
+| site dashboard @ 90d | **103 ms** | 300 ms |
+| hours × weekday @ 90d | 9 ms | 30 ms |
+| paths × day @ 90d, all sites | 5 ms | 20 ms |
+| all-sites dashboard @ 90d + compare | 41 ms | 125 ms |
+| journeys @ 90d, all sites | **216 ms** | 650 ms |
+| journeys @ 90d, busiest site (steps 4, limit 50) | **68 ms** | 100 ms |
 
 The ratchets are ~3× the measurement — the headroom the ingest thresholds
 already carry, because CI hardware is slower than the machine above. They
-tighten, never loosen (CLAUDE.md invariant 6).
+tighten, never loosen (CLAUDE.md invariant 6); this table's drop from the
+previous one is the ratchet doing its job in the good direction.
 
-The last row is the exception, at 1.2×. Its 100 ms is inherited: it was a
+The last row is the exception, at ~1.5×. Its 100 ms is inherited: it was a
 wall-clock assertion inside `journeys.test.ts`, where it measured the machine's
 spare capacity as much as the query — vitest runs test files in parallel, so it
 moved with whatever else the suite was doing and went red the day a sibling file
 started building a bundle. Moving it here did not loosen it; it made it serial,
-which is the only way a 1.2× margin can mean anything. If it proves flaky on CI
+which is the only way that margin can mean anything. If it proves flaky on CI
 hardware the answer is a faster sequence query, not a bigger number.
 
-**The five bold rows are over the < 50 ms budget in the table above, by up to
-5×.** They are not silently blessed: the bench prints `OVER DOCS/02 BUDGET` for
-every shape that exceeds it, on every run, while the ratchet keeps them from
-getting worse. The budget line is a p95 for the batch a dashboard sends, and it
-still stands as the target; today's shortfall is concentrated in long ranges and
-in `site: 'all'` fan-out — `paths × day` over 90 days is deliberately unlimited
-(R20), and journeys costs 8× more across six sites than across one (30 ms →
-250 ms), which is more than the fan-out alone explains. Closing that gap is open
-work, not a rewritten budget.
+**The three bold rows are still over the < 50 ms budget in the table above.**
+They are not silently blessed: the bench prints `OVER DOCS/02 BUDGET` for every
+shape that exceeds it, on every run, while the ratchet keeps them from getting
+worse. What remains raw by design is what remains over budget: the journeys
+kinds walk raw session rows, and the 90d single-site dashboard still spends its
+time in the shapes the planner must refuse rollups for — the 90-day `visitors`
+total and its week buckets are cross-day distincts, which have no lawful rollup
+sum (docs/03 § Rollups, distinct honesty). Closing that gap is open work —
+faster raw shapes, never a dishonest route.
 
 ## Security posture
 

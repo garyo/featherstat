@@ -1,6 +1,6 @@
 import type { QueryResponse } from '@featherstat/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { event, openTestDb, session } from '../../test/rows.ts';
+import { event, openTestDb, session, syncRollups } from '../../test/rows.ts';
 import {
   createDerivedMetric,
   createSegment,
@@ -36,6 +36,7 @@ beforeEach(() => {
     insertEvents(db, [event()]);
     upsertSessions(db, [session()]);
   });
+  syncRollups(db);
   app = createApp({ db });
 });
 
@@ -202,6 +203,7 @@ describe('POST /api/query', () => {
     withWriteTransaction(db, () => {
       insertEvents(db, [event({ visitor_id: Uint8Array.of(9, 9, 9, 9, 9, 9, 9, 9), seq: 2 })]);
     });
+    syncRollups(db);
     const res = await post(BODY, { 'if-none-match': etag });
     expect(res.status).toBe(200);
     expect(res.headers.get('etag')).not.toBe(etag);
@@ -420,6 +422,7 @@ describe('POST /api/query', () => {
           1,
         ).id;
       });
+      syncRollups(db);
     });
 
     it('expands a {segment} ref to the same answer as the inline filter', async () => {

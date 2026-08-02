@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { QueryRequest, QueryResponse } from '@featherstat/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { event, session } from '../../../test/rows.ts';
+import { event, session, syncRollups } from '../../../test/rows.ts';
 import {
   createSite,
   type Db,
@@ -58,6 +58,7 @@ describe('QueryPool against the real worker', () => {
       insertEvents(db, [event(), event({ path: '/b', seq: 2 })]);
       upsertSessions(db, [session({ pageviews: 2 })]);
     });
+    syncRollups(db);
     pool = new QueryPool(path, { size: 1, execArgv: EXEC_ARGV });
   });
 
@@ -86,6 +87,7 @@ describe('QueryPool against the real worker', () => {
   it('sees writes committed after the worker connection opened', async () => {
     const before = await pool.execute(REQUEST, NOW);
     withWriteTransaction(db, () => insertEvents(db, [event({ path: '/c', seq: 3 })]));
+    syncRollups(db);
     const after = await pool.execute(REQUEST, NOW);
     const pageviews = (r: QueryResponse): unknown =>
       (r.results.kpis as { rows: Array<Record<string, unknown>> }).rows[0]?.pageviews;

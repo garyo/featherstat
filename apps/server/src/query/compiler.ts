@@ -447,6 +447,8 @@ export interface CompiledQuery {
   limit: number | undefined;
   /** True when the single statement already ordered and limited in SQL; merged queries sort in JS. */
   ordered: boolean;
+  /** Which store answered: absent or 'raw' = the raw tables, 'rollup' = the rollup tables. */
+  source?: 'rollup' | 'raw';
 }
 
 export interface CompileError {
@@ -489,27 +491,14 @@ export function compileMetricQuery(
     }
   }
 
-  // Sessions become unusable as soon as any group — or any HIT-scoped filter
-  // leaf — needs an event-level column, and events symmetrically as soon as
-  // one needs a session-only column. A session-scoped leaf never blocks
-  // either: it asks about the session, which every table can answer.
-  let sessionsBlocker: string | undefined;
-  let sessionsOnlyBlocker: string | undefined;
-  for (const group of groups) {
-    if (group.sessions === null) sessionsBlocker ??= group.key;
-    if (group.events === null) sessionsOnlyBlocker ??= group.key;
-  }
-  for (const leaf of filters.flatMap(filterLeaves)) {
-    if (leaf.scope === 'session') continue;
-    if (DIMS[leaf.dim].sessions === null) sessionsBlocker ??= leaf.dim;
-    if (DIMS[leaf.dim].events === null) sessionsOnlyBlocker ??= leaf.dim;
-  }
+  const blockers = tableBlockers(query, filters);
+  const { sessionsBlocker, sessionsOnlyBlocker } = blockers;
 
   const metrics = [...new Set(query.metrics)];
   const byTable = new Map<Table, Metric[]>();
   for (const metric of metrics) {
     const spec = METRICS[metric];
-    const table = pickTable(spec, sessionsBlocker === undefined, sessionsOnlyBlocker === undefined);
+    const table = routeTable(metric, blockers);
     if (table === null) {
       if (spec.events !== undefined && spec.sessions !== undefined) {
         return unsupported(
@@ -563,6 +552,54 @@ function pickTable(spec: MetricSpec, sessionsUsable: boolean, eventsUsable: bool
   return null;
 }
 
+/**
+ * What makes each table unusable for this query, if anything. Sessions become
+ * unusable as soon as any group — or any HIT-scoped filter leaf — needs an
+ * event-level column (the hour bucket included: only events carry `local_hour`),
+ * and events symmetrically as soon as one needs a session-only column. A
+ * session-scoped leaf never blocks either: it asks about the session, which
+ * every table can answer.
+ *
+ * Exported because the rollup planner and compiler must route metrics to the
+ * SAME side the raw compiler would — the `measures` header a client sees may
+ * never depend on which store answered.
+ */
+export interface TableBlockers {
+  sessionsBlocker: string | undefined;
+  sessionsOnlyBlocker: string | undefined;
+}
+
+export function tableBlockers(
+  query: Pick<CompilableMetricQuery, 'dim' | 'dim2' | 'bucket'>,
+  filters: readonly FilterNode[],
+): TableBlockers {
+  let sessionsBlocker: string | undefined;
+  let sessionsOnlyBlocker: string | undefined;
+  if (query.bucket !== undefined && BUCKETS[query.bucket].sessions === null) {
+    sessionsBlocker = 'bucket';
+  }
+  for (const dim of [query.dim, query.dim2]) {
+    if (dim === undefined) continue;
+    if (DIMS[dim].sessions === null) sessionsBlocker ??= dim;
+    if (DIMS[dim].events === null) sessionsOnlyBlocker ??= dim;
+  }
+  for (const leaf of filters.flatMap(filterLeaves)) {
+    if (leaf.scope === 'session') continue;
+    if (DIMS[leaf.dim].sessions === null) sessionsBlocker ??= leaf.dim;
+    if (DIMS[leaf.dim].events === null) sessionsOnlyBlocker ??= leaf.dim;
+  }
+  return { sessionsBlocker, sessionsOnlyBlocker };
+}
+
+/** The table `compileMetricQuery` would answer `metric` from, or null = a refusal. */
+export function routeTable(metric: Metric, blockers: TableBlockers): Table | null {
+  return pickTable(
+    METRICS[metric],
+    blockers.sessionsBlocker === undefined,
+    blockers.sessionsOnlyBlocker === undefined,
+  );
+}
+
 interface StatementOptions {
   orderAndLimit: boolean;
   firstMetric: Metric | undefined;
@@ -604,7 +641,10 @@ function buildStatement(
   if (where.length > 0) lines.push(`WHERE ${where.join(' AND ')}`);
   if (groups.length > 0) lines.push(`GROUP BY ${groups.map((_, i) => i + 1).join(', ')}`);
   if (options.orderAndLimit) {
-    const order = orderClause(groups, options.firstMetric);
+    const order = orderClause(
+      groups.map((group) => group.key),
+      options.firstMetric,
+    );
     if (order !== null) lines.push(order);
     if (options.limit !== undefined) {
       lines.push('LIMIT ?');
@@ -614,11 +654,15 @@ function buildStatement(
   return { sql: lines.join('\n'), params, metrics, table };
 }
 
-/** Buckets read in time order; breakdowns lead with the first metric, ties in group order. */
-function orderClause(groups: readonly Group[], firstMetric: Metric | undefined): string | null {
-  if (groups.length === 0 || firstMetric === undefined) return null;
-  if (groups[0]?.key === 'bucket') {
-    return groups.length === 1 ? 'ORDER BY 1' : `ORDER BY 1, "${firstMetric}" DESC`;
+/** Buckets read in time order; breakdowns lead with the first metric, ties in group order.
+ * Shared with the rollup compiler: both stores must return rows in the same order. */
+export function orderClause(
+  groupKeys: readonly string[],
+  firstMetric: Metric | undefined,
+): string | null {
+  if (groupKeys.length === 0 || firstMetric === undefined) return null;
+  if (groupKeys[0] === 'bucket') {
+    return groupKeys.length === 1 ? 'ORDER BY 1' : `ORDER BY 1, "${firstMetric}" DESC`;
   }
   return `ORDER BY "${firstMetric}" DESC, 1`;
 }
@@ -714,8 +758,22 @@ export function filterSql(
   const spec = DIMS[filter.dim];
   const column = table === 'events' ? (spec.events?.(alias) ?? null) : spec.sessions;
   if (column === null) throw new Error(`'${filter.dim}' filter reached a table without it`);
+  return leafOpSql(column, filter, params, spec.numeric === true);
+}
+
+/**
+ * One leaf's op over a resolved column expression — the half of `filterSql`
+ * that is column-agnostic, shared with the rollup compiler so both stores
+ * apply IDENTICAL op semantics (NULL handling above all) to the same leaf.
+ */
+export function leafOpSql(
+  column: string,
+  filter: FilterLeaf,
+  params: (string | number)[],
+  numeric: boolean,
+): string {
   const bind = (value: string): string | number =>
-    spec.numeric === true && /^-?\d+$/.test(value) ? Number(value) : value;
+    numeric && /^-?\d+$/.test(value) ? Number(value) : value;
 
   switch (filter.op) {
     case 'is_null':

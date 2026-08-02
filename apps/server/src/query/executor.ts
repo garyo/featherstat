@@ -6,6 +6,7 @@ import {
   type FilterNode,
   isDerivedMetricRef,
   isQueryError,
+  localClock,
   MAX_METRICS_PER_QUERY,
   type Measure,
   type Measures,
@@ -30,6 +31,7 @@ import {
   stmt,
   withReadSnapshot,
 } from '../db/index.ts';
+import { rawHorizonTs, rollupNeedsRebuild } from '../rollup/apply.ts';
 import { type CompiledAdjacency, compileAdjacencyQuery } from './adjacency.ts';
 import {
   boundsParams,
@@ -41,7 +43,9 @@ import {
   unsupported,
 } from './compiler.ts';
 import { type CompiledLegs, compileDistributionQuery, compileDwellQuery } from './dwell.ts';
+import { planMetricRoute } from './planner.ts';
 import { bucketAxis, compareWindow, resolveWindow } from './ranges.ts';
+import { compileRollupMetricQuery } from './rollup-compiler.ts';
 import { type CompiledSequence, compileSequenceQuery } from './sequences.ts';
 import { segmentFilterOf } from './stored.ts';
 
@@ -123,6 +127,12 @@ export function executeQueryRequest(
         ? asFilter(segmentFilterOf(db, compare.segment))
         : undefined;
 
+    // The rollup routing inputs, read once inside the snapshot: whether the
+    // session rollups are suspended (stale bounce definition), and the raw
+    // floor retention has pruned to (docs/03 § Rollups).
+    const sessionRollupsStale = rollupNeedsRebuild(db);
+    const horizonTs = rawHorizonTs(db);
+
     const results: QueryResponse['results'] = {};
     for (const query of request.queries) {
       const queryStarted = performance.now();
@@ -131,6 +141,13 @@ export function executeQueryRequest(
         // per-page dwell) comparison has no defined shape (docs/04), so
         // `compare` is never fabricated.
         const filters = request.filters ?? [];
+        // Every kind walks raw session/event rows; below the retention horizon
+        // that walk would return partial numbers, so it refuses instead.
+        const pruned = rawHorizonRefusal(windows, horizonTs);
+        if (pruned !== undefined) {
+          results[query.id] = pruned;
+          continue;
+        }
         const compiled =
           query.kind === 'dwell'
             ? compileDwellQuery(query, filters, windows)
@@ -154,7 +171,29 @@ export function executeQueryRequest(
         results[query.id] = prepared;
         continue;
       }
-      const compiled = compileMetricQuery(prepared.query, request.filters ?? [], windows);
+      // Route per query, planning over EVERY window the compiled statements
+      // will run against — a compare window that breaks a rollup rule (a
+      // multi-day custom compare under a distinct count) must pull the whole
+      // query to raw, or the two row sets would answer different questions.
+      const requestFilters = request.filters ?? [];
+      const planWindows = compareWindows === undefined ? windows : [...windows, ...compareWindows];
+      const route = planMetricRoute(prepared.query, requestFilters, planWindows, {
+        sessionRollupsStale,
+      });
+      if (route === 'raw') {
+        // Honest refusal at the raw floor (docs/03): this shape NEEDS raw rows,
+        // and part of its range no longer has them. Rollup-answerable shapes
+        // keep answering below the horizon — that is the point of rollups.
+        const pruned = rawHorizonRefusal(planWindows, horizonTs);
+        if (pruned !== undefined) {
+          results[query.id] = pruned;
+          continue;
+        }
+      }
+      const compiled =
+        route === 'rollup'
+          ? compileRollupMetricQuery(prepared.query, requestFilters, windows)
+          : compileMetricQuery(prepared.query, requestFilters, windows);
       if (isQueryError(compiled)) {
         results[query.id] = compiled;
         continue;
@@ -171,12 +210,23 @@ export function executeQueryRequest(
       } else if (compareFilter !== undefined) {
         // Segment compare: the SAME query and windows, with the segment's tree
         // AND-ed in beside the request filters — the "what would this look like
-        // inside the segment" answer, in the ordinary compare rows slot.
-        const augmented = compileMetricQuery(
-          prepared.query,
-          [...(request.filters ?? []), compareFilter],
-          windows,
-        );
+        // inside the segment" answer, in the ordinary compare rows slot. Routed
+        // on its own: the segment's dimensions may deny the augmented shape the
+        // rollup route the bare one took.
+        const segmentFilters = [...requestFilters, compareFilter];
+        const augmentedRoute = planMetricRoute(prepared.query, segmentFilters, windows, {
+          sessionRollupsStale,
+        });
+        const augmentedPruned =
+          augmentedRoute === 'raw' ? rawHorizonRefusal(windows, horizonTs) : undefined;
+        if (augmentedPruned !== undefined) {
+          results[query.id] = augmentedPruned;
+          continue;
+        }
+        const augmented =
+          augmentedRoute === 'rollup'
+            ? compileRollupMetricQuery(prepared.query, segmentFilters, windows)
+            : compileMetricQuery(prepared.query, segmentFilters, windows);
         if (isQueryError(augmented)) {
           // The requested comparison is unanswerable (the segment's dimensions
           // conflict with the metrics) — refusing the query whole beats rows
@@ -226,6 +276,30 @@ function describeAxis(
 /** The executor's read of a stored segment: a tree or nothing — the route owns the 400. */
 function asFilter(resolved: FilterNode | string): FilterNode | undefined {
   return typeof resolved === 'string' ? undefined : resolved;
+}
+
+/**
+ * The honest refusal at the raw floor (docs/03 § Rollups): retention records
+ * the UTC instant below which raw rows may be gone, and a query that can only
+ * be answered from raw rows must refuse a window reaching it — partial numbers
+ * are wrong numbers. The comparison is by site-local date because windows are:
+ * events dated the horizon's own local date can predate the instant, so that
+ * date is already suspect.
+ */
+export function rawHorizonRefusal(
+  windows: readonly SiteWindow[],
+  horizonTs: number | undefined,
+): QueryErrorResult | undefined {
+  if (horizonTs === undefined) return undefined;
+  for (const window of windows) {
+    if (window.from <= localClock(window.timezone, horizonTs).date) {
+      return unsupported(
+        'raw events for part of this range have been pruned by retention; ' +
+          'this question needs raw rows — narrow the range to more recent dates',
+      );
+    }
+  }
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -396,7 +470,13 @@ function runScoped(
   return rows;
 }
 
-function runCompiled(db: Db, compiled: CompiledQuery, windows: readonly SiteWindow[]): ResultRow[] {
+/** Exported for the rollup read-equivalence ratchet, which runs one compiled
+ * query per store and diffs the rows; production reaches it via `executeQueryRequest`. */
+export function runCompiled(
+  db: Db,
+  compiled: CompiledQuery,
+  windows: readonly SiteWindow[],
+): ResultRow[] {
   if (windows.length === 0) return [];
   const bounds = boundsParams(windows);
 

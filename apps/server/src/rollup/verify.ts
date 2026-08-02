@@ -26,8 +26,8 @@ const STORED_TRAFFIC = `SELECT local_hour, hits, actions, pageviews, events, out
   event_value_sum
 FROM rollup_traffic_hour WHERE site_id = ? AND local_date = ?`;
 
-const STORED_DIM_DAY = `SELECT dim_id, dim_value, dim_null, actions, pageviews, events, outlinks,
-  downloads, event_value_sum, visitors, sessions_touched
+const STORED_DIM_DAY = `SELECT dim_id, dim_value, dim_null, hits, actions, pageviews, events,
+  outlinks, downloads, event_value_sum, visitors, sessions_touched
 FROM rollup_dim_day WHERE site_id = ? AND local_date = ?`;
 
 const STORED_SESSIONS_DAY = `SELECT dim_id, dim_value, dim_null, visits, measured_sessions,

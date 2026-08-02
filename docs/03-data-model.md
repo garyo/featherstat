@@ -398,9 +398,10 @@ to filter it from every query is Matomo-brain; we decline.
 Pre-aggregated tables maintained **in the same write transaction as the ingest
 flush** (`rollup/apply.ts`, called by the batcher inside `withWriteTransaction`
 — invariant 2 untouched), so within any committed snapshot they can never lag
-the raw rows, and a failed flush rolls both back together. v2 ships the write
-path first; queries keep answering from raw rows until the planner learns to
-route to them.
+the raw rows, and a failed flush rolls both back together. Because they are
+maintained from the first flush (and the importer rebuilds them per day),
+rollups cover ALL history by construction — the read path never needs a
+coverage check, only the routing rules below.
 
 The tables (see `db/migrations/100-v2-init.ts`, the authoritative DDL):
 
@@ -410,7 +411,10 @@ The tables (see `db/migrations/100-v2-init.ts`, the authoritative DDL):
   `ROLLUP_DIMS` table (`rollup/tables.ts`). `dim_id` is a small integer
   **frozen forever** (rollups outlive raw rows, so renumbering merges
   history); `dim_id 0` is the undimensioned row; SQL NULL rolls into
-  `(dim_value = '', dim_null = 1)`. Additive event metrics over non-ping rows,
+  `(dim_value = '', dim_null = 1)`. `hits` counts EVERY stored row (pings
+  included) so the read path emits exactly the groups a raw `GROUP BY` over
+  the events table would — a key only heartbeats touched still gets its
+  zero-valued row; the metrics are additive event counts over non-ping rows,
   plus `visitors` / `sessions_touched` — **exact** per-day distincts.
 - `rollup_sessions_day` — day grain × session-capable dimension, keyed by the
   date the session **started**. Every column is an additive numerator or
@@ -460,6 +464,43 @@ Maintenance discipline:
   against the stored rows, and `test/replay/rollup-equivalence.test.ts` holds
   flush-incremental == rebuild-from-raw over the whole replay corpus — a
   permanent ratchet (invariant 6).
+- **Nightly reconcile** (`jobs/reconcile.ts`): recompute yesterday (site-local)
+  from raw per site, repair any drifted day with `rebuildRollupDay`, log it
+  loudly and count it in `/metrics` (`analytics_rollup_repairs_total`). The
+  flush path is proven equivalent by the ratchet, so production drift is a
+  delta-logic bug being reported, not maintenance being done.
+
+The READ path (`query/planner.ts` + `query/rollup-compiler.ts`, wired in the
+executor per query): the planner routes a metric query to rollups only when
+they can answer EXACTLY what raw would — same rows, same `measures` header —
+and to raw the moment anything is in doubt (fail-safe: unknown dimensions,
+new ops and rolling windows are slow before they are ever wrong). The rules:
+
+- Metric-kind queries only (journeys/dwell/adjacency/distribution always walk
+  raw rows); no `dim2`; every referenced dimension rolled or derivable from
+  rollup keys (`site`, `weekday`, the bucket); grouping + filters together
+  touch at most ONE rolled dimension — rollups store marginals, not joints.
+  Filtering the same dimension a query groups by is fine (still marginal).
+- Hour shapes (`bucket: 'hour'` or the `local_hour` dimension) answer from
+  `rollup_traffic_hour`, which has no dim rows and no distincts: additive
+  event metrics only, no rolled dimension in play.
+- **Distinct honesty enforced at routing**: `visitors` (and the events-side
+  `visits`) roll up only at day buckets or over a single-day window, and only
+  where no filter can merge two dim rows into one group. Everything wider goes
+  to raw forever — uid-stable ids make Σ(per-day distinct) structurally wrong,
+  and the read-equivalence suite carries a uid-stable visitor spanning days to
+  prove the wrong route yields the wrong number.
+- Session metrics route to `rollup_sessions_day` unless `rollup_meta` says the
+  stored `bounced` is stale (`needs_rebuild`) — then they fall back to raw
+  until the rebuild runs, so bounce numbers are never quietly wrong.
+- The rolling `24h` preset always goes to raw: its edges cut inside local
+  dates, and mapping instants onto rollup keys is DST-fraught. Correctness
+  first; the shape is cheap on raw.
+
+`test/replay/rollup-read-equivalence.test.ts` is the read ratchet: a
+machine-generated metric × dimension × bucket × filter matrix over the replay
+corpus, executing every rollup-routed shape against BOTH stores and requiring
+identical rows and a byte-identical `measures` header.
 
 ## Size & retention
 
@@ -467,9 +508,14 @@ Rough event row cost ≈ 250–350 B including indexes. Current fleet volume
 (≈ thousands of events/day across six sites) ⇒ **tens of MB per year**. Default
 retention: keep raw events forever.
 
-Age-based pruning of raw rows becomes safe once the rollup read path lands
-(§ Rollups): rollups are never pruned — outliving raw is their point. The query
-engine's vocabulary (metric × dimension × range) is designed so rollups slot in
-behind it without any API change — and a rolled-up day's visitor count is
-*exact* for the day it covers, since the salt turns over on the same boundary
-the rollup keys on (§ Identity).
+Age-based pruning of raw rows is safe now that the rollup read path is live
+(§ Rollups): rollups are never pruned — outliving raw is their point — and the
+retention job records the raw floor in `rollup_meta.raw_horizon_ts` before it
+deletes anything. Below that floor, rollup-answerable queries keep answering;
+a question only raw rows can answer (a raw-only dimension, `dim2`, joint
+filters, a cross-day distinct, session-scoped filters, the sequence kinds)
+returns an honest per-query `unsupported` error instead of partial numbers.
+The query engine's vocabulary (metric × dimension × range) is designed so
+rollups slot in behind it without any API change — and a rolled-up day's
+visitor count is *exact* for the day it covers, since the salt turns over on
+the same boundary the rollup keys on (§ Identity).

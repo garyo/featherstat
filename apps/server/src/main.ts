@@ -41,18 +41,11 @@ pipeline.onFlush((summary) => hub.recordFlush(summary));
 const tee = teeSinkFromEnv(pipeline.sink);
 if (tee !== undefined) console.log(`forwarding hits to ${process.env.MATOMO_FORWARD_URL}`);
 
-const jobs = startJobs(db, {
-  mmdbPath,
-  // Downloading a few hundred MB is opt-in; the CLI is the usual first install.
-  installMissingMmdb: process.env.GEOIP_AUTO === '1' || process.env.GEOIP_AUTO === 'true',
-  onError: (job, error) => console.error(`job ${job} failed:`, error),
-});
-
 const port = Number(process.env.PORT ?? 8080);
 // The secured shell, NEVER bare createApp: it adds the session gate in front of
 // every dashboard read, the admin API, /metrics and the SPA (docs/02 § Security
 // posture). src/auth/app.test.ts + main.test.ts hold this wiring in place.
-const { app } = createSecuredApp({
+const { app, metrics } = createSecuredApp({
   sink: tee?.sink ?? pipeline.sink,
   db,
   hub,
@@ -61,6 +54,14 @@ const { app } = createSecuredApp({
     pool === undefined
       ? undefined
       : (request, now, allowedSites, derived) => pool.execute(request, now, allowedSites, derived),
+});
+
+const jobs = startJobs(db, {
+  mmdbPath,
+  // Downloading a few hundred MB is opt-in; the CLI is the usual first install.
+  installMissingMmdb: process.env.GEOIP_AUTO === '1' || process.env.GEOIP_AUTO === 'true',
+  onError: (job, error) => console.error(`job ${job} failed:`, error),
+  onRollupRepairs: (days) => metrics.recordRollupRepairs(days),
 });
 
 // ntfy delivery turns on from the settings rows (docs/01 R16), editable at

@@ -1,6 +1,6 @@
 import type { HitType, QueryRequest } from '@featherstat/shared';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { binId, event, resultOf, session } from '../../test/rows.ts';
+import { binId, event, resultOf, session, syncRollups } from '../../test/rows.ts';
 import {
   createSite,
   type Db,
@@ -111,6 +111,7 @@ beforeAll(() => {
     // Site 2: must never leak into site 1 answers.
     seedJourney({ sess: 8, site: 2, hits: [{ path: '/' }, { path: '/pricing' }] });
   });
+  syncRollups(db);
 });
 
 const RANGE = { range: { from: DAY, to: DAY } } as const;

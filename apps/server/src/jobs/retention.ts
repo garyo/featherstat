@@ -1,5 +1,6 @@
 import { DAY_MS } from '@featherstat/shared';
 import { type Db, getSetting, stmt, withWriteTransaction } from '../db/index.ts';
+import { META_RAW_HORIZON, rawHorizonTs, setRollupMeta } from '../rollup/apply.ts';
 
 /** Settings key (docs/05 § Settings). Absent = keep raw events forever, the default (docs/03). */
 export const RETENTION_DAYS_KEY = 'retention_days';
@@ -33,6 +34,11 @@ export interface RetentionResult {
  * Optional pruning of raw events past a configurable age (docs/02 § Background
  * jobs). Sessions go with their events: a session row whose events are gone
  * would keep counting toward visit metrics the pageviews no longer support.
+ *
+ * Rollup rows are NEVER touched — outliving raw is their point (docs/03).
+ * The run instead records the raw floor in `rollup_meta.raw_horizon_ts`, so
+ * the query engine refuses raw-only questions below it (partial numbers are
+ * wrong numbers) while rollup-answerable ones keep answering.
  */
 export async function runRetention(
   db: Db,
@@ -45,6 +51,14 @@ export async function runRetention(
   const batchSize = options.batchSize ?? DEFAULT_BATCH_SIZE;
   const maxBatches = options.maxBatches ?? DEFAULT_MAX_BATCHES;
   const result: RetentionResult = { days, events: 0, sessions: 0, more: false };
+
+  // Advance the floor BEFORE deleting: the batched DELETE takes rows below the
+  // cutoff in no particular order, so raw history under it is suspect from the
+  // first batch — even one this run leaves for tomorrow. Monotonic: an operator
+  // who widens retention gets slower pruning, never a floor that retreats.
+  if (cutoff > (rawHorizonTs(db) ?? Number.NEGATIVE_INFINITY)) {
+    withWriteTransaction(db, () => setRollupMeta(db, META_RAW_HORIZON, String(cutoff)));
+  }
 
   for (let batch = 0; batch < maxBatches; batch++) {
     // One transaction per batch, and the event loop back between them: SQLite is

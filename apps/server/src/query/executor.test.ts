@@ -5,7 +5,7 @@ import {
   type SiteWindow,
 } from '@featherstat/shared';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { binId, event, resultOf, session } from '../../test/rows.ts';
+import { binId, event, resultOf, session, syncRollups } from '../../test/rows.ts';
 import {
   createSegment,
   createSite,
@@ -17,6 +17,7 @@ import {
   upsertSessions,
   withWriteTransaction,
 } from '../db/index.ts';
+import { META_RAW_HORIZON, setRollupMeta } from '../rollup/apply.ts';
 import { executeQueryRequest, UnknownSiteError } from './executor.ts';
 
 /**
@@ -157,6 +158,7 @@ beforeAll(() => {
       pages: [{ path: '/x' }],
     });
   });
+  syncRollups(db);
 });
 
 const RANGE = { range: { from: DAY, to: DAY } } as const;
@@ -281,6 +283,7 @@ describe('metric semantics', () => {
         session({ id: binId(2), visitor_id: binId(2), local_date: DAY }),
       ]);
     });
+    syncRollups(mini);
     const response = executeQueryRequest(mini, {
       site: 1,
       range: { from: DAY, to: DAY },
@@ -802,6 +805,7 @@ describe('metrics that heartbeats must not distort', () => {
         }),
       ]);
     });
+    syncRollups(mini);
     const response = executeQueryRequest(mini, {
       site: 1,
       range: { from: DAY, to: DAY },
@@ -877,6 +881,7 @@ describe("the rolling '24h' window", () => {
       seedHit(3, Date.parse('2026-07-27T13:30:00Z')); // 09:30 yesterday — before the edge
       seedHit(4, Date.parse('2026-07-26T20:00:00Z')); // 16:00 two days back — compare side
     });
+    syncRollups(rolling);
   });
 
   const ask = (compare?: 'previous'): QueryResponse =>
@@ -1122,5 +1127,95 @@ describe('derived metrics — d:<name>', () => {
       { derived: wide },
     );
     expect(response.results.q).toHaveProperty(['error', 'code'], 'unsupported');
+  });
+});
+
+/**
+ * The raw floor (docs/03 § Rollups): once retention records `raw_horizon_ts`,
+ * a question only raw rows can answer refuses a window that reaches it —
+ * partial numbers are wrong numbers — while rollup-answerable shapes keep
+ * answering below it, which is the point of rollups outliving raw.
+ */
+describe('the retention raw horizon', () => {
+  let pruned: Db;
+  const OLD = '2026-05-01';
+  /** Above the horizon by more than a local day everywhere. */
+  const RECENT = '2026-07-20';
+
+  function seedDay(date: string, n: number): void {
+    const ts = Date.parse(`${date}T12:00:00Z`);
+    insertEvents(pruned, [
+      event({ ts, local_date: date, visitor_id: binId(n), session_id: binId(n) }),
+    ]);
+    upsertSessions(pruned, [
+      session({
+        id: binId(n),
+        visitor_id: binId(n),
+        started_at: ts,
+        last_seen_at: ts,
+        local_date: date,
+      }),
+    ]);
+  }
+
+  beforeAll(() => {
+    pruned = openDb(':memory:');
+    withWriteTransaction(pruned, () => {
+      createSite(pruned, { id: 1, name: 'one', domains: ['one.test'] });
+      seedDay(OLD, 1);
+      seedDay(RECENT, 2);
+    });
+    syncRollups(pruned);
+    // Retention would record this after pruning to 2026-06-01.
+    withWriteTransaction(pruned, () =>
+      setRollupMeta(pruned, META_RAW_HORIZON, String(Date.parse('2026-06-01T00:00:00Z'))),
+    );
+  });
+
+  const SPAN = { range: { from: OLD, to: RECENT } } as const;
+
+  it('refuses a raw-only metric shape whose window reaches below the floor', () => {
+    const response = executeQueryRequest(pruned, {
+      site: 1,
+      ...SPAN,
+      queries: [{ id: 'q', metrics: ['pageviews'], dim: 'title' }],
+    });
+    expect(response.results.q).toMatchObject({
+      error: { code: 'unsupported', message: expect.stringContaining('pruned') },
+    });
+  });
+
+  it('refuses the raw-walking kinds below the floor too — never partial journeys', () => {
+    const response = executeQueryRequest(pruned, {
+      site: 1,
+      ...SPAN,
+      queries: [{ id: 'j', kind: 'transitions', steps: 3, limit: 20 }],
+    });
+    expect(response.results.j).toMatchObject({
+      error: { code: 'unsupported', message: expect.stringContaining('pruned') },
+    });
+  });
+
+  it('keeps answering rollup-routed shapes below the floor — their whole point', () => {
+    const response = executeQueryRequest(pruned, {
+      site: 1,
+      ...SPAN,
+      queries: [{ id: 'q', metrics: ['pageviews'], dim: 'path', bucket: 'day' }],
+    });
+    // Both days answer, including the one whose raw rows retention may have
+    // taken (the fixture rows carry no path — the NULL group is the point).
+    expect(resultOf(response, 'q').rows).toEqual([
+      { bucket: OLD, path: null, pageviews: 1 },
+      { bucket: RECENT, path: null, pageviews: 1 },
+    ]);
+  });
+
+  it('answers raw shapes normally when the window stays above the floor', () => {
+    const response = executeQueryRequest(pruned, {
+      site: 1,
+      range: { from: RECENT, to: RECENT },
+      queries: [{ id: 'q', metrics: ['pageviews'], dim: 'title' }],
+    });
+    expect(resultOf(response, 'q').rows).toEqual([{ title: null, pageviews: 1 }]);
   });
 });

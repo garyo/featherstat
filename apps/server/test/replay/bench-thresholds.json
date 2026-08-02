@@ -8,14 +8,14 @@
   "read": {
     "dashboardBudgetMs": 50,
     "maxMedianMs": {
-      "site dashboard @ today": 20,
-      "site dashboard @ 24h": 16,
-      "site dashboard @ 7d": 70,
-      "site dashboard @ 90d": 490,
-      "hours x weekday @ 90d": 40,
-      "paths x day @ 90d, all sites": 340,
-      "all-sites dashboard @ 90d + compare": 630,
-      "journeys @ 90d, all sites": 760,
+      "site dashboard @ today": 10,
+      "site dashboard @ 24h": 10,
+      "site dashboard @ 7d": 40,
+      "site dashboard @ 90d": 300,
+      "hours x weekday @ 90d": 30,
+      "paths x day @ 90d, all sites": 20,
+      "all-sites dashboard @ 90d + compare": 125,
+      "journeys @ 90d, all sites": 650,
       "journeys @ 90d, busiest site": 100
     }
   }

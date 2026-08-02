@@ -63,6 +63,16 @@ const SQL_DELETE_META = 'DELETE FROM rollup_meta WHERE key = ?';
 
 export const META_ENGAGEMENT_THRESHOLD = 'engagement_threshold_ms';
 export const META_NEEDS_REBUILD = 'needs_rebuild';
+/** UTC ms below which raw events/sessions may have been pruned (jobs/retention.ts). */
+export const META_RAW_HORIZON = 'raw_horizon_ts';
+
+/** The raw floor: instants before this may lack raw rows; rollups still answer. */
+export function rawHorizonTs(db: Db): number | undefined {
+  const raw = getRollupMeta(db, META_RAW_HORIZON);
+  if (raw === undefined) return undefined;
+  const ts = Number(raw);
+  return Number.isFinite(ts) ? ts : undefined;
+}
 
 export function getRollupMeta(db: Db, key: string): string | undefined {
   return stmt<{ value: string }>(db, SQL_GET_META).get(key)?.value;
@@ -139,10 +149,11 @@ ON CONFLICT (site_id, local_date, local_hour) DO UPDATE SET
 
 const SQL_UPSERT_DIM_DAY = `INSERT INTO rollup_dim_day (
   site_id, local_date, dim_id, dim_value, dim_null,
-  actions, pageviews, events, outlinks, downloads, event_value_sum,
+  hits, actions, pageviews, events, outlinks, downloads, event_value_sum,
   visitors, sessions_touched
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (site_id, local_date, dim_id, dim_value, dim_null) DO UPDATE SET
+  hits             = hits             + excluded.hits,
   actions          = actions          + excluded.actions,
   pageviews        = pageviews        + excluded.pageviews,
   events           = events           + excluded.events,
@@ -232,6 +243,8 @@ interface DimAcc {
   dimId: number;
   value: string;
   isNull: 0 | 1;
+  /** Every stored row incl. pings — group existence, matching a raw GROUP BY. */
+  hits: number;
   actions: number;
   pageviews: number;
   events: number;
@@ -281,6 +294,7 @@ function dimAcc(
       dimId,
       value,
       isNull: isNull as 0 | 1,
+      hits: 0,
       actions: 0,
       pageviews: 0,
       events: 0,
@@ -394,7 +408,21 @@ function applyEventRollups(db: Db, sinceEventId: number, events: readonly EventR
   for (const event of events) {
     const hour = trafficAcc(traffic, event);
     hour.hits += 1;
-    if (isHeartbeat(event.type)) continue; // a heartbeat is presence, not an action
+
+    // Heartbeats keep a dim row ALIVE (hits) without counting as actions: a raw
+    // GROUP BY ranges over every stored row, so the read path must know a key
+    // only pings touched — its metrics are all zero, but the group exists.
+    const heartbeat = isHeartbeat(event.type);
+    const noDim = dimAcc(dims, event, NO_DIM_ID, '');
+    noDim.hits += 1;
+    if (!heartbeat) countAction(noDim, event);
+    for (const { dimId, column } of EVENT_ROLLUP_DIMS) {
+      const acc = dimAcc(dims, event, dimId, event[column]);
+      acc.hits += 1;
+      if (!heartbeat) countAction(acc, event);
+    }
+    if (heartbeat) continue; // presence, not an action
+
     hour.actions += 1;
     if (event.type === 'pageview') hour.pageviews += 1;
     else if (event.type === 'event') {
@@ -402,11 +430,6 @@ function applyEventRollups(db: Db, sinceEventId: number, events: readonly EventR
       hour.value += event.event_value ?? 0;
     } else if (event.type === 'outlink') hour.outlinks += 1;
     else if (event.type === 'download') hour.downloads += 1;
-
-    countAction(dimAcc(dims, event, NO_DIM_ID, ''), event);
-    for (const { dimId, column } of EVENT_ROLLUP_DIMS) {
-      countAction(dimAcc(dims, event, dimId, event[column]), event);
-    }
   }
 
   const upsertHour = stmt(db, SQL_UPSERT_TRAFFIC_HOUR);
@@ -460,6 +483,7 @@ function applyEventRollups(db: Db, sinceEventId: number, events: readonly EventR
       acc.dimId,
       acc.value,
       acc.isNull,
+      acc.hits,
       acc.actions,
       acc.pageviews,
       acc.events,

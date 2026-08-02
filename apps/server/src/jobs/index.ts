@@ -6,10 +6,12 @@ import {
   geoipInstalledAt,
   refreshGeoipDatabase,
 } from './geoip-refresh.ts';
+import { runReconcile } from './reconcile.ts';
 import { runRetention } from './retention.ts';
 import { type Job, type Scheduler, type SchedulerOptions, startScheduler } from './scheduler.ts';
 
 export { DEFAULT_MMDB_PATH, type Fetcher, refreshGeoipDatabase } from './geoip-refresh.ts';
+export { type ReconcileResult, runReconcile } from './reconcile.ts';
 export { RETENTION_DAYS_KEY, retentionDays, runRetention } from './retention.ts';
 export type { Job, Scheduler, SchedulerOptions } from './scheduler.ts';
 
@@ -29,6 +31,8 @@ export interface JobsOptions extends SchedulerOptions {
    */
   installMissingMmdb?: boolean;
   fetch?: Fetcher;
+  /** Feeds /metrics' repair counter (routes/metrics.ts) — drift is a defect signal. */
+  onRollupRepairs?: (days: number) => void;
 }
 
 /**
@@ -58,6 +62,20 @@ export function startJobs(db: Db, options: JobsOptions = {}): Scheduler {
       `geoip: no database at ${mmdbPath} — run 'bun run --cwd apps/server geoip-refresh' to install one`,
     );
   }
+
+  jobs.push({
+    name: 'rollup-reconcile',
+    everyMs: DAY_MS,
+    run: async () => {
+      const { checked, repaired, cells } = await runReconcile(db, { now: options.now });
+      if (repaired > 0) {
+        options.onRollupRepairs?.(repaired);
+        console.error(
+          `rollup-reconcile: repaired ${repaired}/${checked} site-day(s), ${cells} drifted cell(s)`,
+        );
+      }
+    },
+  });
 
   jobs.push({
     name: 'retention',

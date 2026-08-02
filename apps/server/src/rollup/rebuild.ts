@@ -63,18 +63,21 @@ function sessionDimExprs(): DimExprs[] {
   ];
 }
 
-/** dim_day rows for one rolled group: non-ping rows only, distincts exact from raw. */
+/** dim_day rows for one rolled group: every stored row keeps the group alive
+ * (`hits`, pings included — a raw GROUP BY sees them too); the metrics and the
+ * exact distincts count non-ping actions only. */
 function dimDaySelect({ dimId, value, isNull }: DimExprs): string {
   return `SELECT site_id, local_date, ${dimId} AS dim_id, ${value} AS dim_value, ${isNull} AS dim_null,
-  COUNT(*) AS actions,
+  COUNT(*) AS hits,
+  SUM(type != 'ping') AS actions,
   SUM(type = 'pageview') AS pageviews,
   SUM(type = 'event') AS events,
   SUM(type = 'outlink') AS outlinks,
   SUM(type = 'download') AS downloads,
   COALESCE(SUM(CASE WHEN type = 'event' THEN event_value END), 0) AS event_value_sum,
-  COUNT(DISTINCT visitor_id) AS visitors,
-  COUNT(DISTINCT session_id) AS sessions_touched
-FROM events WHERE site_id = ? AND local_date = ? AND type != 'ping'
+  COUNT(DISTINCT CASE WHEN type != 'ping' THEN visitor_id END) AS visitors,
+  COUNT(DISTINCT CASE WHEN type != 'ping' THEN session_id END) AS sessions_touched
+FROM events WHERE site_id = ? AND local_date = ?
 GROUP BY 4, 5`;
 }
 
