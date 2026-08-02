@@ -1,4 +1,11 @@
-import { elapsedThrough, type Filter, type QueryRequest, type Range } from '@featherstat/shared';
+import {
+  type Compare,
+  elapsedThrough,
+  type Filter,
+  type QueryRequest,
+  type Range,
+  RangeSchema,
+} from '@featherstat/shared';
 import { parseFilters, sameFilters, serializeFilter } from './filters.ts';
 
 /**
@@ -7,20 +14,40 @@ import { parseFilters, sameFilters, serializeFilter } from './filters.ts';
  * module is the pure half — parsing and serialization, no DOM; `state.svelte.ts`
  * binds it to `history`.
  *
- * WP12 grew the shape to the full docs/05 state: site + range preset + filter
- * chips (`f` params, see filters.ts) + which top-level view is up (`view=realtime`).
+ * The full docs/05 state: site + range (preset or explicit dates) + compare
+ * mode + which dashboard from the library (`dash`) + filter chips (`f` params,
+ * see filters.ts) + which top-level view is up (`view=realtime`).
  */
 
 /** `all` is the overview; a number is one site — the same scope the query API takes. */
 export type SiteScope = QueryRequest['site'];
 export type RangePreset = Extract<Range, { preset: string }>['preset'];
+/** An explicit inclusive site-local date range — the query API's `{from, to}` form. */
+export type CustomRange = Extract<Range, { from: string }>;
+/** What the range pill row can select: a preset, or explicit dates. */
+export type ViewRange = RangePreset | CustomRange;
+/**
+ * The compare control's vocabulary: the API's `previous`/`year`, an explicit
+ * window, or `off` — which the API spells by omitting `compare` entirely.
+ */
+export type CompareChoice = 'previous' | 'year' | 'off' | CustomRange;
+/**
+ * Which dashboard of the scope's library is up (docs/05 § The dashboard
+ * library): a stored row id, or `t:<id>` naming a shipped template. Absent
+ * (undefined) means the scope's default.
+ */
+export type DashRef = number | `t:${string}`;
 /** `dash` is the all-sites/site pair; `journeys` the per-site sankey view (M2);
  * `realtime` the SSE tab; `settings` the admin view (WP13). */
 export type ViewName = 'dash' | 'journeys' | 'realtime' | 'settings';
 
 export interface ViewState {
   site: SiteScope;
-  range: RangePreset;
+  range: ViewRange;
+  /** Compare mode; `previous` is the default and stays out of the URL. */
+  cmp: CompareChoice;
+  /** Library selection; undefined = the scope's default dashboard. */
+  dash: DashRef | undefined;
   view: ViewName;
   filters: Filter[];
 }
@@ -33,7 +60,8 @@ export type ViewStatePatch = Partial<ViewState>;
  * view and view changes keep the scope, except the one undefined cell —
  * Journeys has no All-sites rendering, so entering it at All coerces the
  * scope to the last-visited site (the picker then truthfully wears it), and
- * choosing All while on Journeys lands on the overview.
+ * choosing All while on Journeys lands on the overview. A scope change also
+ * drops the library selection: `dash` names a dashboard of the OLD scope.
  */
 export function resolveNav(
   current: ViewState,
@@ -43,6 +71,10 @@ export function resolveNav(
   const next = { ...patch };
   const view = next.view ?? current.view;
   const site = next.site ?? current.site;
+  // Present-but-undefined, so the `{ ...current, ...patch }` merge still clears it.
+  if (next.site !== undefined && next.site !== current.site && !('dash' in next)) {
+    next.dash = undefined;
+  }
   if (view === 'journeys' && site === 'all') {
     if (next.site === 'all') next.view = 'dash';
     else next.site = siteTab;
@@ -63,8 +95,10 @@ export const RANGE_LABELS: Record<RangePreset, string> = {
 /**
  * A key that changes when any site rolls into a new local day. `today` and
  * `mtd` are resolved server-side per site, so their data changes at each
- * site's own midnight — not the reader's, and not on a data tick. Watching
- * this is what makes a dashboard left open overnight correct in the morning.
+ * site's own midnight — not the reader's, and not on a data tick. An explicit
+ * range touching today moves the same way (its `windowTag` clips to the site's
+ * local today). Watching this is what makes a dashboard left open overnight
+ * correct in the morning.
  */
 export function localDayKey(zones: readonly string[], now: Date): string {
   return [...new Set(zones)]
@@ -89,9 +123,111 @@ export const RANGE_PRESETS = Object.keys(RANGE_LABELS) as readonly RangePreset[]
 export const DEFAULT_VIEW_STATE: ViewState = {
   site: 'all',
   range: '30d',
+  cmp: 'previous',
+  dash: undefined,
   view: 'dash',
   filters: [],
 };
+
+// ---------------------------------------------------------------------------
+// Range & compare helpers — the one place the URL forms, the API forms and the
+// human labels for both are written, so a control, a request and a widget
+// subtitle can never disagree about what a range is.
+// ---------------------------------------------------------------------------
+
+/** The wire form: what `QueryRequest.range` takes. */
+export function toRange(range: ViewRange): Range {
+  return typeof range === 'string' ? { preset: range } : range;
+}
+
+/** The wire form of the compare control; undefined means "send no compare". */
+export function compareParam(cmp: CompareChoice): Compare | undefined {
+  return cmp === 'off' ? undefined : cmp;
+}
+
+export function sameRange(a: ViewRange, b: ViewRange): boolean {
+  if (typeof a === 'string' || typeof b === 'string') return a === b;
+  return a.from === b.from && a.to === b.to;
+}
+
+export function sameCompare(a: CompareChoice, b: CompareChoice): boolean {
+  if (typeof a === 'string' || typeof b === 'string') return a === b;
+  return a.from === b.from && a.to === b.to;
+}
+
+/** Inclusive length of an explicit range in whole days. */
+export function rangeDays(range: CustomRange): number {
+  const from = Date.parse(`${range.from}T00:00:00Z`);
+  const to = Date.parse(`${range.to}T00:00:00Z`);
+  return Math.round((to - from) / 86_400_000) + 1;
+}
+
+const DAY: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', timeZone: 'UTC' };
+
+function utcDay(date: string, withYear: boolean): string {
+  return new Date(`${date}T00:00:00Z`).toLocaleDateString('en-US', {
+    ...DAY,
+    ...(withYear ? { year: 'numeric' } : {}),
+  });
+}
+
+/**
+ * An explicit range as a human reads it: "Jun 1 – Jun 30, 2026", the year said
+ * once when both ends share it, twice when they straddle a new year.
+ */
+export function formatDayRange(range: CustomRange): string {
+  const sameYear = range.from.slice(0, 4) === range.to.slice(0, 4);
+  if (range.from === range.to) return utcDay(range.from, true);
+  return sameYear
+    ? `${utcDay(range.from, false)} – ${utcDay(range.to, true)}`
+    : `${utcDay(range.from, true)} – ${utcDay(range.to, true)}`;
+}
+
+/** Filter-pill label: the preset table, or the explicit dates. */
+export function rangeLabel(range: ViewRange): string {
+  return typeof range === 'string' ? RANGE_LABELS[range] : formatDayRange(range);
+}
+
+/** Widget-title qualifier ("last 30 days" / "Jun 1 – Jun 30, 2026"). */
+export function rangeQualifier(range: ViewRange): string {
+  return typeof range === 'string' ? RANGE_QUALIFIER[range] : formatDayRange(range);
+}
+
+/**
+ * Compare wording per preset (mockup: "compared with previous 30 days"). Only
+ * `24h` is like-for-like: a partial period is compared against a complete one,
+ * which is how a calendar range reads everywhere, and why the rolling preset
+ * exists beside it (docs/04 § 3).
+ */
+const PREVIOUS_NOTE: Record<RangePreset, string> = {
+  today: 'compared with all of yesterday',
+  '24h': 'compared with the previous 24 hours',
+  '7d': 'compared with the previous 7 days',
+  '30d': 'compared with the previous 30 days',
+  '90d': 'compared with the previous 90 days',
+  mtd: 'compared with the previous period',
+};
+
+/**
+ * The compare sentence for a view state, or undefined when comparison is off.
+ * An explicit compare window of a DIFFERENT length still aligns by index from
+ * the start (docs/04 § 3) — the label states both lengths, because that
+ * labeled mismatch is the contract that makes the alignment honest.
+ */
+export function compareNote(range: ViewRange, cmp: CompareChoice): string | undefined {
+  if (cmp === 'off') return undefined;
+  if (cmp === 'year') return 'compared with the same period last year';
+  if (cmp === 'previous') {
+    if (typeof range === 'string') return PREVIOUS_NOTE[range];
+    const days = rangeDays(range);
+    return `compared with the previous ${days === 1 ? 'day' : `${days} days`}`;
+  }
+  const base = `compared with ${formatDayRange(cmp)}`;
+  if (typeof range === 'string') return base;
+  const current = rangeDays(range);
+  const against = rangeDays(cmp);
+  return current === against ? base : `${base} (${current} days vs ${against} days)`;
+}
 
 /** Only used to parse relative hrefs; never appears in anything this module returns. */
 const RELATIVE_BASE = 'http://view.invalid';
@@ -101,6 +237,8 @@ export function parseViewState(href: string): ViewState {
   return {
     site: parseSite(params.get('site')),
     range: parseRange(params.get('range')),
+    cmp: parseCompare(params.get('cmp')),
+    dash: parseDashRef(params.get('dash')),
     view: parseView(params.get('view')),
     filters: parseFilters(params.getAll('f')),
   };
@@ -114,7 +252,17 @@ export function applyViewState(state: ViewState, href: string): string {
   const url = new URL(href, RELATIVE_BASE);
   const fallback = DEFAULT_VIEW_STATE;
   set(url.searchParams, 'site', state.site === fallback.site ? undefined : state.site);
-  set(url.searchParams, 'range', state.range === fallback.range ? undefined : state.range);
+  set(
+    url.searchParams,
+    'range',
+    sameRange(state.range, fallback.range) ? undefined : serializeRange(state.range),
+  );
+  set(
+    url.searchParams,
+    'cmp',
+    sameCompare(state.cmp, fallback.cmp) ? undefined : serializeCompare(state.cmp),
+  );
+  set(url.searchParams, 'dash', state.dash);
   set(url.searchParams, 'view', state.view === fallback.view ? undefined : state.view);
   url.searchParams.delete('f');
   for (const filter of state.filters) url.searchParams.append('f', serializeFilter(filter));
@@ -124,7 +272,9 @@ export function applyViewState(state: ViewState, href: string): string {
 export function sameViewState(a: ViewState, b: ViewState): boolean {
   return (
     a.site === b.site &&
-    a.range === b.range &&
+    sameRange(a.range, b.range) &&
+    sameCompare(a.cmp, b.cmp) &&
+    a.dash === b.dash &&
     a.view === b.view &&
     sameFilters(a.filters, b.filters)
   );
@@ -143,8 +293,46 @@ function parseSite(raw: string | null): SiteScope {
   return Number.isInteger(id) && id > 0 ? id : DEFAULT_VIEW_STATE.site;
 }
 
-function parseRange(raw: string | null): RangePreset {
-  return raw !== null && raw in RANGE_LABELS ? (raw as RangePreset) : DEFAULT_VIEW_STATE.range;
+/** `2026-06-01..2026-06-30` — real calendar dates, in order, or nothing. */
+const CUSTOM_RANGE_RE = /^(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})$/;
+
+/** An explicit range the query API would accept, or undefined. */
+export function parseCustomRange(raw: string): CustomRange | undefined {
+  const match = CUSTOM_RANGE_RE.exec(raw);
+  if (match === null) return undefined;
+  const candidate = { from: match[1] as string, to: match[2] as string };
+  if (candidate.from > candidate.to) return undefined;
+  return RangeSchema.safeParse(candidate).success ? candidate : undefined;
+}
+
+export function serializeRange(range: ViewRange): string {
+  return typeof range === 'string' ? range : `${range.from}..${range.to}`;
+}
+
+function parseRange(raw: string | null): ViewRange {
+  if (raw === null) return DEFAULT_VIEW_STATE.range;
+  if (raw in RANGE_LABELS) return raw as RangePreset;
+  return parseCustomRange(raw) ?? DEFAULT_VIEW_STATE.range;
+}
+
+function serializeCompare(cmp: CompareChoice): string {
+  return typeof cmp === 'string' ? cmp : `${cmp.from}..${cmp.to}`;
+}
+
+function parseCompare(raw: string | null): CompareChoice {
+  if (raw === null) return DEFAULT_VIEW_STATE.cmp;
+  if (raw === 'previous' || raw === 'year' || raw === 'off') return raw;
+  return parseCustomRange(raw) ?? DEFAULT_VIEW_STATE.cmp;
+}
+
+/** A template ref's id charset — the shared registry's ids all fit it. */
+const TEMPLATE_REF_RE = /^t:[a-z0-9-]{1,64}$/;
+
+export function parseDashRef(raw: string | null): DashRef | undefined {
+  if (raw === null) return undefined;
+  if (TEMPLATE_REF_RE.test(raw)) return raw as DashRef;
+  const id = Number(raw);
+  return Number.isInteger(id) && id > 0 ? id : undefined;
 }
 
 function parseView(raw: string | null): ViewName {

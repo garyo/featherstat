@@ -6,6 +6,7 @@ import Devices from './Devices.svelte';
 import Dwell from './Dwell.svelte';
 import Feed from './Feed.svelte';
 import Heatmap from './Heatmap.svelte';
+import Histogram from './Histogram.svelte';
 import KpiRow from './KpiRow.svelte';
 import RealtimeCountries from './RealtimeCountries.svelte';
 import SiteCards from './SiteCards.svelte';
@@ -45,6 +46,7 @@ export const REGISTRY: Partial<Record<VizType, RegistryEntry>> = {
   heatmap: { component: Heatmap, frame: 'card' },
   devices: { component: Devices, frame: 'card' },
   dwell: { component: Dwell, frame: 'card' },
+  histogram: { component: Histogram, frame: 'card' },
   'site-cards': { component: SiteCards, frame: 'wide' },
 };
 

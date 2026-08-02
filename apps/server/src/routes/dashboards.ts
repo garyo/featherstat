@@ -2,6 +2,7 @@ import {
   type Dashboard,
   DashboardSchema,
   dashboardBatchIssue,
+  dashboardTemplate,
   readStoredDashboard,
   upgradeDashboard,
 } from '@featherstat/shared';
@@ -10,12 +11,14 @@ import { bodyLimit } from 'hono/body-limit';
 import type { Auth, AuthEnv } from '../auth/auth.ts';
 import { canReadSite, type Principal } from '../auth/principal.ts';
 import {
+  countLiveShareTokens,
   createDashboard,
   type DashboardRow,
   type Db,
   deleteDashboard,
   getDashboard,
   listDashboards,
+  listSites,
   type NewDashboard,
   updateDashboard,
   withWriteTransaction,
@@ -34,12 +37,17 @@ import {
 /** 24 widgets × a query with 16 × 2 KB filter values still fit several times over. */
 const MAX_DASHBOARD_BODY_BYTES = 256 * 1024;
 
-/** List row: enough for a picker without shipping every layout. */
+/** List row: enough for the library picker without shipping every layout. */
 export interface DashboardInfo {
   id: number;
   name: string;
   site: Dashboard['site'];
+  /** Shipped-template id this row was cloned from (the reset target); null otherwise. */
+  template: string | null;
+  createdAt: number;
   updatedAt: number;
+  /** LIVE share links pointing at this row — what a delete would revoke. */
+  shareCount: number;
 }
 
 export interface DashboardDetail extends DashboardInfo {
@@ -68,7 +76,7 @@ export function createDashboardRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
     c.json(
       listDashboards(db)
         .filter((row) => visibleTo(c.get('principal'), row))
-        .map(toInfo),
+        .map((row) => toInfo(row, row.share_count)),
     ),
   );
 
@@ -79,7 +87,7 @@ export function createDashboardRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
     if (row === undefined || !visibleTo(c.get('principal'), row)) {
       return c.json({ error: `unknown dashboard ${id}` }, 404);
     }
-    const detail = toDetail(row);
+    const detail = toDetail(db, row);
     if (detail === undefined) {
       console.error(`dashboards: stored dashboard ${id} has an invalid layout`);
       return c.json({ error: `stored dashboard ${id} is invalid — save a fresh layout` }, 500);
@@ -87,14 +95,16 @@ export function createDashboardRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
     return c.json(detail);
   });
 
-  app.get('/api/admin/dashboards', (c) => c.json(listDashboards(db).map(toInfo)));
+  app.get('/api/admin/dashboards', (c) =>
+    c.json(listDashboards(db).map((row) => toInfo(row, row.share_count))),
+  );
 
   app.get('/api/admin/dashboards/:id', (c) => {
     const id = parseDashboardId(c.req.param('id'));
     if (id === undefined) return c.json({ error: 'invalid dashboard id' }, 400);
     const row = getDashboard(db, id);
     if (row === undefined) return c.json({ error: `unknown dashboard ${id}` }, 404);
-    const detail = toDetail(row);
+    const detail = toDetail(db, row);
     if (detail === undefined) {
       console.error(`dashboards: stored dashboard ${id} has an invalid layout`);
       return c.json({ error: `stored dashboard ${id} is invalid — save a fresh layout` }, 500);
@@ -103,10 +113,19 @@ export function createDashboardRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
   });
 
   app.post('/api/admin/dashboards', async (c) => {
+    // `?template=<id>` records which shipped template this row was cloned from —
+    // the reset target. Validated against the shared registry: the column powers
+    // reset, so an id reset cannot rebuild from must never be stored.
+    const template = c.req.query('template') ?? null;
+    if (template !== null && dashboardTemplate(template) === undefined) {
+      return c.json({ error: `unknown template '${template}'` }, 400);
+    }
     const body = await parseLayoutBody(c);
     if (body.ok === false) return body.response;
-    const row = withWriteTransaction(db, () => createDashboard(db, toRow(body.data, auth.now())));
-    return c.json({ ...toInfo(row), layout: body.data }, 201);
+    const row = withWriteTransaction(db, () =>
+      createDashboard(db, toRow(body.data, template, auth.now())),
+    );
+    return c.json({ ...toInfo(row, 0), layout: body.data }, 201);
   });
 
   app.put('/api/admin/dashboards/:id', async (c) => {
@@ -115,10 +134,54 @@ export function createDashboardRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
     const body = await parseLayoutBody(c);
     if (body.ok === false) return body.response;
     const row = withWriteTransaction(db, () =>
-      updateDashboard(db, id, toRow(body.data, auth.now())),
+      updateDashboard(db, id, toRow(body.data, null, auth.now())),
     );
     if (row === undefined) return c.json({ error: `unknown dashboard ${id}` }, 404);
-    return c.json({ ...toInfo(row), layout: body.data });
+    return c.json({ ...toInfo(row, countLiveShareTokens(db, id)), layout: body.data });
+  });
+
+  // A copy of a stored row: same layout and template lineage, fresh identity —
+  // and no share links, which point at rows, not layouts.
+  app.post('/api/admin/dashboards/:id/duplicate', (c) => {
+    const id = parseDashboardId(c.req.param('id'));
+    if (id === undefined) return c.json({ error: 'invalid dashboard id' }, 400);
+    const row = getDashboard(db, id);
+    if (row === undefined) return c.json({ error: `unknown dashboard ${id}` }, 404);
+    const layout = readStoredDashboard(row.layout);
+    if (layout === undefined) {
+      console.error(`dashboards: stored dashboard ${id} has an invalid layout`);
+      return c.json({ error: `stored dashboard ${id} is invalid — save a fresh layout` }, 500);
+    }
+    const copy: Dashboard = { ...layout, name: `${row.name} copy` };
+    const created = withWriteTransaction(db, () =>
+      createDashboard(db, { ...toRow(copy, null, auth.now()), template: row.template }),
+    );
+    return c.json({ ...toInfo(created, 0), layout: copy }, 201);
+  });
+
+  // Reset a clone to its shipped template, at the current vocabulary. The row's
+  // NAME survives — a rename is identity, not layout — and a row that was never
+  // cloned from a template has nothing to reset to.
+  app.post('/api/admin/dashboards/:id/reset', (c) => {
+    const id = parseDashboardId(c.req.param('id'));
+    if (id === undefined) return c.json({ error: 'invalid dashboard id' }, 400);
+    const row = getDashboard(db, id);
+    if (row === undefined) return c.json({ error: `unknown dashboard ${id}` }, 404);
+    const template = row.template === null ? undefined : dashboardTemplate(row.template);
+    if (template === undefined) {
+      return c.json(
+        { error: `dashboard ${id} was not cloned from a shipped template — nothing to reset to` },
+        409,
+      );
+    }
+    const siteIds = listSites(db).map((site) => site.id);
+    const built = template.build(siteOf(row), siteIds);
+    const layout: Dashboard = { ...built, name: row.name };
+    const updated = withWriteTransaction(db, () =>
+      updateDashboard(db, id, toRow(layout, null, auth.now())),
+    );
+    if (updated === undefined) return c.json({ error: `unknown dashboard ${id}` }, 404);
+    return c.json({ ...toInfo(updated, countLiveShareTokens(db, id)), layout });
   });
 
   app.delete('/api/admin/dashboards/:id', (c) => {
@@ -145,26 +208,36 @@ export function parseDashboardId(raw: string): number | undefined {
   return Number.isInteger(id) && id > 0 ? id : undefined;
 }
 
-function toRow(layout: Dashboard, now: number): NewDashboard {
+function toRow(layout: Dashboard, template: string | null, now: number): NewDashboard {
   return {
     name: layout.name,
     site_scope: String(layout.site),
     layout: JSON.stringify(layout),
+    template,
     updated_at: now,
   };
 }
 
-function toInfo(row: DashboardRow): DashboardInfo {
-  return { id: row.id, name: row.name, site: siteOf(row), updatedAt: row.updated_at };
+function toInfo(row: DashboardRow, shareCount: number): DashboardInfo {
+  return {
+    id: row.id,
+    name: row.name,
+    site: siteOf(row),
+    template: row.template,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    shareCount,
+  };
 }
 
 /** Undefined when the stored layout no longer validates (schema OR batch
  * invariants) — the caller decides how loudly. A layout this returns is at the
  * current vocabulary and is one `collectBatch` can turn into a fetchable
  * request. The row itself is left as it was: the upgrade is a read, not a write. */
-function toDetail(row: DashboardRow): DashboardDetail | undefined {
+function toDetail(db: Db, row: DashboardRow): DashboardDetail | undefined {
   const layout = readStoredDashboard(row.layout);
-  return layout === undefined ? undefined : { ...toInfo(row), layout };
+  if (layout === undefined) return undefined;
+  return { ...toInfo(row, countLiveShareTokens(db, row.id)), layout };
 }
 
 function siteOf(row: DashboardRow): Dashboard['site'] {

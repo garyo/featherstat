@@ -56,8 +56,14 @@ export interface AdminClient {
   diagnostics(): Promise<AdminDiagnostics>;
   listDashboards(): Promise<DashboardInfo[]>;
   getDashboard(id: number): Promise<DashboardDetail>;
-  createDashboard(layout: Dashboard): Promise<DashboardDetail>;
+  /** `template` records which shipped template this layout was cloned from. */
+  createDashboard(layout: Dashboard, template?: string): Promise<DashboardDetail>;
   updateDashboard(id: number, layout: Dashboard): Promise<DashboardDetail>;
+  deleteDashboard(id: number): Promise<void>;
+  /** A copy of a stored row — fresh identity, same layout and template lineage. */
+  duplicateDashboard(id: number): Promise<DashboardDetail>;
+  /** Rebuilds a clone from its shipped template; the server refuses rows with none. */
+  resetDashboard(id: number): Promise<DashboardDetail>;
   /** Mints a read-only link; the raw token comes back exactly once (docs/04 § 5). */
   createShareLink(dashboardId: number): Promise<{ token: string }>;
   /** Revokes every live link of a dashboard — the only revoke the API offers. */
@@ -132,9 +138,20 @@ export function createAdminClient(options: AdminClientOptions = {}): AdminClient
     diagnostics: () => call('/api/admin/diagnostics'),
     listDashboards: () => call('/api/admin/dashboards'),
     getDashboard: (id) => call(`/api/admin/dashboards/${id}`),
-    createDashboard: (layout) => call('/api/admin/dashboards', { method: 'POST', body: layout }),
+    createDashboard: (layout, template) =>
+      call(
+        template === undefined
+          ? '/api/admin/dashboards'
+          : `/api/admin/dashboards?template=${encodeURIComponent(template)}`,
+        { method: 'POST', body: layout },
+      ),
     updateDashboard: (id, layout) =>
       call(`/api/admin/dashboards/${id}`, { method: 'PUT', body: layout }),
+    async deleteDashboard(id) {
+      await call(`/api/admin/dashboards/${id}`, { method: 'DELETE' });
+    },
+    duplicateDashboard: (id) => call(`/api/admin/dashboards/${id}/duplicate`, { method: 'POST' }),
+    resetDashboard: (id) => call(`/api/admin/dashboards/${id}/reset`, { method: 'POST' }),
     createShareLink: (dashboardId) =>
       call(`/api/admin/dashboards/${dashboardId}/share`, { method: 'POST' }),
     revokeShareLinks: (dashboardId) =>

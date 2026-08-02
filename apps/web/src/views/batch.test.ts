@@ -1,8 +1,15 @@
-import { type Filter, MAX_QUERIES_PER_BATCH, type QueryResponse } from '@featherstat/shared';
+import {
+  allSitesTemplate,
+  type Filter,
+  MAX_QUERIES_PER_BATCH,
+  overviewTemplate,
+  type QueryResponse,
+} from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
-import { allSites } from '../dashboards/all-sites.ts';
-import { siteOverview } from '../dashboards/site-overview.ts';
 import { collectBatch, hourlyWhenIntraday, widgetData, withoutBlockedMetrics } from './batch.ts';
+
+const siteOverview = overviewTemplate.build(1);
+const allSites = (siteIds: readonly number[]) => allSitesTemplate.build('all', siteIds);
 
 describe('collectBatch', () => {
   it('collects every widget query of the default site dashboard into one batch', () => {
@@ -170,6 +177,14 @@ describe('hourlyWhenIntraday', () => {
     const same = hourlyWhenIntraday(queries, '30d');
     expect(same).toEqual(queries);
     expect(same).not.toBe(queries);
+  });
+
+  it('treats a single-day explicit range as intraday, and a longer one as days', () => {
+    const oneDay = hourlyWhenIntraday(queries, { from: '2026-06-05', to: '2026-06-05' });
+    const series = oneDay.find((q) => q.id === 'series');
+    if (series === undefined || 'kind' in series) throw new Error('metric query expected');
+    expect(series.bucket).toBe('hour');
+    expect(hourlyWhenIntraday(queries, { from: '2026-06-01', to: '2026-06-05' })).toEqual(queries);
   });
 });
 

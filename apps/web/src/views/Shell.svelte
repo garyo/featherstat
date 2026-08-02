@@ -4,11 +4,19 @@ import type { AdminClient } from '../lib/admin.ts';
 import { createQueryClient } from '../lib/api.ts';
 import type { AuthState } from '../lib/auth.svelte.ts';
 import Header from '../lib/components/Header.svelte';
+import { createDashboardStore } from '../lib/dashboards.svelte.ts';
 import { createLiveStream } from '../lib/live.ts';
 import { pushFeed, seedFeed } from '../lib/realtime.ts';
 import { createSiteDirectory } from '../lib/sites.svelte.ts';
 import { createViewState } from '../lib/state.svelte.ts';
-import { type RangePreset, resolveNav, type SiteScope, type ViewName } from '../lib/state.ts';
+import {
+  type CompareChoice,
+  type DashRef,
+  resolveNav,
+  type SiteScope,
+  type ViewName,
+  type ViewRange,
+} from '../lib/state.ts';
 import { toggleTheme } from '../lib/theme.ts';
 import type { AppEnv } from '../widgets/types.ts';
 import AllSitesView from './AllSitesView.svelte';
@@ -45,6 +53,14 @@ const guardedFetch: typeof fetch = async (input, init) => {
 const client = createQueryClient({ fetch: guardedFetch });
 const live = createLiveStream();
 const directory = createSiteDirectory(guardedFetch);
+/**
+ * ONE dashboard store, owned here rather than by the dashboard views: the
+ * header's library switcher and the view under it must read the same list and
+ * the same selection, or the picker could wear a dashboard the page is not
+ * showing (docs/05 § The dashboard library).
+ */
+// svelte-ignore state_referenced_locally
+const dashboards = createDashboardStore(admin);
 
 // Logout unmounts this shell — the stream and history listener go with it.
 $effect(() => () => {
@@ -98,6 +114,24 @@ live.on('status', (status) => {
 const site = $derived(view.current.site);
 const current = $derived(view.current.view);
 
+// The dashboard views hold their batch until the library lookup answers, so
+// the (scope, dash) load belongs to the same owner as the switcher. `dashRef`
+// is a derived so a range or filter change — which replaces the whole view
+// state — does not re-run the library lookup: only (site, dash) moves it.
+const dashRef = $derived(view.current.dash);
+$effect(() => {
+  if (current === 'dash') dashboards.load(site, dashRef);
+});
+
+// Library management is a code-split chunk (docs/05 § What editability costs),
+// loaded on the switcher's "Manage dashboards…" line.
+let Manage = $state<typeof import('../editor/manage.ts').Manage | undefined>(undefined);
+let managing = $state(false);
+async function openManage(): Promise<void> {
+  Manage = (await import('../editor/manage.ts')).Manage;
+  managing = true;
+}
+
 // Settings (sites CRUD, snippet, password, notifications, diagnostics) is a
 // code-split chunk: nobody reaches a dashboard through it, so it stays off the
 // path every session opens on.
@@ -146,7 +180,9 @@ const selectSite = (next: SiteScope): void =>
  * switcher's last-visited site so the URL stays honest. */
 const selectView = (next: ViewName): void =>
   view.update(resolveNav(view.current, { view: next }, siteTab));
-const selectRange = (range: RangePreset): void => view.update({ range });
+const selectRange = (range: ViewRange): void => view.update({ range });
+const selectCompare = (cmp: CompareChoice): void => view.update({ cmp });
+const selectDash = (dash: DashRef | undefined): void => view.update({ dash });
 const setFilters = (filters: Filter[]): void => view.update({ filters });
 const logout = (): void => {
   void auth.logout();
@@ -174,9 +210,13 @@ const app = $derived<AppEnv>({
     {site}
     view={current}
     sites={directory.sites}
+    library={dashboards.library}
+    dash={dashboards.selection?.ref}
     {connected}
     onselect={selectSite}
     onselectview={selectView}
+    onselectdash={selectDash}
+    onmanage={() => void openManage()}
     ontoggletheme={toggleTheme}
     onlogout={logout}
   />
@@ -206,19 +246,46 @@ const app = $derived<AppEnv>({
       onfilters={setFilters}
     />
   {:else if site === 'all'}
-    <AllSitesView {admin} {client} {live} {app} range={view.current.range} onselectrange={selectRange} />
+    <AllSitesView
+      {admin}
+      {client}
+      {live}
+      {app}
+      store={dashboards}
+      range={view.current.range}
+      cmp={view.current.cmp}
+      onselectrange={selectRange}
+      onselectcmp={selectCompare}
+      onselectdash={selectDash}
+    />
   {:else}
     <SiteView
       {admin}
       {client}
       {live}
       {app}
+      store={dashboards}
       {site}
       timezone={directory.byId.get(site)?.timezone}
       range={view.current.range}
+      cmp={view.current.cmp}
       filters={view.current.filters}
       onselectrange={selectRange}
+      onselectcmp={selectCompare}
+      onselectdash={selectDash}
       onfilters={setFilters}
+    />
+  {/if}
+
+  {#if managing && Manage !== undefined}
+    <Manage
+      {admin}
+      scope={site}
+      library={dashboards.library}
+      dash={view.current.dash}
+      onchanged={() => dashboards.refresh()}
+      onselectdash={selectDash}
+      onclose={() => (managing = false)}
     />
   {/if}
 </main>

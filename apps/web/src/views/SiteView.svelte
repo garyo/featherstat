@@ -1,14 +1,23 @@
 <script lang="ts">
 import type { Filter, Query, QueryRequest } from '@featherstat/shared';
-import { siteOverview } from '../dashboards/site-overview.ts';
 import type { AdminClient } from '../lib/admin.ts';
 import type { QueryClient } from '../lib/api.ts';
 import FilterRow from '../lib/components/FilterRow.svelte';
-import { createDashboardStore } from '../lib/dashboards.svelte.ts';
+import type { DashboardStore } from '../lib/dashboards.svelte.ts';
+import { builtTemplate } from '../lib/dashboards.ts';
 import { createEditorMode } from '../lib/editor-mode.svelte.ts';
 import { sameFilter } from '../lib/filters.ts';
 import { createRevalidator, type LiveStream } from '../lib/live.ts';
-import { localDayKey, RANGE_LABELS, type RangePreset } from '../lib/state.ts';
+import {
+  type CompareChoice,
+  compareNote,
+  compareParam,
+  type DashRef,
+  localDayKey,
+  rangeQualifier,
+  toRange,
+  type ViewRange,
+} from '../lib/state.ts';
 import { dashboardEnv } from '../widgets/env.ts';
 import { windowLabel } from '../widgets/format.ts';
 import type { AppEnv } from '../widgets/types.ts';
@@ -22,47 +31,74 @@ interface Props {
   admin: AdminClient;
   client: QueryClient;
   live: LiveStream;
+  /** The scope's dashboard library + selection — owned by the Shell, which also
+   * feeds the header switcher from it (docs/05 § The dashboard library). */
+  store: DashboardStore;
   site: number;
   /** The site's IANA timezone (site directory) — its midnight re-runs the batch. */
   timezone: string | undefined;
-  range: RangePreset;
+  range: ViewRange;
+  cmp: CompareChoice;
   filters: Filter[];
-  onselectrange: (range: RangePreset) => void;
+  onselectrange: (range: ViewRange) => void;
+  onselectcmp: (cmp: CompareChoice) => void;
+  /** Saving while a TEMPLATE is up clones it — the URL then points at the clone. */
+  onselectdash: (dash: DashRef) => void;
   /** Chips changed (row clicked, chip removed): one URL update, one re-batch. */
   onfilters: (filters: Filter[]) => void;
 }
 
-let { app, admin, client, live, site, timezone, range, filters, onselectrange, onfilters }: Props =
-  $props();
+let {
+  app,
+  admin,
+  client,
+  live,
+  store,
+  site,
+  timezone,
+  range,
+  cmp,
+  filters,
+  onselectrange,
+  onselectcmp,
+  onselectdash,
+  onfilters,
+}: Props = $props();
 
-// The clients are app-lifetime singletons; capturing their initial values is the point.
+// The client is an app-lifetime singleton; capturing its initial value is the point.
 // svelte-ignore state_referenced_locally
 const runner = createBatchRunner(client);
-// svelte-ignore state_referenced_locally
-const store = createDashboardStore(admin);
 
-// The stored dashboard for this site replaces the shipped default (docs/05).
-$effect(() => {
-  store.load(site);
-});
-const dashboard = $derived(store.stored ?? siteOverview);
+// The library selection: a stored row's layout, or a shipped template built
+// fresh — the scope's default when nothing (or nothing readable) is selected.
+const dashboard = $derived(
+  store.stored ??
+    builtTemplate(
+      store.selection?.kind === 'template' ? store.selection.template.id : undefined,
+      site,
+    ),
+);
 
 /** This view's request shape — also the editor's preview context (batch of one widget). */
-const requestFor = (queries: readonly Query[]): QueryRequest => ({
-  site,
-  range: { preset: range },
-  compare: 'previous',
-  ...(filters.length > 0 ? { filters } : {}),
-  queries: withoutBlockedMetrics(hourlyWhenIntraday(queries, range), filters),
-});
+const requestFor = (queries: readonly Query[]): QueryRequest => {
+  const compare = compareParam(cmp);
+  return {
+    site,
+    range: toRange(range),
+    ...(compare === undefined ? {} : { compare }),
+    ...(filters.length > 0 ? { filters } : {}),
+    queries: withoutBlockedMetrics(hourlyWhenIntraday(queries, range), filters),
+  };
+};
 
 const request = $derived.by<QueryRequest>(() => requestFor(collectBatch(dashboard).queries));
 
 // One batch per view state, held until the dashboard lookup answers (still ONE
 // fetch — never a default-then-stored double batch); re-issued on state change …
 $effect(() => {
-  // The rollover is part of "view state": `today`/`mtd` are resolved
-  // server-side, so their answer changes at this site's own midnight.
+  // The rollover is part of "view state": `today`/`mtd` — and an explicit range
+  // touching today — are resolved server-side, so their answer changes at this
+  // site's own midnight.
   void dayKey;
   if (store.ready) runner.run(request);
 });
@@ -87,6 +123,12 @@ const dayKey = $derived(localDayKey(timezone === undefined ? [] : [timezone], ne
 // svelte-ignore state_referenced_locally
 const mode = createEditorMode(store, () => site);
 
+/** Save, then point the URL at the row — editing a template just cloned it. */
+async function save(next: Parameters<typeof mode.save>[0]): Promise<void> {
+  const wasTemplate = store.selection?.kind === 'template';
+  if ((await mode.save(next)) && wasTemplate && store.id !== undefined) onselectdash(store.id);
+}
+
 // Share links are admin chrome: another code-split chunk, loaded on first use.
 let ShareDialog = $state<typeof import('../share/dialog.ts').ShareDialog | undefined>(undefined);
 async function openShare(): Promise<void> {
@@ -103,26 +145,12 @@ function removeFilter(index: number): void {
   onfilters(filters.filter((_, i) => i !== index));
 }
 
-/**
- * Compare wording per preset (mockup: "compared with previous 30 days"). Only
- * `24h` is like-for-like: a partial period is compared against a complete one,
- * which is how a calendar range reads everywhere, and why the rolling preset
- * exists beside it (docs/04 § 3).
- */
-const COMPARE_NOTE: Record<RangePreset, string> = {
-  today: 'compared with all of yesterday',
-  '24h': 'compared with the previous 24 hours',
-  '7d': 'compared with the previous 7 days',
-  '30d': 'compared with the previous 30 days',
-  '90d': 'compared with the previous 90 days',
-  mtd: 'compared with the previous period',
-};
-
 const failed = $derived(runner.error !== undefined && runner.response !== undefined);
-/** The preset actually on screen — while refetching, the held response's, not the pill's. */
-const heldRange = $derived(
-  runner.held !== undefined && 'preset' in runner.held.range ? runner.held.range.preset : range,
-);
+/** The range actually on screen — while refetching, the held response's, not the pill's. */
+const heldRange = $derived.by<ViewRange>(() => {
+  if (runner.held === undefined) return range;
+  return 'preset' in runner.held.range ? runner.held.range.preset : runner.held.range;
+});
 /**
  * The window the SERVER resolved for the response on screen (`meta.windows`) —
  * so the label can never describe a different range from the data beside it, and
@@ -143,11 +171,12 @@ const note = $derived.by(() => {
     // A user-initiated change that never landed reads differently from a live
     // revalidation failure — and says what is actually on screen.
     return runner.stale
-      ? `Couldn't load ${RANGE_LABELS[range].toLowerCase()} — showing ${RANGE_LABELS[heldRange].toLowerCase()}`
+      ? `Couldn't load ${rangeQualifier(range)} — showing ${rangeQualifier(heldRange)}`
       : 'Live update failed — showing the last good result';
   }
-  if (span === undefined) return 'Compared with the previous period';
-  return `${span} · ${COMPARE_NOTE[heldRange]}`;
+  const compared = compareNote(heldRange, cmp) ?? 'no comparison';
+  if (span === undefined) return compared.charAt(0).toUpperCase() + compared.slice(1);
+  return `${span} · ${compared}`;
 });
 </script>
 
@@ -162,16 +191,18 @@ const note = $derived.by(() => {
     {env}
     saving={store.saving}
     saveError={store.error}
-    onsave={(next) => void mode.save(next)}
+    onsave={(next) => void save(next)}
     oncancel={() => mode.close()}
   />
 {:else}
   <div class="toolbar">
     <FilterRow
       {range}
+      {cmp}
       {filters}
       {note}
       onselect={onselectrange}
+      oncompare={onselectcmp}
       onremovefilter={removeFilter}
       onretry={runner.error === undefined ? undefined : () => runner.retry()}
     />
@@ -184,8 +215,11 @@ const note = $derived.by(() => {
     <button
       class="btn slim tool-btn"
       type="button"
-      title="Edit dashboard"
-      onclick={() => void mode.open()}>Edit</button
+      title={store.selection?.kind === 'template'
+        ? 'Customize this built-in dashboard (saving creates your copy)'
+        : 'Edit dashboard'}
+      onclick={() => void mode.open()}
+      >{store.selection?.kind === 'template' ? 'Customize' : 'Edit'}</button
     >
   </div>
   <DashboardGrid

@@ -1,12 +1,17 @@
 import {
+  allSitesTemplate,
   collectBatch,
   type Dashboard,
   hourlyWhenIntraday,
+  overviewTemplate,
   type QueryRequest,
   type RangePreset,
 } from '@featherstat/shared';
-import { allSites } from '../../../web/src/dashboards/all-sites.ts';
-import { siteOverview } from '../../../web/src/dashboards/site-overview.ts';
+
+// The dashboards the web app actually ships, from the shared template registry.
+const siteOverview = overviewTemplate.build(1);
+const allSites = (siteIds: readonly number[]): Dashboard => allSitesTemplate.build('all', siteIds);
+
 import type { Db } from '../../src/db/index.ts';
 import { executeQueryRequest } from '../../src/query/executor.ts';
 import type { ReadMeasurement } from './bench.guard.ts';

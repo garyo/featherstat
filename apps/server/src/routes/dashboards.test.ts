@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openTestDb, T0 } from '../../test/rows.ts';
 import { type Auth, type AuthEnv, createAuth } from '../auth/auth.ts';
-import { type Db, listDashboards } from '../db/index.ts';
+import { type Db, insertShareToken, listDashboards, withWriteTransaction } from '../db/index.ts';
 import { createAdminRoutes } from './admin.ts';
 import { createDashboardRoutes, type DashboardDetail, type DashboardInfo } from './dashboards.ts';
 
@@ -174,7 +174,17 @@ describe('dashboards CRUD', () => {
       headers: { cookie: session.cookie },
     });
     const rows = (await list.json()) as DashboardInfo[];
-    expect(rows).toEqual([{ id: 1, name: 'Overview', site: 1, updatedAt: T0 }]);
+    expect(rows).toEqual([
+      {
+        id: 1,
+        name: 'Overview',
+        site: 1,
+        template: null,
+        createdAt: T0,
+        updatedAt: T0,
+        shareCount: 0,
+      },
+    ]);
   });
 
   it('rejects invalid layouts with a 400 and stores nothing', async () => {
@@ -381,5 +391,94 @@ describe('dashboards CRUD', () => {
       headers: { cookie: session.cookie },
     });
     expect(got.status).toBe(404);
+  });
+});
+
+describe('dashboard library (template lineage, duplicate, reset)', () => {
+  it('records the shipped template a clone came from, and refuses unknown ids', async () => {
+    const session = await login();
+    const created = await mutate(
+      session,
+      'POST',
+      '/api/admin/dashboards?template=overview',
+      LAYOUT,
+    );
+    expect(created.status).toBe(201);
+    expect(((await created.json()) as DashboardInfo).template).toBe('overview');
+    expect(listDashboards(db)[0]?.template).toBe('overview');
+
+    const bogus = await mutate(session, 'POST', '/api/admin/dashboards?template=nope', LAYOUT);
+    expect(bogus.status).toBe(400);
+    expect(listDashboards(db)).toHaveLength(1);
+  });
+
+  it('duplicates a row: same layout, copied name, template carried, no share links', async () => {
+    const session = await login();
+    await mutate(session, 'POST', '/api/admin/dashboards?template=overview', LAYOUT);
+    withWriteTransaction(db, () =>
+      insertShareToken(db, {
+        token_hash: new Uint8Array(32).fill(1),
+        dashboard_id: 1,
+        created_at: T0,
+      }),
+    );
+    clock += 1000;
+
+    const res = await mutate(session, 'POST', '/api/admin/dashboards/1/duplicate');
+    expect(res.status).toBe(201);
+    const copy = (await res.json()) as DashboardDetail;
+    expect(copy.id).toBe(2);
+    expect(copy.name).toBe('Overview copy');
+    expect(copy.template).toBe('overview');
+    expect(copy.shareCount).toBe(0);
+    expect(copy.layout.grid).toHaveLength(2);
+    // The copy is its own row: the original's share link still counts only there.
+    const list = await app.request('/api/admin/dashboards', {
+      headers: { cookie: session.cookie },
+    });
+    const rows = (await list.json()) as DashboardInfo[];
+    expect(rows.map((row) => [row.id, row.shareCount])).toEqual([
+      [1, 1],
+      [2, 0],
+    ]);
+
+    expect((await mutate(session, 'POST', '/api/admin/dashboards/9/duplicate')).status).toBe(404);
+  });
+
+  it('resets a clone to its template at the current vocabulary, keeping the name', async () => {
+    const session = await login();
+    await mutate(session, 'POST', '/api/admin/dashboards?template=overview', LAYOUT);
+    // Rename via PUT, then mangle the grid — reset must restore the template
+    // grid but keep the operator's chosen name.
+    await mutate(session, 'PUT', '/api/admin/dashboards/1', { ...LAYOUT, name: 'My overview' });
+
+    const res = await mutate(session, 'POST', '/api/admin/dashboards/1/reset');
+    expect(res.status).toBe(200);
+    const detail = (await res.json()) as DashboardDetail;
+    expect(detail.name).toBe('My overview');
+    expect(detail.layout.name).toBe('My overview');
+    expect(detail.layout.version).toBe(DASHBOARD_LAYOUT_VERSION);
+    // The template's grid, not the two-widget layout the row held.
+    expect(detail.layout.grid.map((spec) => spec.id)).toContain('heatmap');
+    expect((storedLayout(db, 1) as { grid: unknown[] }).grid.length).toBe(
+      detail.layout.grid.length,
+    );
+    // Lineage survives a reset, so reset stays repeatable.
+    expect(listDashboards(db)[0]?.template).toBe('overview');
+  });
+
+  it('refuses to reset a row that was never cloned from a template', async () => {
+    const session = await login();
+    await mutate(session, 'POST', '/api/admin/dashboards', LAYOUT);
+    const res = await mutate(session, 'POST', '/api/admin/dashboards/1/reset');
+    expect(res.status).toBe(409);
+    // The row is untouched.
+    expect((storedLayout(db, 1) as { grid: unknown[] }).grid).toHaveLength(2);
+  });
+
+  it('401s the library mutations without a session', async () => {
+    for (const path of ['/api/admin/dashboards/1/duplicate', '/api/admin/dashboards/1/reset']) {
+      expect((await app.request(path, { method: 'POST' })).status, path).toBe(401);
+    }
   });
 });

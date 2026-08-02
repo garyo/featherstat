@@ -621,7 +621,15 @@ describe('dashboards, share links and notifications are mounted', () => {
     const list = await secured.app.request('/api/admin/dashboards', { headers: { cookie } });
     expect(list.status).toBe(200);
     expect(await list.json()).toEqual([
-      { id, name: 'Overview', site: 1, updatedAt: expect.any(Number) },
+      {
+        id,
+        name: 'Overview',
+        site: 1,
+        template: null,
+        createdAt: expect.any(Number),
+        updatedAt: expect.any(Number),
+        shareCount: 0,
+      },
     ]);
   });
 

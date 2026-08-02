@@ -1,5 +1,5 @@
 import type { Filter, QueryResponse, VizType } from '@featherstat/shared';
-import { RANGE_QUALIFIER, type RangePreset, type SiteScope } from '../lib/state.ts';
+import { rangeQualifier, type SiteScope, type ViewRange } from '../lib/state.ts';
 import type { AppEnv, Capability, GridEnv, ViewEnv, WidgetEnv } from './types.ts';
 
 /**
@@ -24,6 +24,7 @@ export const NEEDS: Record<VizType, readonly Capability[]> = {
   heatmap: ['data'],
   devices: ['data'],
   dwell: ['data'],
+  histogram: ['data'],
   map: ['data'],
   'site-cards': ['data'],
   feed: ['realtime'],
@@ -52,7 +53,7 @@ export const CAPABILITY_NOTE: Record<Capability, string> = {
  *  breakdown row can add a filter chip. */
 export interface ViewContext {
   scope: SiteScope;
-  range: RangePreset;
+  range: ViewRange;
   onfilter: ((filter: Filter) => void) | null;
 }
 
@@ -68,7 +69,7 @@ export function dashboardEnv(app: AppEnv, view: ViewContext): ViewEnv {
   return {
     ...app,
     scope: view.scope,
-    rangeLabel: RANGE_QUALIFIER[view.range],
+    rangeLabel: rangeQualifier(view.range),
     onfilter: view.onfilter,
   };
 }

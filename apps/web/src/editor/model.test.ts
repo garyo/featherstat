@@ -2,10 +2,13 @@ import {
   DASHBOARD_LAYOUT_VERSION,
   type Dashboard,
   MAX_WIDGETS_PER_DASHBOARD,
+  overviewTemplate,
   type WidgetSpec,
 } from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
-import { siteOverview } from '../dashboards/site-overview.ts';
+
+const siteOverview = overviewTemplate.build(1);
+
 import {
   allowedWidths,
   atWidgetCap,

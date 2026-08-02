@@ -3,7 +3,7 @@ import type { Filter, QueryRequest } from '@featherstat/shared';
 import type { QueryClient } from '../lib/api.ts';
 import FilterRow from '../lib/components/FilterRow.svelte';
 import { createRevalidator, type LiveStream } from '../lib/live.ts';
-import { localDayKey, RANGE_LABELS, type RangePreset } from '../lib/state.ts';
+import { localDayKey, rangeQualifier, toRange, type ViewRange } from '../lib/state.ts';
 import FlowsTable from '../widgets/FlowsTable.svelte';
 import type { EdgeRef } from '../widgets/flows.ts';
 import { windowLabel } from '../widgets/format.ts';
@@ -26,9 +26,9 @@ interface Props {
   timezone: string | undefined;
   /** The shell's clock; the site's own rollover is part of this view's state. */
   now?: number;
-  range: RangePreset;
+  range: ViewRange;
   filters: Filter[];
-  onselectrange: (range: RangePreset) => void;
+  onselectrange: (range: ViewRange) => void;
   onfilters: (filters: Filter[]) => void;
 }
 
@@ -54,7 +54,7 @@ const runner = createBatchRunner(client);
 
 const request = $derived.by<QueryRequest>(() => ({
   site,
-  range: { preset: range },
+  range: toRange(range),
   ...(filters.length > 0 ? { filters } : {}),
   // depth-1 hops draw depth columns, and depth-long signatures mean every
   // sankey edge lands inside a table signature — the click filter's contract.
@@ -124,16 +124,17 @@ function removeFilter(index: number): void {
 }
 
 const failed = $derived(runner.error !== undefined && runner.response !== undefined);
-/** The preset actually on screen — while refetching, the held response's, not the pill's. */
-const heldRange = $derived(
-  runner.held !== undefined && 'preset' in runner.held.range ? runner.held.range.preset : range,
-);
+/** The range actually on screen — while refetching, the held response's, not the pill's. */
+const heldRange = $derived.by<ViewRange>(() => {
+  if (runner.held === undefined) return range;
+  return 'preset' in runner.held.range ? runner.held.range.preset : runner.held.range;
+});
 /** The server's own resolved window for the response on screen — the same
  * source the dashboard's label reads, so the two views cannot disagree. */
 const note = $derived.by(() => {
   if (failed) {
     return runner.stale
-      ? `Couldn't load ${RANGE_LABELS[range].toLowerCase()} — showing ${RANGE_LABELS[heldRange].toLowerCase()}`
+      ? `Couldn't load ${rangeQualifier(range)} — showing ${rangeQualifier(heldRange)}`
       : 'Live update failed — showing the last good result';
   }
   return windowLabel(runner.response?.meta.windows);

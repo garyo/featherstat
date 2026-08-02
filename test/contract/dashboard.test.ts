@@ -1,6 +1,8 @@
 import {
+  DASHBOARD_TEMPLATES,
   type Dashboard,
   DashboardSchema,
+  isQueryError,
   MAX_METRICS_PER_QUERY,
   type Measure,
   type Metric,
@@ -49,6 +51,34 @@ import {
 afterAll(closeContractDb);
 
 const site = siteAnswer();
+
+describe('every shipped TEMPLATE answers against a real corpus', () => {
+  // The registry ratchet's second half: templates.test.ts proves each template
+  // batches; this proves the server can actually answer what each one asks —
+  // a shipped widget whose query the vocabulary refuses would render an error
+  // card on every fresh install, and must fail here first.
+  for (const template of DASHBOARD_TEMPLATES) {
+    it(`'${template.id}' answers every query with no per-query errors`, () => {
+      const built =
+        template.scope === 'all'
+          ? template.build(
+              'all',
+              corpus.sites.map((entry) => entry.id),
+            )
+          : template.build(CONTRACT_SITE);
+      const { request, response } = answer(built, {
+        site: template.scope === 'all' ? 'all' : CONTRACT_SITE,
+      });
+      for (const query of request.queries) {
+        const result = response.results[query.id];
+        expect(result, query.id).toBeDefined();
+        if (result === undefined || isQueryError(result)) {
+          throw new Error(`template '${template.id}' query '${query.id}' errored`);
+        }
+      }
+    });
+  }
+});
 
 describe('every question the shipped dashboard asks gets an answer', () => {
   it('answers every slot every widget declared, with no per-query errors', () => {

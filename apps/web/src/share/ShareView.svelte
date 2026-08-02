@@ -29,8 +29,11 @@ let payload = $state<SharePayload | undefined>(undefined);
 let error = $state<string | undefined>(undefined);
 
 /** `?range=` is the share endpoint's one client knob; the same parser the app
- * uses reads it, so `/s/<token>?range=7d` means here what it means there. */
-const range = parseViewState(window.location.href).range;
+ * uses reads it, so `/s/<token>?range=7d` means here what it means there. The
+ * endpoint takes PRESETS only (docs/04 § 5), so an explicit-date range — which
+ * this page offers no control for — falls back to the endpoint's default. */
+const parsedRange = parseViewState(window.location.href).range;
+const range = typeof parsedRange === 'string' ? parsedRange : '30d';
 
 /**
  * What this page can offer its widgets — and, said out loud, what it cannot. A

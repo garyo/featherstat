@@ -177,15 +177,21 @@ const INTRADAY_PRESETS = new Set<RangePreset>(['today', '24h']);
 
 /**
  * Day buckets rewritten to hours for the ranges that are shorter than the chart
- * they would draw.
+ * they would draw. An explicit `{from, to}` range is intraday exactly when it is
+ * a single day — the one shape where a day bucket collapses to a point.
  *
  * KPI spark companions are exempt: they mix session-level metrics (engaged_ms,
  * bounce_rate) that the vocabulary cannot bucket by hour, so rewriting them
  * turns the whole companion into a compile error. They keep day buckets and
  * collapse to a single point, which KpiRow renders sparkless.
  */
-export function hourlyWhenIntraday(queries: readonly Query[], range: RangePreset): Query[] {
-  if (!INTRADAY_PRESETS.has(range)) return [...queries];
+export function hourlyWhenIntraday(
+  queries: readonly Query[],
+  range: RangePreset | { from: string; to: string },
+): Query[] {
+  const intraday =
+    typeof range === 'string' ? INTRADAY_PRESETS.has(range) : range.from === range.to;
+  if (!intraday) return [...queries];
   return queries.map((query) =>
     'kind' in query || query.bucket !== 'day' || isSparkCompanion(query.id)
       ? query

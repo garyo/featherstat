@@ -1,4 +1,10 @@
-import type { QueryRequest, RangePreset } from '@featherstat/shared';
+import {
+  allSitesTemplate,
+  type Dashboard,
+  overviewTemplate,
+  type QueryRequest,
+  type RangePreset,
+} from '@featherstat/shared';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../../apps/server/src/index.ts';
 import {
@@ -7,8 +13,11 @@ import {
   QUERY_WINDOW_MS,
   TOKEN_BATCHES_PER_MIN,
 } from '../../apps/server/src/routes/query.ts';
-import { allSites } from '../../apps/web/src/dashboards/all-sites.ts';
-import { siteOverview } from '../../apps/web/src/dashboards/site-overview.ts';
+
+// The dashboards the web app actually ships, from the shared template registry.
+const siteOverview = overviewTemplate.build(1);
+const allSites = (siteIds: readonly number[]): Dashboard => allSitesTemplate.build('all', siteIds);
+
 import { canonicalJson } from '../../apps/web/src/lib/api.ts';
 import { REVALIDATE_DEBOUNCE_MS } from '../../apps/web/src/lib/live.ts';
 import { CONTRACT_SITE, closeContractDb, contractDb, corpus, NOW, requestFor } from './corpus.ts';

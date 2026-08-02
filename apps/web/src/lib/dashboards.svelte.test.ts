@@ -34,12 +34,20 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
-const info = (id: number): DashboardInfo => ({ id, name: 'Overview', site: 1, updatedAt: 1 });
+const info = (id: number): DashboardInfo => ({
+  id,
+  name: 'Overview',
+  site: 1,
+  template: null,
+  createdAt: 1,
+  updatedAt: 1,
+  shareCount: 0,
+});
 const detail = (id: number): DashboardDetail => ({ ...info(id), layout: LAYOUT });
 
 let list: Deferred<DashboardInfo[]>;
 let get: Deferred<DashboardDetail>;
-let created: Dashboard[];
+let created: { layout: Dashboard; template: string | undefined }[];
 let updated: Array<{ id: number; layout: Dashboard }>;
 
 function fakeAdmin(): AdminClient {
@@ -49,8 +57,8 @@ function fakeAdmin(): AdminClient {
   > = {
     listDashboards: () => list.promise,
     getDashboard: () => get.promise,
-    createDashboard: (layout) => {
-      created.push(layout);
+    createDashboard: (layout, template) => {
+      created.push({ layout, template });
       return Promise.resolve(detail(99));
     },
     updateDashboard: (id, layout) => {
@@ -71,7 +79,7 @@ beforeEach(() => {
 describe('createDashboardStore save/load sequencing', () => {
   it('a save racing the initial load waits for it and PUTs the existing row', async () => {
     const store = createDashboardStore(fakeAdmin());
-    store.load(1);
+    store.load(1, undefined);
     // Save is clicked before the lookup answered: it must not create row two.
     const saving = store.save(LAYOUT);
     list.resolve([info(7)]);
@@ -84,18 +92,20 @@ describe('createDashboardStore save/load sequencing', () => {
 
   it('creates the first row only when the scope truly has none', async () => {
     const store = createDashboardStore(fakeAdmin());
-    store.load(1);
+    store.load(1, undefined);
     const saving = store.save(LAYOUT);
     list.resolve([]);
     expect(await saving).toBe(true);
-    expect(created).toEqual([LAYOUT]);
+    // The default selection is the shipped overview template — the clone
+    // records its lineage, so it can be reset later.
+    expect(created).toEqual([{ layout: LAYOUT, template: 'overview' }]);
     expect(updated).toEqual([]);
     expect(store.id).toBe(99);
   });
 
   it('keeps the row id when the detail read fails, so a save repairs the row', async () => {
     const store = createDashboardStore(fakeAdmin());
-    store.load(1);
+    store.load(1, undefined);
     list.resolve([info(3)]);
     get.reject(new Error('stored dashboard 3 is invalid'));
     await vi.waitFor(() => expect(store.ready).toBe(true));
@@ -105,5 +115,39 @@ describe('createDashboardStore save/load sequencing', () => {
     expect(await store.save(LAYOUT)).toBe(true);
     expect(created).toEqual([]);
     expect(updated).toEqual([{ id: 3, layout: LAYOUT }]);
+  });
+});
+
+describe('createDashboardStore library resolution', () => {
+  it('an explicit template ref selects the template and loads no row', async () => {
+    const store = createDashboardStore(fakeAdmin());
+    store.load(1, 't:content');
+    list.resolve([info(7)]);
+    await vi.waitFor(() => expect(store.ready).toBe(true));
+    expect(store.selection?.ref).toBe('t:content');
+    expect(store.id).toBeUndefined();
+    expect(store.stored).toBeUndefined();
+    // Saving while a template is up CLONES it with its lineage.
+    expect(await store.save(LAYOUT)).toBe(true);
+    expect(created).toEqual([{ layout: LAYOUT, template: 'content' }]);
+    expect(store.id).toBe(99);
+  });
+
+  it('exposes the scope library for the switcher, templates first', async () => {
+    const store = createDashboardStore(fakeAdmin());
+    store.load('all', undefined);
+    list.resolve([]);
+    await vi.waitFor(() => expect(store.ready).toBe(true));
+    expect(store.library.map((entry) => entry.ref)).toEqual(['t:all-sites']);
+    expect(store.selection?.ref).toBe('t:all-sites');
+  });
+
+  it('the list failing still readies the view — the shipped default renders', async () => {
+    const store = createDashboardStore(fakeAdmin());
+    store.load(1, undefined);
+    list.reject(new Error('offline'));
+    await vi.waitFor(() => expect(store.ready).toBe(true));
+    expect(store.selection).toBeUndefined();
+    expect(store.stored).toBeUndefined();
   });
 });

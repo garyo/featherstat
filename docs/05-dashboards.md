@@ -12,7 +12,7 @@ is the visual reference for everything below (both views, light and dark).
 | View | Contents |
 | --- | --- |
 | **All sites** (home) | One card per site: name, active-now, today's visitors + delta ("today" = the SITE's local today, per its timezone), 14-day sparkline, the site's **top 3 pages with per-page trend** (micro-sparkline + delta vs previous period — how each blog article is doing, at a glance, R20), and goal/event pills (e.g. "3 signups today" — **M2**, alongside goals themselves). A site with no traffic yet gets a "waiting for the first hit" card, not a blank. Sorted by traffic. The whole view is one `/api/query` batch + the SSE stream. |
-| **Site** | The workhorse. Filter row (date presets — Today · Last 24 hours · 7 / 30 / 90 days · Month to date, the second of which is the rolling window whose comparison is like-for-like, 04 § 3 — active dimension filters as removable chips; the compare mode is fixed to "previous period" until the compare toggle ships in **M2**) → KPI row → main time series → breakdown grid (pages, referrers, geo, devices, events, outbound links, time on page, hours heatmap) → top journeys. Every breakdown row is click-to-filter; a filter on an event-level dimension renders the session-only KPI tiles (engagement, bounce) as "—" rather than erroring the row. |
+| **Site** | The workhorse. Filter row (date presets — Today · Last 24 hours · 7 / 30 / 90 days · Month to date, the second of which is the rolling window whose comparison is like-for-like, 04 § 3 — active dimension filters as removable chips; plus an explicit date range and the compare control — see § Custom ranges & compare) → KPI row → main time series → breakdown grid (pages, referrers, geo, devices, events, outbound links, time on page, hours heatmap) → top journeys. Every breakdown row is click-to-filter; a filter on an event-level dimension renders the session-only KPI tiles (engagement, bounce) as "—" rather than erroring the row. |
 | **Journeys** (per site) | R21. A sankey of the first N steps from the entry page (pages and events as nodes, edge weight = sessions) over a top-journeys table: sequence · sessions · avg time · exit rate. Clicking a sankey edge filters the table; the view honors the global filter row, so "journeys of visitors from HN" is one click. **A step is a move, not a hit**: a page repeated back to back — reloaded, or announced twice by an SPA router — is one step, so no edge loops a node back to itself and no journey reads `/app → /app` (03 § Journeys, 06). A session that never left its entry page is a one-step journey with no edges, and shows up in the table rather than the sankey. |
 | **Realtime** | Active-now hero number, a per-visitor tally of the last 30 minutes (alias · hits · engaged time · place · site — the time is the server's, since only it sees the heartbeat pings), live feed, country tally of the same window. Pure SSE, no queries. The world map with fading dots (city centroids) moved to **M2**: it needs the map-outline data that arrives with the sankey work, so M1 ships hero + feed + country list and the map joins when that asset lands. |
 | **Settings** | Sites, tracking snippets, tokens, share links, retention, diagnostics (bot counts, ingest health). |
@@ -105,6 +105,47 @@ A dashboard is JSON: a grid of widget cards.
   site-id tiebreak so order is always deterministic), fixed by site id, or
   name), so selecting/editing/reordering works there with the same mechanism
   as everywhere else.
+
+### The dashboard library
+
+A scope has a **library** of dashboards, not a singleton: the shipped
+templates plus any number of stored rows. Shipped templates live in
+`packages/shared/src/templates/` as typed factories — `overview`, `content`,
+`acquisition`, `campaigns` for a site, `all-sites` for the overview — shared
+because the server needs them too (reset rebuilds a clone from its template).
+A template is code, not a row: it builds at the current vocabulary on every
+call and appears in the library as a virtual entry.
+
+- **URL**: `?dash=<rowId>` or `?dash=t:<templateId>` joins the view state.
+  Absent means the scope's **default**: the oldest stored row if any — exactly
+  the pre-library singleton rule, so an untouched install sees no change —
+  else the shipped overview / all-sites template.
+- **Switcher**: a `<select>` in the Shell header beside the scope picker, fed
+  by the same store the view renders from. Its "Manage dashboards…" line opens
+  the management panel (new/rename/duplicate/reset/delete), a code-split chunk.
+- **Templates are immutable; editing clones.** Opening the editor on a
+  template reads "Customize"; the first save creates a stored row recording
+  `dashboards.template` — the lineage that powers **reset** (rebuild the
+  clone's layout from its template, keeping the row's name). Rows created from
+  scratch have no template and refuse reset.
+- **Duplicate** copies a row (fresh identity, template lineage carried, no
+  share links — links point at rows). **Delete** removes the row and revokes
+  its share tokens in the same transaction; the list shape carries a live
+  `shareCount` so the delete confirm says what it will revoke first.
+
+### Custom ranges & compare
+
+The range row's presets are joined by an explicit range (`range=<from>..<to>`
+in the URL, two native date inputs in the UI — no picker library; the bundle
+ratchet is a design constraint) and a compare control:
+`cmp=previous|year|off|<from>..<to>`, default `previous` (the pre-control
+behavior). `off` omits `compare` from the batch. Labels come from one module
+(`lib/state.ts`): explicit ranges read as dates ("Jun 1 – Jun 30, 2026"), and
+an unequal-length custom compare states BOTH lengths ("compared with May 1 –
+May 14, 2026 (30 days vs 14 days)") — rows align by index from the start
+(docs/04 § 3), and that labeled mismatch is what keeps the alignment honest.
+A single-day explicit range is intraday: day buckets rewrite to hours exactly
+as `today` does. Share links keep their preset-only knob.
 
 ### Layout versions
 

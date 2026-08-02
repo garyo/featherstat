@@ -1,8 +1,10 @@
 import {
+  allSitesTemplate,
   collectBatch,
   type Dashboard,
   hourlyWhenIntraday,
   isQueryError,
+  overviewTemplate,
   type Query,
   type QueryRequest,
   type QueryResponse,
@@ -14,8 +16,10 @@ import type { Db } from '../../apps/server/src/db/index.ts';
 import { executeQueryRequest } from '../../apps/server/src/query/executor.ts';
 import { generateCorpus } from '../../apps/server/test/replay/generate.ts';
 import { openReplayDb } from '../../apps/server/test/replay/harness.ts';
-import { allSites } from '../../apps/web/src/dashboards/all-sites.ts';
-import { siteOverview } from '../../apps/web/src/dashboards/site-overview.ts';
+
+// The dashboards the web app actually ships, from the shared template registry.
+const siteOverview = overviewTemplate.build(1);
+const allSites = (siteIds: readonly number[]): Dashboard => allSitesTemplate.build('all', siteIds);
 
 /**
  * Real server answers for the dashboards the web app actually ships.

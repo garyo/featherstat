@@ -1,14 +1,21 @@
 <script lang="ts">
 import type { Query, QueryRequest } from '@featherstat/shared';
-import { allSites } from '../dashboards/all-sites.ts';
 import type { AdminClient } from '../lib/admin.ts';
 import type { QueryClient } from '../lib/api.ts';
 import FilterRow from '../lib/components/FilterRow.svelte';
-import { createDashboardStore } from '../lib/dashboards.svelte.ts';
-import { withLiveSiteIds } from '../lib/dashboards.ts';
+import type { DashboardStore } from '../lib/dashboards.svelte.ts';
+import { builtTemplate, withLiveSiteIds } from '../lib/dashboards.ts';
 import { createEditorMode } from '../lib/editor-mode.svelte.ts';
 import { createRevalidator, type LiveStream } from '../lib/live.ts';
-import { localDayKey, type RangePreset } from '../lib/state.ts';
+import {
+  type CompareChoice,
+  compareNote,
+  compareParam,
+  type DashRef,
+  localDayKey,
+  toRange,
+  type ViewRange,
+} from '../lib/state.ts';
 import { dashboardEnv } from '../widgets/env.ts';
 import type { AppEnv } from '../widgets/types.ts';
 import { createBatchRunner } from './batch.svelte.ts';
@@ -23,38 +30,62 @@ interface Props {
   admin: AdminClient;
   client: QueryClient;
   live: LiveStream;
-  range: RangePreset;
-  onselectrange: (range: RangePreset) => void;
+  /** The scope's dashboard library + selection — owned by the Shell (see SiteView). */
+  store: DashboardStore;
+  range: ViewRange;
+  cmp: CompareChoice;
+  onselectrange: (range: ViewRange) => void;
+  onselectcmp: (cmp: CompareChoice) => void;
+  onselectdash: (dash: DashRef) => void;
 }
 
-let { app, admin, client, live, range, onselectrange }: Props = $props();
+let {
+  app,
+  admin,
+  client,
+  live,
+  store,
+  range,
+  cmp,
+  onselectrange,
+  onselectcmp,
+  onselectdash,
+}: Props = $props();
 
-// The clients are app-lifetime singletons; capturing their initial values is the point.
+// The client is an app-lifetime singleton; capturing its initial value is the point.
 // svelte-ignore state_referenced_locally
 const runner = createBatchRunner(client);
-// svelte-ignore state_referenced_locally
-const store = createDashboardStore(admin);
-
-$effect(() => {
-  store.load('all');
-});
 
 /**
  * 30 daily buckets cover the 14-day sparklines, the same-weekday-last-week
  * delta, and the per-page trends (R20) — one query for the cards plus one
- * top-pages query per site, all in the same batch. A stored dashboard replaces
- * the shipped default, but its site-cards always follow the LIVE directory.
+ * top-pages query per site, all in the same batch. The library selection (a
+ * stored row, or the shipped all-sites template) always follows the LIVE
+ * directory for its site-cards.
  */
 const siteIds = $derived(app.sites === null ? [] : [...app.sites.keys()]);
-const dashboard = $derived(withLiveSiteIds(store.stored ?? allSites(siteIds), siteIds));
+const dashboard = $derived(
+  withLiveSiteIds(
+    store.stored ??
+      builtTemplate(
+        store.selection?.kind === 'template' ? store.selection.template.id : undefined,
+        'all',
+        siteIds,
+      ),
+    siteIds,
+  ),
+);
 
 /** This view's request shape — also the editor's preview context. */
-const requestFor = (queries: readonly Query[]): QueryRequest => ({
-  site: 'all',
-  range: { preset: range },
-  compare: 'previous',
-  queries: hourlyWhenIntraday([...queries], range),
-});
+const requestFor = (queries: readonly Query[]): QueryRequest => {
+  const compare = compareParam(cmp);
+  return {
+    site: 'all',
+    range: toRange(range),
+    ...(compare === undefined ? {} : { compare }),
+    queries: hourlyWhenIntraday([...queries], range),
+  };
+};
 
 const request = $derived.by<QueryRequest>(() => requestFor(collectBatch(dashboard).queries));
 
@@ -85,6 +116,12 @@ const dayKey = $derived(
 // svelte-ignore state_referenced_locally
 const mode = createEditorMode(store, () => 'all');
 
+/** Save, then point the URL at the row — editing a template just cloned it. */
+async function save(next: Parameters<typeof mode.save>[0]): Promise<void> {
+  const wasTemplate = store.selection?.kind === 'template';
+  if ((await mode.save(next)) && wasTemplate && store.id !== undefined) onselectdash(store.id);
+}
+
 // Share links are admin chrome: another code-split chunk, loaded on first use.
 let ShareDialog = $state<typeof import('../share/dialog.ts').ShareDialog | undefined>(undefined);
 async function openShare(): Promise<void> {
@@ -94,11 +131,13 @@ async function openShare(): Promise<void> {
 /** ONE environment for the dashboard AND the editor's preview (see SiteView). */
 const env = $derived(dashboardEnv(app, { scope: 'all', range, onfilter: null }));
 
-const note = $derived(
-  runner.error !== undefined && runner.response !== undefined
-    ? 'Live update failed — showing the last good result'
-    : 'compared with the previous period · active-now is live',
-);
+const note = $derived.by(() => {
+  if (runner.error !== undefined && runner.response !== undefined) {
+    return 'Live update failed — showing the last good result';
+  }
+  const compared = compareNote(range, cmp) ?? 'no comparison';
+  return `${compared} · active-now is live`;
+});
 </script>
 
 {#if mode.Editor !== undefined}
@@ -112,15 +151,17 @@ const note = $derived(
     {env}
     saving={store.saving}
     saveError={store.error}
-    onsave={(next) => void mode.save(next)}
+    onsave={(next) => void save(next)}
     oncancel={() => mode.close()}
   />
 {:else}
   <div class="toolbar">
     <FilterRow
       {range}
+      {cmp}
       {note}
       onselect={onselectrange}
+      oncompare={onselectcmp}
       onretry={runner.error === undefined ? undefined : () => runner.retry()}
     />
     <button
@@ -132,8 +173,11 @@ const note = $derived(
     <button
       class="btn slim tool-btn"
       type="button"
-      title="Edit dashboard"
-      onclick={() => void mode.open()}>Edit</button
+      title={store.selection?.kind === 'template'
+        ? 'Customize this built-in dashboard (saving creates your copy)'
+        : 'Edit dashboard'}
+      onclick={() => void mode.open()}
+      >{store.selection?.kind === 'template' ? 'Customize' : 'Edit'}</button
     >
   </div>
   <DashboardGrid

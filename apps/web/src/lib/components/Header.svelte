@@ -1,6 +1,7 @@
 <script lang="ts">
 import type { SiteInfo } from '@featherstat/shared';
-import type { SiteScope, ViewName } from '../state.ts';
+import type { LibraryEntry } from '../dashboards.ts';
+import { type DashRef, parseDashRef, type SiteScope, type ViewName } from '../state.ts';
 
 interface Props {
   /** The scope currently shown — `all` selects the overview tab. */
@@ -8,11 +9,19 @@ interface Props {
   view: ViewName;
   /** The real site directory (`/api/sites`); undefined while it loads. */
   sites: SiteInfo[] | undefined;
+  /** The scope's dashboard library (docs/05 § The dashboard library); the
+   * switcher renders only on the Dashboard view and only once this is non-empty. */
+  library?: readonly LibraryEntry[];
+  /** The library entry actually on screen (resolved, so a default wears its name). */
+  dash?: DashRef;
   /** SSE health — false shows the "reconnecting" note (docs/05 R22: never silently stale). */
   connected?: boolean;
   /** Opens the dashboard for a scope — one state update (site + view together). */
   onselect: (site: SiteScope) => void;
   onselectview: (view: ViewName) => void;
+  onselectdash?: (dash: DashRef) => void;
+  /** Opens the library management panel (a code-split chunk). */
+  onmanage?: () => void;
   ontoggletheme: () => void;
   onlogout: () => void;
 }
@@ -21,9 +30,13 @@ let {
   site,
   view,
   sites,
+  library = [],
+  dash,
   connected = true,
   onselect,
   onselectview,
+  onselectdash,
+  onmanage,
   ontoggletheme,
   onlogout,
 }: Props = $props();
@@ -38,6 +51,18 @@ function onchange(event: Event): void {
   }
   const id = Number(raw);
   if (Number.isInteger(id) && id > 0) onselect(id);
+}
+
+function ondashchange(event: Event): void {
+  const select = event.currentTarget as HTMLSelectElement;
+  if (select.value === '~manage') {
+    // A command, not a selection: restore the picker to what is on screen.
+    select.value = String(dash ?? '');
+    onmanage?.();
+    return;
+  }
+  const ref = parseDashRef(select.value);
+  if (ref !== undefined) onselectdash?.(ref);
 }
 </script>
 
@@ -56,6 +81,18 @@ function onchange(event: Event): void {
       <option value={String(entry.id)}>{entry.name}</option>
     {/each}
   </select>
+  <!-- The scope's dashboard library, same select grammar as the scope picker.
+       Only on the Dashboard view: the other views render no dashboard. -->
+  {#if view === 'dash' && library.length > 0 && dash !== undefined}
+    <select class="tab site-switch" aria-label="Dashboard" value={String(dash)} onchange={ondashchange}>
+      {#each library as entry (entry.ref)}
+        <option value={String(entry.ref)}
+          >{entry.name}{entry.kind === 'template' ? ' (built-in)' : ''}</option
+        >
+      {/each}
+      {#if onmanage !== undefined}<option value="~manage">Manage dashboards…</option>{/if}
+    </select>
+  {/if}
   <nav class="tabs" aria-label="Views">
     <button
       class="tab"

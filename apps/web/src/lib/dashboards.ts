@@ -1,11 +1,16 @@
-import type { Dashboard } from '@featherstat/shared';
-import type { SiteScope } from './state.ts';
+import {
+  type Dashboard,
+  type DashboardTemplate,
+  dashboardTemplate,
+  templatesForScope,
+} from '@featherstat/shared';
+import type { DashRef, SiteScope } from './state.ts';
 
 /**
- * The dashboard persistence contract (docs/05 § Widgets): the built-in
- * dashboards are shipped JSON; a stored row for the same scope replaces them.
- * This module is the pure half — wire shapes and resolution rules; the
- * reactive store lives in `dashboards.svelte.ts`.
+ * The dashboard library (docs/05 § The dashboard library): a scope's list is
+ * the shipped templates (virtual `t:<id>` entries, code not rows) plus its
+ * stored rows. This module is the pure half — wire shapes and resolution
+ * rules; the reactive store lives in `dashboards.svelte.ts`.
  */
 
 /** List row of `GET /api/admin/dashboards` (the server's `DashboardInfo`). */
@@ -13,7 +18,12 @@ export interface DashboardInfo {
   id: number;
   name: string;
   site: Dashboard['site'];
+  /** Shipped-template id this row was cloned from (the reset target); null otherwise. */
+  template: string | null;
+  createdAt: number;
   updatedAt: number;
+  /** Live share links pointing at this row — what deleting it would revoke. */
+  shareCount: number;
 }
 
 /** Detail row: the list fields plus the full validated layout. */
@@ -21,20 +31,60 @@ export interface DashboardDetail extends DashboardInfo {
   layout: Dashboard;
 }
 
+/** One line of the switcher: a shipped template, or a stored row. */
+export type LibraryEntry =
+  | { kind: 'template'; ref: `t:${string}`; name: string; template: DashboardTemplate }
+  | { kind: 'stored'; ref: number; name: string; info: DashboardInfo };
+
 /**
- * The stored dashboard a scope renders, if any: the OLDEST row whose scope
- * matches, so the canonical dashboard survives someone minting extras — the
- * same deterministic-order instinct as the site-cards sort tiebreaks.
+ * A scope's library, in display order: shipped templates first (registry
+ * order), then stored rows oldest first — `created_at` with the row id as the
+ * tiebreak, the same deterministic-order instinct as the site-cards sort.
  */
-export function storedDashboardFor(
-  list: readonly DashboardInfo[],
-  scope: SiteScope,
-): DashboardInfo | undefined {
-  let best: DashboardInfo | undefined;
-  for (const info of list) {
-    if (info.site === scope && (best === undefined || info.id < best.id)) best = info;
+export function libraryFor(list: readonly DashboardInfo[], scope: SiteScope): LibraryEntry[] {
+  const templates: LibraryEntry[] = templatesForScope(scope === 'all' ? 'all' : 'site').map(
+    (template) => ({ kind: 'template', ref: `t:${template.id}`, name: template.name, template }),
+  );
+  const stored: LibraryEntry[] = list
+    .filter((info) => info.site === scope)
+    .sort((a, b) => a.createdAt - b.createdAt || a.id - b.id)
+    .map((info) => ({ kind: 'stored', ref: info.id, name: info.name, info }));
+  return [...templates, ...stored];
+}
+
+/**
+ * What a `?dash=` ref means inside a scope's library. Absent — or naming
+ * something the scope does not have — resolves to the scope's DEFAULT: the
+ * oldest stored row if any (exactly v1's singleton rule, so an install that
+ * never touches the library sees no change), else the shipped default, which
+ * is the first template of the scope.
+ */
+export function resolveDashRef(
+  library: readonly LibraryEntry[],
+  dash: DashRef | undefined,
+): LibraryEntry | undefined {
+  if (dash !== undefined) {
+    const named = library.find((entry) => entry.ref === dash);
+    if (named !== undefined) return named;
   }
-  return best;
+  return library.find((entry) => entry.kind === 'stored') ?? library[0];
+}
+
+/**
+ * A shipped template built for a scope — the document a view renders when the
+ * selection is virtual. Falls back to the scope's default template, so even a
+ * mangled ref renders a dashboard, not an error.
+ */
+export function builtTemplate(
+  id: string | undefined,
+  scope: SiteScope,
+  siteIds: readonly number[] = [],
+): Dashboard {
+  const template =
+    (id === undefined ? undefined : dashboardTemplate(id)) ??
+    templatesForScope(scope === 'all' ? 'all' : 'site')[0];
+  if (template === undefined) throw new Error('no shipped template for this scope');
+  return template.build(scope, siteIds);
 }
 
 /**

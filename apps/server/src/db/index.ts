@@ -579,27 +579,48 @@ export interface DashboardRow {
   site_scope: string;
   /** Dashboard JSON; the routes validate with `DashboardSchema` before every write. */
   layout: string;
+  /** Shipped-template id this row was cloned from — the reset target; NULL otherwise. */
+  template: string | null;
+  /** Manual library ordering (docs/05 § The dashboard library); 0 = creation order. */
+  sort_order: number;
+  created_at: number;
   updated_at: number;
 }
 
-export type NewDashboard = Omit<DashboardRow, 'id'>;
+/** What a create supplies; `created_at` starts at `updated_at` and `sort_order` at 0. */
+export type NewDashboard = Omit<DashboardRow, 'id' | 'created_at' | 'sort_order'>;
 
-const DASHBOARD_COLUMNS = 'id, name, site_scope, layout, updated_at';
-const SQL_LIST_DASHBOARDS = `SELECT ${DASHBOARD_COLUMNS} FROM dashboards ORDER BY id`;
+/** A list row also counts its LIVE share links — the delete confirm says what a delete revokes. */
+export interface DashboardListRow extends DashboardRow {
+  share_count: number;
+}
+
+const DASHBOARD_COLUMNS =
+  'id, name, site_scope, layout, template, sort_order, created_at, updated_at';
+const SQL_LIST_DASHBOARDS = `SELECT ${DASHBOARD_COLUMNS},
+  (SELECT COUNT(*) FROM share_tokens st
+   WHERE st.dashboard_id = dashboards.id AND st.revoked_at IS NULL) AS share_count
+FROM dashboards ORDER BY id`;
 const SQL_GET_DASHBOARD = `SELECT ${DASHBOARD_COLUMNS} FROM dashboards WHERE id = ?`;
-const SQL_CREATE_DASHBOARD =
-  'INSERT INTO dashboards (name, site_scope, layout, updated_at, created_at) VALUES (?, ?, ?, ?, ?)';
+const SQL_CREATE_DASHBOARD = `INSERT INTO dashboards (name, site_scope, layout, template, updated_at, created_at)
+VALUES (?, ?, ?, ?, ?, ?)`;
 const SQL_UPDATE_DASHBOARD = `UPDATE dashboards SET name = ?, site_scope = ?, layout = ?, updated_at = ?
 WHERE id = ? RETURNING ${DASHBOARD_COLUMNS}`;
 const SQL_DELETE_DASHBOARD = 'DELETE FROM dashboards WHERE id = ?';
 const SQL_DELETE_DASHBOARD_TOKENS = 'DELETE FROM share_tokens WHERE dashboard_id = ?';
+const SQL_COUNT_LIVE_SHARE_TOKENS =
+  'SELECT COUNT(*) FROM share_tokens WHERE dashboard_id = ? AND revoked_at IS NULL';
 
-export function listDashboards(db: Db): DashboardRow[] {
-  return stmt<DashboardRow>(db, SQL_LIST_DASHBOARDS).all() as DashboardRow[];
+export function listDashboards(db: Db): DashboardListRow[] {
+  return stmt<DashboardListRow>(db, SQL_LIST_DASHBOARDS).all() as DashboardListRow[];
 }
 
 export function getDashboard(db: Db, id: number): DashboardRow | undefined {
   return stmt<DashboardRow>(db, SQL_GET_DASHBOARD).get(id);
+}
+
+export function countLiveShareTokens(db: Db, dashboardId: number): number {
+  return stmt(db, SQL_COUNT_LIVE_SHARE_TOKENS).pluck().get(dashboardId) as number;
 }
 
 export function createDashboard(db: Db, row: NewDashboard): DashboardRow {
@@ -608,12 +629,14 @@ export function createDashboard(db: Db, row: NewDashboard): DashboardRow {
     row.name,
     row.site_scope,
     row.layout,
+    row.template,
     row.updated_at,
     row.updated_at, // created_at: a fresh row's clocks start together
   );
-  return { id: Number(info.lastInsertRowid), ...row };
+  return { id: Number(info.lastInsertRowid), sort_order: 0, created_at: row.updated_at, ...row };
 }
 
+/** Rewrites the layout and its denormalized fields; `template`/`sort_order`/`created_at` stay. */
 export function updateDashboard(db: Db, id: number, row: NewDashboard): DashboardRow | undefined {
   assertWritable(db);
   return stmt<DashboardRow>(db, SQL_UPDATE_DASHBOARD).get(

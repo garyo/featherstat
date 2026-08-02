@@ -22,7 +22,9 @@ export interface EditorMode {
   readonly Editor: typeof import('../editor/editor.ts').Editor | undefined;
   open(): Promise<void>;
   close(): void;
-  save(next: Dashboard): Promise<void>;
+  /** True when the store accepted the save — editing a template just cloned it,
+   * and the caller may want to point the URL at the new row. */
+  save(next: Dashboard): Promise<boolean>;
 }
 
 export function createEditorMode(store: DashboardStore, scope: () => SiteScope): EditorMode {
@@ -41,7 +43,9 @@ export function createEditorMode(store: DashboardStore, scope: () => SiteScope):
       editing = false;
     },
     async save(next) {
-      if (await store.save({ ...next, site: scope() })) editing = false;
+      const saved = await store.save({ ...next, site: scope() });
+      if (saved) editing = false;
+      return saved;
     },
   };
 }

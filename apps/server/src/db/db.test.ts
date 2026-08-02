@@ -463,19 +463,29 @@ describe('helpers', () => {
       name,
       site_scope: '1',
       layout: JSON.stringify({ name, site: 1, grid: [] }),
+      template: null,
       updated_at: 1_700_000_000_000,
     });
 
     it('creates, lists, gets, updates and deletes', () => {
       const created = write(() => createDashboard(db, layout('Overview')));
       expect(created.id).toBeGreaterThan(0);
+      expect(created.created_at).toBe(created.updated_at);
       expect(getDashboard(db, created.id)).toEqual(created);
-      expect(listDashboards(db)).toEqual([created]);
+      expect(listDashboards(db)).toEqual([{ ...created, share_count: 0 }]);
 
       const updated = write(() =>
         updateDashboard(db, created.id, { ...layout('Renamed'), updated_at: 2 }),
       );
-      expect(updated).toEqual({ ...layout('Renamed'), id: created.id, updated_at: 2 });
+      // The library columns survive an update: only the layout and its
+      // denormalized fields are rewritten.
+      expect(updated).toEqual({
+        ...layout('Renamed'),
+        id: created.id,
+        updated_at: 2,
+        sort_order: 0,
+        created_at: created.created_at,
+      });
       expect(write(() => updateDashboard(db, 99, layout('Ghost')))).toBeUndefined();
 
       expect(write(() => deleteDashboard(db, created.id))).toBe(true);
@@ -587,7 +597,13 @@ describe('helpers', () => {
       expect(() => deleteSetting(db, 'loose')).toThrow(/withWriteTransaction/);
       expect(() => incrementBotDrops(db, 1, '2023-11-14')).toThrow(/withWriteTransaction/);
       expect(() =>
-        createDashboard(db, { name: 'x', site_scope: 'all', layout: '{}', updated_at: 0 }),
+        createDashboard(db, {
+          name: 'x',
+          site_scope: 'all',
+          layout: '{}',
+          template: null,
+          updated_at: 0,
+        }),
       ).toThrow(/withWriteTransaction/);
       expect(() =>
         insertShareToken(db, { token_hash: new Uint8Array(32), dashboard_id: 1, created_at: 0 }),

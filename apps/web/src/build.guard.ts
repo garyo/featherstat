@@ -71,6 +71,8 @@ export const CHUNK_MAX_GZIP: Readonly<Record<string, number>> = {
   /** The share page and the dialog that mints links for it — small by construction. */
   share: 2_048,
   dialog: 2_048,
+  /** The dashboard-library management panel — a list of rows and five verbs. */
+  manage: 2_560,
 };
 
 /**
@@ -82,6 +84,8 @@ export const CHUNK_MARKERS: Readonly<Record<string, readonly string[]>> = {
   SettingsView: ['Tracking snippet', 'Send test notification'],
   share: ['Shared dashboard'],
   dialog: ['Create share link'],
+  // NOT the switcher's "Manage dashboards…" line — that trigger rides the entry.
+  manage: ['New empty dashboard'],
 };
 
 /** The entry chunk's own prefix — what the old, broken version of this guard measured alone. */

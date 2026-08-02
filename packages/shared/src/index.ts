@@ -977,6 +977,7 @@ export const VizTypeSchema = z.enum([
   'heatmap',
   'devices',
   'dwell',
+  'histogram',
   'map',
   'feed',
   'active-now',
@@ -1110,5 +1111,6 @@ export * from './filters.ts';
 export * from './goals.ts';
 export * from './layout.ts';
 export * from './measures.ts';
+export * from './templates/index.ts';
 export * from './time.ts';
 export * from './widgets.ts';
