@@ -2,7 +2,13 @@ import { type HitType, SiteDomainsSchema } from '@featherstat/shared';
 import BetterSqlite3 from 'better-sqlite3';
 import { type Db, migrate } from './migrate.ts';
 
-export { type Db, type Migration, migrate, schemaVersion } from './migrate.ts';
+export {
+  type Db,
+  type Migration,
+  migrate,
+  schemaVersion,
+  V1_IMPORT_SUBCOMMAND,
+} from './migrate.ts';
 
 /** Matches the `sites.timezone` column default (docs/03). */
 export const DEFAULT_TIMEZONE = 'America/New_York';

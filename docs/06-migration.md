@@ -82,6 +82,65 @@ Import details:
   Known definitional deltas (bot filtering, ping handling) get documented
   numbers, not hand-waving.
 
+## v1 → v2 (featherstat's own migration)
+
+Schema v2 is a clean-slate line at `user_version` 100; a v1 file (versions
+1–5) is **never migrated in place**. A v2 binary pointed at one refuses to
+start and names the fix: `featherstat import v1 <path>` — a one-shot importer
+(`apps/server/src/import/v1/`, the `v1` subcommand of the same
+`dist/import.js` the Matomo importer ships in).
+
+```
+bun run --cwd apps/server import -- v1 /path/to/v1/analytics.db [--into <target>] [--dry-run]
+```
+
+**Runbook: stop v1 → import → start v2.** The source is opened readonly, but
+a v1 server still writing while the importer reads would fork history — the
+rows it writes after the importer's scan passed them exist in neither file's
+future. The importer enforces the fresh-start side of this: a target that
+already has events is refused unless a crash left resume watermarks
+(`import:v1:*` in the target's settings — re-running resumes, never
+duplicates).
+
+What transfers, streamed in watermarked batches:
+
+- **sites** verbatim, ids preserved.
+- **events** in rowid order (fresh rowids, order preserved); **sessions** by
+  their blob ids (upsert — idempotent). All shared columns 1:1; the v2-only
+  columns (`props`, `utm_*_raw`) start NULL — except that utm values run
+  through the shared campaign normalizer against the target's (typically
+  empty) alias table, so imported history and live ingest agree on what a
+  utm value means. The as-received value lands in `utm_*_raw` only when
+  normalization changed it.
+- **bot_drops** verbatim.
+- **settings** via allowlist: `salt:*`, `uidsalt:*`, `uid_enabled:*`, the
+  ntfy keys, `retention_days`. Salts imported = **zero visitor
+  discontinuity** — the same hash inputs keep producing the same visitor ids
+  across the cutover. Everything else is reported skipped by name (the admin
+  password among them: set one on first v2 login).
+- **dashboards** through the `upgradeDashboard` layout chain; name and site
+  scope carried, `created_at` = the v1 `updated_at`, library order = the v1
+  ids, `template` NULL. A layout no current vocabulary can carry is reported
+  and skipped, never half-imported.
+
+Dropped by design: **share_tokens** (re-mint — the raw tokens were never
+stored anyway) and **admin_sessions** (re-login).
+
+After the raw rows land the importer runs the full rollup rebuild
+(`rollup/rebuild.ts`) — it inserts raw only — and then the validation gates,
+exiting nonzero if any fails: per-table row counts; per-site/per-day visits,
+pageviews, event counts, engaged_ms and distinct visitors computed by
+*identical SQL on both files* and diffed to zero; and spot-check v2 queries
+whose expected numbers are recomputed from the source by direct SQL.
+
+One caveat, stated rather than hidden: utm **normalization may change utm
+values** (that is its job), so utm-*grouped* numbers can differ from v1's by
+design. The per-day gates never group by utm, so they hold exactly; the
+report counts how many rows were normalized.
+
+`--dry-run` reads and validates the source, prints all of the above as a
+plan, and writes nothing — not even the target file.
+
 ## Live-traffic bake: tee mode
 
 Before cutover, the new server runs with `MATOMO_FORWARD_URL` set: every hit

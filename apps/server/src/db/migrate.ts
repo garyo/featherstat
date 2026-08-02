@@ -14,6 +14,13 @@ export interface Migration {
 const V1_VERSION_MIN = 1;
 const V1_VERSION_MAX = 99;
 
+/**
+ * The CLI subcommand that rewrites a v1 file into a v2 one. The refusal below
+ * names it and `import/cli.ts` registers it from this same constant, so the
+ * instruction a stranded operator reads is always a command that exists.
+ */
+export const V1_IMPORT_SUBCOMMAND = 'v1';
+
 const SCHEMA_MIGRATIONS_DDL = `CREATE TABLE IF NOT EXISTS schema_migrations (
   version    INTEGER PRIMARY KEY,
   name       TEXT NOT NULL,
@@ -35,7 +42,7 @@ export function migrate(db: Db, migrations: readonly Migration[] = MIGRATIONS): 
   if (current >= V1_VERSION_MIN && current <= V1_VERSION_MAX) {
     throw new Error(
       `this is a featherstat v1 database (schema version ${current}) — ` +
-        'run `featherstat import v1 <path>` to rewrite it into a fresh v2 file',
+        `run \`featherstat import ${V1_IMPORT_SUBCOMMAND} <path>\` to rewrite it into a fresh v2 file`,
     );
   }
   if (current > latest) {
