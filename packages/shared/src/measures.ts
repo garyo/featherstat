@@ -158,8 +158,13 @@ export type Unit = 'count' | 'ms' | 'rate' | 'value';
  *   recombine, so `measureTotal` refuses to invent one.
  * - `ratio` — a quotient; re-aggregates by re-weighting on `of.denominator`.
  * - `max` — an extremum; the max of the bucket maxima.
+ * - `computed` — a derived expression with no lawful recombination at all
+ *   (docs/04 § 3): the server evaluated it per row from that row's own
+ *   aggregates, and neither a total nor a per-bucket reduction can be honest
+ *   without re-running the expression over re-aggregated operands. No
+ *   client-side total, ever.
  */
-export type Aggregate = 'sum' | 'distinct' | 'ratio' | 'max';
+export type Aggregate = 'sum' | 'distinct' | 'ratio' | 'max' | 'computed';
 
 /**
  * A ratio's components, named as columns of the SAME result.
@@ -212,6 +217,7 @@ export function measureTotal(
     case 'sum':
       return sumOf(column, buckets);
     case 'distinct':
+    case 'computed':
       return undefined;
     case 'max':
       return buckets.length === 0 ? undefined : Math.max(...buckets.map((b) => cellOf(b, column)));
@@ -245,6 +251,10 @@ export function measurePerBucket(
     case 'max':
     case 'ratio':
       return measureTotal(column, measure, buckets);
+    // A computed value cannot even claim a typical bucket: the expression is
+    // not linear in its operands, so a mean of its values means nothing.
+    case 'computed':
+      return undefined;
   }
 }
 

@@ -594,6 +594,116 @@ export function revokeShareTokens(db: Db, dashboardId: number, now: number): num
 }
 
 // ---------------------------------------------------------------------------
+// Segments & derived metrics (docs/04 § 3): stored query-layer objects.
+// Both hold client-authored text the routes validate on write; readers
+// re-parse (SegmentFilterNodeSchema / parseDerivedExpr) and fail closed.
+// ---------------------------------------------------------------------------
+
+export interface SegmentRow {
+  id: number;
+  name: string;
+  /** One FilterNode as JSON — never a segment ref (no cycles by construction). */
+  filter: string;
+  updated_at: number;
+}
+
+const SEGMENT_COLUMNS = 'id, name, filter, updated_at';
+const SQL_LIST_SEGMENTS = `SELECT ${SEGMENT_COLUMNS} FROM segments ORDER BY id`;
+const SQL_GET_SEGMENT = `SELECT ${SEGMENT_COLUMNS} FROM segments WHERE id = ?`;
+const SQL_CREATE_SEGMENT =
+  'INSERT INTO segments (name, filter, created_at, updated_at) VALUES (?, ?, ?, ?)';
+const SQL_UPDATE_SEGMENT = `UPDATE segments SET name = ?, filter = ?, updated_at = ?
+WHERE id = ? RETURNING ${SEGMENT_COLUMNS}`;
+const SQL_DELETE_SEGMENT = 'DELETE FROM segments WHERE id = ?';
+
+export function listSegments(db: Db): SegmentRow[] {
+  return stmt<SegmentRow>(db, SQL_LIST_SEGMENTS).all() as SegmentRow[];
+}
+
+export function getSegment(db: Db, id: number): SegmentRow | undefined {
+  return stmt<SegmentRow>(db, SQL_GET_SEGMENT).get(id);
+}
+
+export function createSegment(db: Db, name: string, filter: string, now: number): SegmentRow {
+  assertWritable(db);
+  const info = stmt(db, SQL_CREATE_SEGMENT).run(name, filter, now, now);
+  return { id: Number(info.lastInsertRowid), name, filter, updated_at: now };
+}
+
+export function updateSegment(
+  db: Db,
+  id: number,
+  name: string,
+  filter: string,
+  now: number,
+): SegmentRow | undefined {
+  assertWritable(db);
+  return stmt<SegmentRow>(db, SQL_UPDATE_SEGMENT).get(name, filter, now, id);
+}
+
+export function deleteSegment(db: Db, id: number): boolean {
+  assertWritable(db);
+  return stmt(db, SQL_DELETE_SEGMENT).run(id).changes > 0;
+}
+
+export interface DerivedMetricRow {
+  id: number;
+  name: string;
+  /** Arithmetic over metric names — parsed by `parseDerivedExpr`, never eval'd. */
+  expr: string;
+  updated_at: number;
+}
+
+const DERIVED_COLUMNS = 'id, name, expr, updated_at';
+const SQL_LIST_DERIVED = `SELECT ${DERIVED_COLUMNS} FROM derived_metrics ORDER BY id`;
+const SQL_GET_DERIVED = `SELECT ${DERIVED_COLUMNS} FROM derived_metrics WHERE id = ?`;
+const SQL_GET_DERIVED_BY_NAME = `SELECT ${DERIVED_COLUMNS} FROM derived_metrics WHERE name = ?`;
+const SQL_CREATE_DERIVED =
+  'INSERT INTO derived_metrics (name, expr, created_at, updated_at) VALUES (?, ?, ?, ?)';
+const SQL_UPDATE_DERIVED = `UPDATE derived_metrics SET name = ?, expr = ?, updated_at = ?
+WHERE id = ? RETURNING ${DERIVED_COLUMNS}`;
+const SQL_DELETE_DERIVED = 'DELETE FROM derived_metrics WHERE id = ?';
+
+export function listDerivedMetrics(db: Db): DerivedMetricRow[] {
+  return stmt<DerivedMetricRow>(db, SQL_LIST_DERIVED).all() as DerivedMetricRow[];
+}
+
+export function getDerivedMetric(db: Db, id: number): DerivedMetricRow | undefined {
+  return stmt<DerivedMetricRow>(db, SQL_GET_DERIVED).get(id);
+}
+
+export function getDerivedMetricByName(db: Db, name: string): DerivedMetricRow | undefined {
+  return stmt<DerivedMetricRow>(db, SQL_GET_DERIVED_BY_NAME).get(name);
+}
+
+export function createDerivedMetric(
+  db: Db,
+  name: string,
+  expr: string,
+  now: number,
+): DerivedMetricRow {
+  assertWritable(db);
+  const info = stmt(db, SQL_CREATE_DERIVED).run(name, expr, now, now);
+  return { id: Number(info.lastInsertRowid), name, expr, updated_at: now };
+}
+
+export function updateDerivedMetric(
+  db: Db,
+  id: number,
+  name: string,
+  expr: string,
+  now: number,
+): DerivedMetricRow | undefined {
+  assertWritable(db);
+  return stmt<DerivedMetricRow>(db, SQL_UPDATE_DERIVED).get(name, expr, now, id);
+}
+
+export function deleteDerivedMetric(db: Db, id: number): boolean {
+  assertWritable(db);
+  return stmt(db, SQL_DELETE_DERIVED).run(id).changes > 0;
+}
+
+// ---------------------------------------------------------------------------
 // Admin sessions (docs/02 § Security posture)
 // ---------------------------------------------------------------------------
 

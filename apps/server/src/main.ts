@@ -60,7 +60,7 @@ const { app } = createSecuredApp({
   executeQuery:
     pool === undefined
       ? undefined
-      : (request, now, allowedSites) => pool.execute(request, now, allowedSites),
+      : (request, now, allowedSites, derived) => pool.execute(request, now, allowedSites, derived),
 });
 
 // ntfy delivery turns on from the settings rows (docs/01 R16), editable at

@@ -32,6 +32,7 @@ port.on('message', (job: PoolJob) => {
             result: executeQueryRequest(db, job.request, {
               now: job.now,
               allowedSites: job.allowedSites,
+              derived: job.derived,
             }),
           };
   } catch (error) {

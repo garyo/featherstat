@@ -1,7 +1,15 @@
 import type { QueryResponse } from '@featherstat/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { event, openTestDb, session } from '../../test/rows.ts';
-import { type Db, insertEvents, upsertSessions, withWriteTransaction } from '../db/index.ts';
+import {
+  createDerivedMetric,
+  createSegment,
+  type Db,
+  insertEvents,
+  updateSegment,
+  upsertSessions,
+  withWriteTransaction,
+} from '../db/index.ts';
 import { createApp } from '../index.ts';
 import { QUERY_BATCHES_GLOBAL, QUERY_BATCHES_PER_SESSION, QUERY_WINDOW_MS } from './query.ts';
 
@@ -383,6 +391,176 @@ describe('POST /api/query', () => {
     const recheck = await post(BODY);
     const rechecked = (await recheck.json()) as QueryResponse;
     expect(rechecked.results.kpis).toMatchObject({ rows: [{ visitors: 1, pageviews: 1 }] });
+  });
+
+  describe('saved segments in requests', () => {
+    let usSegment: number;
+
+    beforeEach(() => {
+      withWriteTransaction(db, () => {
+        // A second visitor from the US beside the seeded (country-less) one.
+        insertEvents(db, [
+          event({
+            visitor_id: Uint8Array.of(9, 9, 9, 9, 9, 9, 9, 9),
+            session_id: Uint8Array.of(9, 9, 9, 9, 9, 9, 9, 9),
+            country: 'US',
+          }),
+        ]);
+        upsertSessions(db, [
+          session({
+            id: Uint8Array.of(9, 9, 9, 9, 9, 9, 9, 9),
+            visitor_id: Uint8Array.of(9, 9, 9, 9, 9, 9, 9, 9),
+            country: 'US',
+          }),
+        ]);
+        usSegment = createSegment(
+          db,
+          'US traffic',
+          JSON.stringify({ dim: 'country', op: 'eq', value: 'US' }),
+          1,
+        ).id;
+      });
+    });
+
+    it('expands a {segment} ref to the same answer as the inline filter', async () => {
+      const viaSegment = await post({ ...BODY, filters: [{ segment: usSegment }] });
+      const inline = await post({
+        ...BODY,
+        filters: [{ dim: 'country', op: 'eq', value: 'US' }],
+      });
+      expect(viaSegment.status).toBe(200);
+      const a = (await viaSegment.json()) as QueryResponse;
+      const b = (await inline.json()) as QueryResponse;
+      expect(a.results.kpis).toMatchObject({ rows: [{ visitors: 1, pageviews: 1 }] });
+      const rowsOf = (r: QueryResponse) =>
+        r.results.kpis !== undefined && 'rows' in r.results.kpis ? r.results.kpis.rows : undefined;
+      expect(rowsOf(a)).toEqual(rowsOf(b));
+      // The tag hashes the EXPANDED request, so the two spellings of one
+      // question collapse to one canonical body — and one cache entry.
+      expect(viaSegment.headers.get('etag')).toBe(inline.headers.get('etag'));
+    });
+
+    it('400s an unknown segment with a clear message', async () => {
+      const res = await post({ ...BODY, filters: [{ segment: 99 }] });
+      expect(res.status).toBe(400);
+      expect((await res.json()) as { error: string }).toEqual({ error: 'unknown segment 99' });
+      // In a compare position too — the same operator named it, the same answer.
+      const compare = await post({ ...BODY, compare: { segment: 99 } });
+      expect(compare.status).toBe(400);
+    });
+
+    it('expires the ETag when the segment is edited — the tag hashes the expanded tree', async () => {
+      const body = { ...BODY, filters: [{ segment: 0 /* patched below */ }] };
+      (body.filters[0] as { segment: number }).segment = usSegment;
+      const first = await post(body);
+      const etag = first.headers.get('etag') as string;
+      expect((await post(body, { 'if-none-match': etag })).status).toBe(304);
+
+      withWriteTransaction(db, () => {
+        updateSegment(
+          db,
+          usSegment,
+          'US traffic',
+          JSON.stringify({ dim: 'country', op: 'is_null' }),
+          2,
+        );
+      });
+      const edited = await post(body, { 'if-none-match': etag });
+      expect(edited.status).toBe(200);
+      expect(edited.headers.get('etag')).not.toBe(etag);
+      // The edit is live in the answer: the NULL-country visitor now matches.
+      const answered = (await edited.json()) as QueryResponse;
+      expect(answered.results.kpis).toMatchObject({ rows: [{ visitors: 1, pageviews: 1 }] });
+    });
+
+    it('answers segment compare and folds the tree into the tag', async () => {
+      const body = { ...BODY, compare: { segment: 0 } };
+      body.compare.segment = usSegment;
+      const first = await post(body);
+      expect(first.status).toBe(200);
+      const answered = (await first.json()) as QueryResponse;
+      expect(answered.results.kpis).toMatchObject({
+        rows: [{ visitors: 2, pageviews: 2 }],
+        compare: [{ visitors: 1, pageviews: 1 }],
+      });
+      const etag = first.headers.get('etag') as string;
+      withWriteTransaction(db, () => {
+        updateSegment(
+          db,
+          usSegment,
+          'US traffic',
+          JSON.stringify({ dim: 'country', op: 'is_null' }),
+          2,
+        );
+      });
+      const edited = await post(body, { 'if-none-match': etag });
+      expect(edited.status).toBe(200);
+      expect(edited.headers.get('etag')).not.toBe(etag);
+    });
+  });
+
+  describe('derived metrics in requests', () => {
+    const body = { ...BODY, queries: [{ id: 'q', metrics: ['d:views_each'] }] };
+
+    it('errors per query while the name is unknown, then answers once it exists — new tag', async () => {
+      const first = await post(body);
+      expect(first.status).toBe(200);
+      const missing = (await first.json()) as QueryResponse;
+      expect(missing.results.q).toEqual({
+        error: { code: 'unsupported', message: "unknown derived metric 'd:views_each'" },
+      });
+      const etag = first.headers.get('etag') as string;
+      expect((await post(body, { 'if-none-match': etag })).status).toBe(304);
+
+      withWriteTransaction(db, () => {
+        createDerivedMetric(db, 'views_each', 'pageviews / visitors', 1);
+      });
+      // dataVersion never moved, but the definitions are hashed too.
+      const res = await post(body, { 'if-none-match': etag });
+      expect(res.status).toBe(200);
+      expect(res.headers.get('etag')).not.toBe(etag);
+      const answered = (await res.json()) as QueryResponse;
+      expect(answered.results.q).toMatchObject({
+        rows: [{ pageviews: 1, visitors: 1, 'd:views_each': 1 }],
+      });
+    });
+  });
+
+  describe('ETag at site-local midnight for explicit ranges (docs/04 § 3)', () => {
+    it('expires a range touching today when the local day turns, without any data change', async () => {
+      vi.useFakeTimers();
+      try {
+        // 12:00 in New York on the seeded day; the range runs past today.
+        vi.setSystemTime(Date.UTC(2023, 10, 14, 17));
+        const body = { ...BODY, range: { from: '2023-11-14', to: '2023-11-20' } };
+        const first = await post(body);
+        const etag = first.headers.get('etag') as string;
+        expect((await post(body, { 'if-none-match': etag })).status).toBe(304);
+
+        // One local day later: same window, same data — but where elapsed time
+        // stops inside it has moved, and a cached clip must not survive it.
+        vi.setSystemTime(Date.UTC(2023, 10, 15, 17));
+        const next = await post(body, { 'if-none-match': etag });
+        expect(next.status).toBe(200);
+        expect(next.headers.get('etag')).not.toBe(etag);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('keeps a fully past range stable across the same midnight — those tags may cache', async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(Date.UTC(2023, 10, 16, 17));
+        const body = { ...BODY, range: { from: '2023-11-13', to: '2023-11-14' } };
+        const first = await post(body);
+        const etag = first.headers.get('etag') as string;
+        vi.setSystemTime(Date.UTC(2023, 10, 17, 17));
+        expect((await post(body, { 'if-none-match': etag })).status).toBe(304);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   it('keeps hostile values inert from every nested tree position (any/not/glob)', async () => {

@@ -1,5 +1,5 @@
 <script lang="ts">
-import { exactNumber, METRIC_LABELS } from './format.ts';
+import { exactNumber, metricLabel } from './format.ts';
 import { cellTitle, HEATMAP_DAYS, type HeatmapCell, heatmapCells } from './heatmap.ts';
 import { sliceOf, type WidgetProps } from './types.ts';
 
@@ -14,7 +14,7 @@ const slice = $derived(sliceOf(env.data, 'main'));
 const metric = $derived(
   spec.query !== undefined && !('kind' in spec.query) ? spec.query.metrics[0] : undefined,
 );
-const unit = $derived(metric === undefined ? '' : METRIC_LABELS[metric].toLowerCase());
+const unit = $derived(metric === undefined ? '' : metricLabel(metric).toLowerCase());
 const cells = $derived(
   slice.kind === 'ready' && metric !== undefined ? heatmapCells(slice.result.rows, metric) : [],
 );

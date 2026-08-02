@@ -94,6 +94,21 @@ describe('QueryPool against the real worker', () => {
     expect(after.meta.dataVersion).toBeGreaterThan(before.meta.dataVersion);
   });
 
+  it('carries derived-metric definitions across the pool boundary', async () => {
+    const request: QueryRequest = {
+      ...REQUEST,
+      queries: [{ id: 'q', metrics: ['d:views_each'] }],
+    } as QueryRequest;
+    const derived = { views_each: 'pageviews / visits' };
+    const pooled = await pool.execute(request, NOW, undefined, derived);
+    const inline = executeQueryRequest(db, request, { now: NOW, derived });
+    const rows = (r: QueryResponse): unknown => (r.results.q as { rows: unknown }).rows;
+    expect(rows(pooled)).toEqual(rows(inline));
+    // Without the definitions the worker refuses honestly, per query.
+    const missing = await pool.execute(request, NOW);
+    expect(missing.results.q).toHaveProperty(['error', 'code'], 'unsupported');
+  });
+
   it('rejects after close instead of hanging', async () => {
     const path = join(dir, 'analytics.db');
     const closing = new QueryPool(path, { size: 1, execArgv: EXEC_ARGV });

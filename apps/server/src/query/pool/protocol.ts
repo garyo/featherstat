@@ -19,6 +19,9 @@ export type PoolJob =
       now: number;
       /** The principal's readable sites — resolved on main, enforced in execution. */
       allowedSites?: readonly number[];
+      /** Stored derived-metric definitions by name — resolved on main so the
+       * ETag hashes them, applied in the worker after aggregation. */
+      derived?: Readonly<Record<string, string>>;
     }
   /** Test/diagnostic aid: proves execution happens off the main thread. */
   | { id: number; kind: 'ping' };

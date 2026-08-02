@@ -123,3 +123,13 @@ describe('measurePerBucket', () => {
     expect(measurePerBucket('pageviews', COUNT, [])).toBeUndefined();
   });
 });
+
+describe("the 'computed' aggregate", () => {
+  const COMPUTED: Measure = { unit: 'value', population: 'actions', aggregate: 'computed' };
+
+  it('has no total and no per-bucket reduction — the server evaluated it per row', () => {
+    const buckets = days({ score: 3 }, { score: 5 });
+    expect(measureTotal('score', COMPUTED, buckets)).toBeUndefined();
+    expect(measurePerBucket('score', COMPUTED, buckets)).toBeUndefined();
+  });
+});

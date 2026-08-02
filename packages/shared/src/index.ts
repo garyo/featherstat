@@ -1,6 +1,13 @@
 import { z } from 'zod';
 import type { RealtimeVisitor } from './alias.ts';
-import { type Dimension, DimensionSchema, FiltersSchema } from './filters.ts';
+import { DerivedMetricRefSchema } from './derived.ts';
+import {
+  type Dimension,
+  DimensionSchema,
+  FiltersSchema,
+  type SegmentFilterNode,
+  SegmentFilterNodeSchema,
+} from './filters.ts';
 import type { Measures } from './measures.ts';
 
 // ---------------------------------------------------------------------------
@@ -254,7 +261,13 @@ export const EVENT_ONLY_METRICS = [
 
 export const MetricQuerySchema = z.object({
   id: z.string().min(1).max(64),
-  metrics: z.array(MetricSchema).min(1).max(MAX_METRICS_PER_QUERY),
+  /** Built-in metrics plus `d:<name>` references to stored derived metrics
+   * (docs/04 § 3). The cap counts what was ASKED for; a derived metric's
+   * components ride under a separate internal ceiling in the executor. */
+  metrics: z
+    .array(z.union([MetricSchema, DerivedMetricRefSchema]))
+    .min(1)
+    .max(MAX_METRICS_PER_QUERY),
   dim: DimensionSchema.optional(),
   dim2: DimensionSchema.optional(),
   bucket: BucketSchema.optional(),
@@ -350,10 +363,25 @@ export const RangeSchema = z.union([
 ]);
 export type Range = z.infer<typeof RangeSchema>;
 
+/**
+ * The comparison vocabulary (docs/04 § 3). The two string forms are v1's,
+ * unchanged. `{segment}` compares the same window against the same window
+ * seen through a saved segment's filter; `{from, to}` compares against an
+ * explicit window, used as given — when its length differs from the current
+ * window the rows still align by index from the start, and `meta.windows`
+ * labels the mismatch with `compareFrom`/`compareTo`.
+ */
+export const CompareSchema = z.union([
+  z.enum(['previous', 'year']),
+  z.object({ segment: z.number().int().positive() }),
+  z.object({ from: isoDate, to: isoDate }),
+]);
+export type Compare = z.infer<typeof CompareSchema>;
+
 export const QueryRequestSchema = z.object({
   site: z.union([z.number().int().positive(), z.literal('all')]),
   range: RangeSchema,
-  compare: z.enum(['previous', 'year']).optional(),
+  compare: CompareSchema.optional(),
   filters: FiltersSchema.optional(),
   queries: z.array(QuerySchema).min(1).max(MAX_QUERIES_PER_BATCH),
 });
@@ -390,6 +418,16 @@ export interface SiteWindow {
    */
   fromTs?: number;
   toTs?: number;
+  /**
+   * Present exactly when the request's `compare` was an explicit `{from, to}`:
+   * the window the compare rows were computed on, restated per site because the
+   * preset forms derive theirs per window and this form does not. It is the
+   * label for an unequal-length comparison — rows align by index from the
+   * start, and these dates are what makes that mismatch visible instead of
+   * silent (docs/04 § 3).
+   */
+  compareFrom?: string;
+  compareTo?: string;
 }
 
 /**
@@ -590,6 +628,29 @@ export interface ApiTokenInfo {
 /** `POST /api/admin/tokens` — `token` is shown once and never retrievable. */
 export interface ApiTokenMinted extends ApiTokenInfo {
   token: string;
+}
+
+// ---------------------------------------------------------------------------
+// Saved segments (docs/04 § 3) — named filter trees, expanded server-side
+// ---------------------------------------------------------------------------
+
+/**
+ * What a stored segment is: a name and ONE `SegmentFilterNode` — the filter
+ * grammar without segment refs, so a segment can never reference a segment
+ * and cycles are impossible by construction (docs/04 § 3).
+ */
+export const SegmentCreateSchema = z.object({
+  name: z.string().min(1).max(64),
+  filter: SegmentFilterNodeSchema,
+});
+export type SegmentCreate = z.infer<typeof SegmentCreateSchema>;
+
+/** `GET /api/segments` row — everything a client needs to offer the segment. */
+export interface SegmentInfo {
+  id: number;
+  name: string;
+  filter: SegmentFilterNode;
+  updatedAt: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -821,6 +882,7 @@ export interface VersionTick {
 }
 
 export * from './alias.ts';
+export * from './derived.ts';
 export * from './filters.ts';
 export * from './layout.ts';
 export * from './measures.ts';

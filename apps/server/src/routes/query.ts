@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
+  localClock,
   type QueryRequest,
   QueryRequestSchema,
   type QueryResponse,
@@ -13,6 +14,7 @@ import { RateLimiter } from '../auth/ratelimit.ts';
 import { type Db, dataVersion, listSites, schemaVersion } from '../db/index.ts';
 import { executeQueryRequest, resolveSiteWindows, UnknownSiteError } from '../query/executor.ts';
 import { PoolSaturatedError } from '../query/pool/pool.ts';
+import { expandSegments, resolveDerived } from '../query/stored.ts';
 import { clientIp } from './track.ts';
 
 /**
@@ -59,6 +61,7 @@ export type ExecuteQuery = (
   request: QueryRequest,
   now: number,
   allowedSites?: readonly number[],
+  derived?: Readonly<Record<string, string>>,
 ) => QueryResponse | Promise<QueryResponse>;
 
 export interface QueryRouteOptions {
@@ -68,7 +71,8 @@ export interface QueryRouteOptions {
 export function createQueryRoutes(db: Db, options: QueryRouteOptions = {}): Hono<QueryEnv> {
   const execute: ExecuteQuery =
     options.execute ??
-    ((request, now, allowedSites) => executeQueryRequest(db, request, { now, allowedSites }));
+    ((request, now, allowedSites, derived) =>
+      executeQueryRequest(db, request, { now, allowedSites, derived }));
   const app = new Hono<QueryEnv>();
   const sessionBatches = new RateLimiter(QUERY_BATCHES_PER_SESSION, QUERY_WINDOW_MS);
   const globalBatches = new RateLimiter(QUERY_BATCHES_GLOBAL, QUERY_WINDOW_MS);
@@ -85,6 +89,16 @@ export function createQueryRoutes(db: Db, options: QueryRouteOptions = {}): Hono
       return c.json({ error: 'invalid query request', issues: parsed.error.issues }, 400);
     }
 
+    // Stored query-layer objects resolve BEFORE the ETag is derived, so the
+    // canonical body below hashes the EXPANDED request plus the derived-metric
+    // definitions — editing a segment or a derived metric expires every cached
+    // answer with zero bookkeeping (query/stored.ts). Segments are named by the
+    // same operator's UI, so an unknown or unreadable one is a 400, not a skip.
+    const expansion = expandSegments(db, parsed.data);
+    if (!expansion.ok) return c.json({ error: expansion.message }, 400);
+    const request = expansion.request;
+    const derived = resolveDerived(db, request);
+
     const now = Date.now();
     // The one scoping chokepoint (docs/04 § 5): a non-admin principal's
     // readable set bounds both the resolved windows (and so the ETag) and the
@@ -99,15 +113,19 @@ export function createQueryRoutes(db: Db, options: QueryRouteOptions = {}): Hono
           );
     let windows: SiteWindow[];
     try {
-      windows = resolveSiteWindows(db, parsed.data.site, parsed.data.range, now, allowedSites);
+      windows = resolveSiteWindows(db, request.site, request.range, now, allowedSites);
     } catch (error) {
       if (error instanceof UnknownSiteError) return c.json({ error: error.message }, 404);
       throw error;
     }
 
-    const canonicalBody = canonicalize(parsed.data);
+    const canonicalBody = canonicalize({
+      request,
+      compareFilter: expansion.compareFilter,
+      derived,
+    });
     const schema = schemaVersion(db);
-    const current = etag(dataVersion(db), schema, canonicalBody, windows);
+    const current = etag(dataVersion(db), schema, canonicalBody, windows, now);
     if (anyMatch(c.req.header('if-none-match'), current)) {
       return c.body(null, 304, { ETag: current });
     }
@@ -128,7 +146,7 @@ export function createQueryRoutes(db: Db, options: QueryRouteOptions = {}): Hono
 
     let response: QueryResponse;
     try {
-      response = await execute(parsed.data, now, allowedSites);
+      response = await execute(request, now, allowedSites, derived);
     } catch (error) {
       // A full pool is load, not failure — same degraded path as the limiter.
       if (error instanceof PoolSaturatedError) {
@@ -139,7 +157,7 @@ export function createQueryRoutes(db: Db, options: QueryRouteOptions = {}): Hono
       throw error;
     }
     // Re-derived from the executed snapshot's version, in case a flush landed in between.
-    const tag = etag(response.meta.dataVersion, schema, canonicalBody, windows);
+    const tag = etag(response.meta.dataVersion, schema, canonicalBody, windows, now);
     return c.json(response, 200, { ETag: tag });
   });
   return app;
@@ -177,10 +195,22 @@ function anyMatch(ifNoneMatch: string | undefined, current: string): boolean {
  * rolling `24h` preset moves at every local hour turn and is stable in between,
  * which is exactly what its quantization buys (ranges.ts). Shared with the share
  * route so the two cannot disagree about what a tag covers.
+ *
+ * The last component is where real data can stop inside the window —
+ * `min(to, site-local today)`. Presets never need it (their dates move with the
+ * clock already), but an explicit `from`/`to` range whose `to` is today or later
+ * has static bounds over a moving clip: without this a dashboard left open
+ * overnight would revalidate 304 forever while today's rows drained into a day
+ * the cached body still shows empty. For a fully past range it equals `to`, so
+ * those tags stay stable — exactly what makes them cacheable.
  */
-export function windowTag(windows: readonly SiteWindow[]): string {
+export function windowTag(windows: readonly SiteWindow[], now: number): string {
   return windows
-    .map((w) => `${w.siteId}:${w.timezone}:${w.from}:${w.to}:${w.fromTs ?? ''}:${w.toTs ?? ''}`)
+    .map((w) => {
+      const today = localClock(w.timezone, now).date;
+      const clip = w.to < today ? w.to : today;
+      return `${w.siteId}:${w.timezone}:${w.from}:${w.to}:${w.fromTs ?? ''}:${w.toTs ?? ''}:${clip}`;
+    })
     .join(',');
 }
 
@@ -189,9 +219,10 @@ function etag(
   schema: number,
   canonicalBody: string,
   windows: readonly SiteWindow[],
+  now: number,
 ): string {
   const hash = createHash('sha256')
-    .update(`${version}|${schema}|${canonicalBody}|${windowTag(windows)}`)
+    .update(`${version}|${schema}|${canonicalBody}|${windowTag(windows, now)}`)
     .digest('base64url');
   return `"${hash}"`;
 }

@@ -1,7 +1,7 @@
 <script lang="ts">
 import BarRows from './BarRows.svelte';
 import { barRows } from './bar-rows.ts';
-import { METRIC_LABELS } from './format.ts';
+import { metricLabel } from './format.ts';
 import { sliceOf, type WidgetProps } from './types.ts';
 
 let { spec, env }: WidgetProps = $props();
@@ -19,9 +19,9 @@ const nullLabel = $derived(
 );
 /** Country-code rows get flag + display name (geo card). */
 const flags = $derived(spec.options.flags === true);
-const unit = $derived(metric === undefined ? '' : METRIC_LABELS[metric].toLowerCase());
+const unit = $derived(metric === undefined ? '' : metricLabel(metric).toLowerCase());
 const extraUnit = $derived(
-  extraMetric === undefined ? undefined : METRIC_LABELS[extraMetric].toLowerCase(),
+  extraMetric === undefined ? undefined : metricLabel(extraMetric).toLowerCase(),
 );
 
 const rows = $derived.by(() => {

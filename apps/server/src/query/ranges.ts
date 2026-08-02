@@ -67,13 +67,24 @@ export function resolveWindow(range: Range, timezone: string, now: number): Date
 
 /**
  * `previous` = the same-length window immediately before; `year` = the same
- * window one year back.
+ * window one year back; an explicit `{from, to}` is used exactly as given —
+ * inclusive local dates in the site's own timezone, like every explicit range.
+ * When its day count differs from the current window the comparison still
+ * runs, index-aligned from the start; `meta.windows` labels the mismatch with
+ * `compareFrom`/`compareTo` (docs/04 § 3). The explicit form clears any
+ * rolling instants: dates are all it states, so dates are all it scopes by.
  *
  * A rolling window shifts by its own exact duration, so the previous 24 hours
  * line up hour for hour with the current 24 — including across a DST edge, where
  * shifting whole local dates instead would land an hour out.
  */
-export function compareWindow(window: SiteWindow, mode: 'previous' | 'year'): DateWindow {
+export function compareWindow(
+  window: SiteWindow,
+  mode: 'previous' | 'year' | { from: string; to: string },
+): DateWindow {
+  if (typeof mode === 'object') {
+    return { from: mode.from, to: mode.to, fromTs: undefined, toTs: undefined };
+  }
   const { fromTs, toTs } = window;
   if (fromTs !== undefined && toTs !== undefined) {
     const shift =

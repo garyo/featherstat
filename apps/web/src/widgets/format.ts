@@ -1,4 +1,10 @@
-import type { Metric, SiteWindow, Unit } from '@featherstat/shared';
+import {
+  derivedNameOf,
+  isDerivedMetricRef,
+  type Metric,
+  type SiteWindow,
+  type Unit,
+} from '@featherstat/shared';
 import { windowSpan } from './axis.ts';
 
 /** Display names for the metric vocabulary — exhaustive, so a new metric cannot ship unlabeled. */
@@ -16,6 +22,16 @@ export const METRIC_LABELS: Record<Metric, string> = {
   views_per_visit: 'Views / visit',
   event_value_sum: 'Event value',
 };
+
+/**
+ * The label for anything a query's `metrics` may name: the vocabulary table
+ * above for built-ins, and the operator's own name (underscores read as
+ * spaces) for a `d:<name>` derived metric — the operator chose it to be read.
+ */
+export function metricLabel(metric: Metric | `d:${string}`): string {
+  if (isDerivedMetricRef(metric)) return derivedNameOf(metric).replaceAll('_', ' ');
+  return METRIC_LABELS[metric];
+}
 
 /**
  * What a `distinct` measure is worth saying out loud (docs/03 § Visitor

@@ -1,6 +1,6 @@
 <script lang="ts">
 import { resultAxes, sharedKeys } from './axis.ts';
-import { bucketLabel, bucketTitle, exactNumber, METRIC_LABELS } from './format.ts';
+import { bucketLabel, bucketTitle, exactNumber, metricLabel } from './format.ts';
 import { num, seriesOf } from './series.ts';
 import { sliceOf, type WidgetProps } from './types.ts';
 
@@ -110,7 +110,7 @@ const tipPos = $derived.by(() => {
     <div class="legend">
       {#each metrics as metric, i (metric)}
         <span class="key">
-          <span class="line" style="border-color: {SERIES_COLORS[i]};"></span>{METRIC_LABELS[metric]}
+          <span class="line" style="border-color: {SERIES_COLORS[i]};"></span>{metricLabel(metric)}
         </span>
       {/each}
     </div>
@@ -131,7 +131,7 @@ const tipPos = $derived.by(() => {
       height={HEIGHT}
       viewBox="0 0 {width} {HEIGHT}"
       role="img"
-      aria-label="{spec.title ?? metrics.map((m) => METRIC_LABELS[m]).join(' and ')}, per bucket"
+      aria-label="{spec.title ?? metrics.map((m) => metricLabel(m)).join(' and ')}, per bucket"
     >
       {#each geom.ticks as tick (tick)}
         <line
@@ -198,7 +198,7 @@ const tipPos = $derived.by(() => {
           <div class="tip-row">
             <span class="tip-key" style="border-color: {SERIES_COLORS[i]};"></span>
             <span class="tip-val">{exactNumber(num(hoverPoint.values[metric]))}</span>
-            <span class="tip-name">{METRIC_LABELS[metric].toLowerCase()}</span>
+            <span class="tip-name">{metricLabel(metric).toLowerCase()}</span>
           </div>
         {/each}
       </div>

@@ -9,7 +9,9 @@ import {
 import type { Pipeline } from '../pipeline/index.ts';
 import { createAdminRoutes } from '../routes/admin.ts';
 import { createDashboardRoutes } from '../routes/dashboards.ts';
+import { createDerivedMetricRoutes } from '../routes/derived.ts';
 import { createMetricsRoutes, Metrics } from '../routes/metrics.ts';
+import { createSegmentRoutes } from '../routes/segments.ts';
 import { createShareRoutes } from '../routes/share.ts';
 import { createSpaRoutes } from '../routes/spa.ts';
 import { type Auth, type AuthEnv, type AuthOptions, createAuth } from './auth.ts';
@@ -128,6 +130,10 @@ export function createSecuredApp(options: SecuredAppOptions = {}): SecuredApp {
     // `login`) are then reached first and end the chain before those gates run.
     app.route('/', createAdminRoutes(db, createdAuth));
     app.route('/', createDashboardRoutes(db, createdAuth));
+    // Query-layer objects (docs/04 § 3): reads for any gated principal, writes
+    // under the admin wall above.
+    app.route('/', createSegmentRoutes(db, createdAuth));
+    app.route('/', createDerivedMetricRoutes(db, createdAuth));
     // Minting/revoking are admin surfaces; `GET /share/:token` rides in the same
     // router and stays public — it is not under `/api/`, so the prefix gate skips it.
     app.route('/', createShareRoutes(db, createdAuth));

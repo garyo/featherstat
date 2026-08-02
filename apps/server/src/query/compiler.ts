@@ -459,8 +459,17 @@ interface Group {
   sessions: string | null;
 }
 
+/**
+ * A metric query as the compiler can take it: built-in metrics only. `d:` refs
+ * are resolved to their component metrics by the executor before compilation —
+ * the compiler's vocabulary is `METRICS` and nothing else (invariant 9).
+ */
+export interface CompilableMetricQuery extends Omit<MetricQuery, 'metrics'> {
+  metrics: readonly Metric[];
+}
+
 export function compileMetricQuery(
-  query: MetricQuery,
+  query: CompilableMetricQuery,
   globalFilters: readonly FilterNode[],
   windows: readonly SiteWindow[],
 ): CompiledQuery | CompileError {
@@ -646,6 +655,12 @@ export function filterNodeSql(
   }
   if ('not' in node) {
     return `NOT COALESCE((${filterNodeSql(node.not, table, windows, params)}), 0)`;
+  }
+  if ('segment' in node) {
+    // Segment refs are substituted on the main thread before dispatch
+    // (query/segments.ts) — one reaching the compiler is a wiring bug, and
+    // guessing at its meaning here would compile a filter that filters nothing.
+    throw new Error(`segment ref ${node.segment} reached the compiler unexpanded`);
   }
   if (node.scope === 'session') return sessionLeafSql(node, table, windows, params);
   return filterSql(node, table, params);

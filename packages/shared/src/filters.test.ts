@@ -7,10 +7,12 @@ import {
   FiltersSchema,
   filterDims,
   filterLeaves,
+  filterSegmentRefs,
   MAX_FILTER_DEPTH,
   MAX_FILTER_LEAVES,
   MAX_GLOB_WILDCARDS,
   QueryRequestSchema,
+  SegmentFilterNodeSchema,
 } from './index.ts';
 
 const leaf = (value: string): FilterLeaf => ({ dim: 'path', op: 'eq', value });
@@ -121,5 +123,50 @@ describe('tree helpers', () => {
 
   it('filterDims collects every dimension mentioned anywhere', () => {
     expect(filterDims(tree)).toEqual(new Set(['country', 'path', 'ref_domain']));
+  });
+});
+
+describe('segment refs — request grammar only', () => {
+  it('accepts a {segment} leaf anywhere in a request filter tree', () => {
+    expect(FilterNodeSchema.safeParse({ segment: 3 }).success).toBe(true);
+    expect(
+      FilterNodeSchema.safeParse({
+        any: [{ segment: 3 }, { dim: 'country', op: 'eq', value: 'US' }],
+      }).success,
+    ).toBe(true);
+    expect(FilterNodeSchema.safeParse({ not: { segment: 3 } }).success).toBe(true);
+  });
+
+  it('rejects non-positive and non-integer segment ids', () => {
+    for (const bad of [0, -1, 1.5, 'x']) {
+      expect(FilterNodeSchema.safeParse({ segment: bad }).success, String(bad)).toBe(false);
+    }
+  });
+
+  it('rejects segment refs in a STORED segment definition — no cycles by construction', () => {
+    expect(SegmentFilterNodeSchema.safeParse({ segment: 3 }).success).toBe(false);
+    // Nested anywhere is just as refused: a cycle cannot be stored at any depth.
+    expect(
+      SegmentFilterNodeSchema.safeParse({
+        all: [{ dim: 'country', op: 'eq', value: 'US' }, { not: { segment: 3 } }],
+      }).success,
+    ).toBe(false);
+    // The same tree without the ref is fine — the grammar differs only there.
+    expect(
+      SegmentFilterNodeSchema.safeParse({
+        all: [
+          { dim: 'country', op: 'eq', value: 'US' },
+          { not: { dim: 'ref_type', op: 'eq', value: 'internal' } },
+        ],
+      }).success,
+    ).toBe(true);
+  });
+
+  it('walks refs with filterSegmentRefs and gives them no leaves', () => {
+    const tree = {
+      all: [{ segment: 3 }, { any: [{ segment: 7 }, { dim: 'country', op: 'eq', value: 'US' }] }],
+    } as FilterNode;
+    expect(filterSegmentRefs(tree)).toEqual([3, 7]);
+    expect(filterLeaves(tree)).toEqual([{ dim: 'country', op: 'eq', value: 'US' }]);
   });
 });

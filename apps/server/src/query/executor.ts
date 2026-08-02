@@ -1,12 +1,25 @@
 import {
+  type DerivedAst,
+  derivedMetricsOf,
+  derivedNameOf,
+  evaluateDerived,
+  type FilterNode,
+  isDerivedMetricRef,
   isQueryError,
+  MAX_METRICS_PER_QUERY,
+  type Measure,
+  type Measures,
+  type Metric,
   type MetricQuery,
+  parseDerivedExpr,
+  type QueryErrorResult,
   type QueryRequest,
   type QueryResponse,
   type QueryResult,
   type Range,
   type ResultRow,
   type SiteWindow,
+  type Unit,
 } from '@featherstat/shared';
 import {
   type Db,
@@ -20,14 +33,17 @@ import {
 import { type CompiledAdjacency, compileAdjacencyQuery } from './adjacency.ts';
 import {
   boundsParams,
+  type CompilableMetricQuery,
   type CompiledQuery,
   compileMetricQuery,
   metricEmpty,
   queryMeasures,
+  unsupported,
 } from './compiler.ts';
 import { type CompiledLegs, compileDistributionQuery, compileDwellQuery } from './dwell.ts';
 import { bucketAxis, compareWindow, resolveWindow } from './ranges.ts';
 import { type CompiledSequence, compileSequenceQuery } from './sequences.ts';
+import { segmentFilterOf } from './stored.ts';
 
 /**
  * Runs a whole QueryRequest — every widget of a dashboard view — inside one
@@ -66,6 +82,13 @@ export interface ExecuteOptions {
    * request that crosses to the worker pool carries no principal.
    */
   allowedSites?: readonly number[];
+  /**
+   * Stored derived-metric definitions by name, resolved on the main thread
+   * (query/stored.ts) so the route's ETag can hash them — an edit must expire
+   * cached answers, and `dataVersion` never moves for these rows. A `d:` ref
+   * with no entry here is answered with an honest per-query error.
+   */
+  derived?: Readonly<Record<string, string>>;
 }
 
 export function executeQueryRequest(
@@ -76,12 +99,29 @@ export function executeQueryRequest(
   const started = performance.now();
   const now = options.now ?? Date.now();
   return withReadSnapshot(db, () => {
-    const windows = resolveSiteWindows(db, request.site, request.range, now, options.allowedSites);
+    let windows = resolveSiteWindows(db, request.site, request.range, now, options.allowedSites);
     const compare = request.compare;
+    const customCompare = typeof compare === 'object' && 'from' in compare;
+    if (customCompare) {
+      // The label for an index-aligned (possibly unequal-length) comparison:
+      // meta.windows states what the compare rows were computed on (docs/04 § 3).
+      windows = windows.map((window) => ({
+        ...window,
+        compareFrom: compare.from,
+        compareTo: compare.to,
+      }));
+    }
     const compareWindows =
-      compare === undefined
+      compare === undefined || (typeof compare === 'object' && 'segment' in compare)
         ? undefined
         : windows.map((window) => ({ ...window, ...compareWindow(window, compare) }));
+    // Segment-compare re-reads the stored tree inside THIS snapshot; the route
+    // already 400ed an unknown id, so an undefined here is only the race with a
+    // concurrent delete — the comparison is then omitted, never fabricated.
+    const compareFilter =
+      typeof compare === 'object' && 'segment' in compare
+        ? asFilter(segmentFilterOf(db, compare.segment))
+        : undefined;
 
     const results: QueryResponse['results'] = {};
     for (const query of request.queries) {
@@ -109,14 +149,45 @@ export function executeQueryRequest(
         results[query.id] = entry;
         continue;
       }
-      const compiled = compileMetricQuery(query, request.filters ?? [], windows);
+      const prepared = prepareMetricQuery(query, options.derived);
+      if (isQueryError(prepared)) {
+        results[query.id] = prepared;
+        continue;
+      }
+      const compiled = compileMetricQuery(prepared.query, request.filters ?? [], windows);
       if (isQueryError(compiled)) {
         results[query.id] = compiled;
         continue;
       }
+      const measures = queryMeasures(compiled);
+      const refusal = derivedBucketRefusal(prepared, measures);
+      if (refusal !== undefined) {
+        results[query.id] = refusal;
+        continue;
+      }
       const entry: QueryResult = { rows: runCompiled(db, compiled, windows) };
-      if (compareWindows !== undefined) entry.compare = runCompiled(db, compiled, compareWindows);
-      entry.measures = queryMeasures(compiled);
+      if (compareWindows !== undefined) {
+        entry.compare = runCompiled(db, compiled, compareWindows);
+      } else if (compareFilter !== undefined) {
+        // Segment compare: the SAME query and windows, with the segment's tree
+        // AND-ed in beside the request filters — the "what would this look like
+        // inside the segment" answer, in the ordinary compare rows slot.
+        const augmented = compileMetricQuery(
+          prepared.query,
+          [...(request.filters ?? []), compareFilter],
+          windows,
+        );
+        if (isQueryError(augmented)) {
+          // The requested comparison is unanswerable (the segment's dimensions
+          // conflict with the metrics) — refusing the query whole beats rows
+          // whose comparison silently vanished.
+          results[query.id] = augmented;
+          continue;
+        }
+        entry.compare = runCompiled(db, augmented, windows);
+      }
+      attachDerived(entry, prepared, measures);
+      entry.measures = measures;
       describeAxis(entry, query, windows, now);
       entry.ms = elapsed(queryStarted);
       results[query.id] = entry;
@@ -150,6 +221,141 @@ function describeAxis(
   if (dims.length > 0) return;
   const axis = windows.map((window) => bucketAxis(window, bucket, now));
   if (axis.every((site) => site !== undefined)) entry.axis = axis;
+}
+
+/** The executor's read of a stored segment: a tree or nothing — the route owns the 400. */
+function asFilter(resolved: FilterNode | string): FilterNode | undefined {
+  return typeof resolved === 'string' ? undefined : resolved;
+}
+
+// ---------------------------------------------------------------------------
+// Derived metrics (docs/04 § 3): resolved to ASTs before compile, evaluated in
+// JS after aggregation — identical over primary and compare rows, zero new SQL.
+// ---------------------------------------------------------------------------
+
+interface PreparedDerived {
+  /** The row/measures column: `d:<name>` exactly as requested. */
+  key: string;
+  ast: DerivedAst;
+  components: readonly Metric[];
+}
+
+interface PreparedMetricQuery {
+  /** The query as compiled: `d:` refs replaced by their component metrics. */
+  query: CompilableMetricQuery;
+  derived: readonly PreparedDerived[];
+  bucket: MetricQuery['bucket'];
+}
+
+/**
+ * Splits a query's metrics into built-ins and derived refs, resolves each ref
+ * against the definitions the main thread passed, and folds the expressions'
+ * component metrics into the compiled set. Refusals are per query and honest:
+ * an unknown name, an unparseable stored expression, or a component set past
+ * the per-query ceiling each name exactly what went wrong.
+ */
+function prepareMetricQuery(
+  query: MetricQuery,
+  derivedDefs: Readonly<Record<string, string>> | undefined,
+): PreparedMetricQuery | QueryErrorResult {
+  const base: Metric[] = [];
+  const derived: PreparedDerived[] = [];
+  for (const metric of query.metrics) {
+    if (!isDerivedMetricRef(metric)) {
+      base.push(metric);
+      continue;
+    }
+    if (derived.some((d) => d.key === metric)) continue;
+    const name = derivedNameOf(metric);
+    const expr = derivedDefs?.[name];
+    if (expr === undefined) return unsupported(`unknown derived metric '${metric}'`);
+    let ast: DerivedAst;
+    try {
+      ast = parseDerivedExpr(expr);
+    } catch {
+      // Stored rows are client-authored data: an expression that no longer
+      // parses fails closed here, never half-evaluates (CLAUDE.md: zod/parse
+      // at every boundary, stored JSON included).
+      return unsupported(`derived metric '${metric}' is invalid — re-save it`);
+    }
+    derived.push({ key: metric, ast, components: derivedMetricsOf(ast) });
+  }
+  const combined = [...new Set([...base, ...derived.flatMap((d) => d.components)])];
+  if (combined.length > MAX_METRICS_PER_QUERY) {
+    return unsupported(
+      `this query needs ${combined.length} underlying metrics — the ceiling is ${MAX_METRICS_PER_QUERY}`,
+    );
+  }
+  return { query: { ...query, metrics: combined }, derived, bucket: query.bucket };
+}
+
+/**
+ * A derived metric over a DISTINCT operand is only honest where the distinct
+ * itself is: computed per day (or over the whole undivided window). Any other
+ * bucket would ask a client — or this very expression — to recombine distinct
+ * counts, which have no total (docs/04 § 3, `measureTotal`).
+ */
+function derivedBucketRefusal(
+  prepared: PreparedMetricQuery,
+  measures: Measures,
+): QueryErrorResult | undefined {
+  const bucket = prepared.bucket;
+  if (bucket === undefined || bucket === 'day') return undefined;
+  for (const entry of prepared.derived) {
+    const distinct = entry.components.find((metric) => measures[metric]?.aggregate === 'distinct');
+    if (distinct !== undefined) {
+      return unsupported(
+        `'${entry.key}' reads the distinct count '${distinct}' — only 'day' buckets (or no bucket) answer it honestly`,
+      );
+    }
+  }
+  return undefined;
+}
+
+/** Evaluates every derived metric per row — compare rows included — and declares its measure. */
+function attachDerived(
+  entry: QueryResult,
+  prepared: PreparedMetricQuery,
+  measures: Measures,
+): void {
+  for (const item of prepared.derived) {
+    for (const row of entry.rows) row[item.key] = evaluateDerived(item.ast, row);
+    for (const row of entry.compare ?? []) row[item.key] = evaluateDerived(item.ast, row);
+    measures[item.key] = derivedMeasure(item, measures);
+  }
+}
+
+/**
+ * The measure a derived column declares (docs/04 § 3). Exactly `A / B` over two
+ * sum-aggregates is a proper `ratio` — the components ride in the same rows, so
+ * a client re-aggregates it exactly as it does `views_per_visit`. Every other
+ * shape is `computed`: evaluated per row, with no lawful recombination, so no
+ * client-side total exists to get wrong.
+ */
+function derivedMeasure(item: PreparedDerived, measures: Measures): Measure {
+  const ast = item.ast;
+  if ('op' in ast && ast.op === '/' && 'metric' in ast.left && 'metric' in ast.right) {
+    const numerator = measures[ast.left.metric];
+    const denominator = measures[ast.right.metric];
+    if (numerator?.aggregate === 'sum' && denominator?.aggregate === 'sum') {
+      return {
+        unit: unitDiv(numerator.unit, denominator.unit),
+        population: numerator.population,
+        aggregate: 'ratio',
+        of: { numerator: ast.left.metric, denominator: ast.right.metric },
+      };
+    }
+  }
+  // The parser guarantees ≥1 metric operand; its population stands in for the
+  // expression's, which has no single row set of its own.
+  const first = item.components[0];
+  const population = first === undefined ? 'actions' : (measures[first]?.population ?? 'actions');
+  return { unit: 'value', population, aggregate: 'computed' };
+}
+
+/** ms per count reads as ms (avg_engagement's shape); anything else is a bare value. */
+function unitDiv(numerator: Unit, denominator: Unit): Unit {
+  return numerator === 'ms' && denominator === 'count' ? 'ms' : 'value';
 }
 
 function resolveSites(

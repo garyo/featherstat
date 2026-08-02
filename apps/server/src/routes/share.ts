@@ -23,6 +23,7 @@ import {
   withWriteTransaction,
 } from '../db/index.ts';
 import { executeQueryRequest, resolveSiteWindows, UnknownSiteError } from '../query/executor.ts';
+import { expandSegments, resolveDerived } from '../query/stored.ts';
 import { parseDashboardId } from './dashboards.ts';
 import { windowTag } from './query.ts';
 import { clientIp } from './track.ts';
@@ -139,12 +140,28 @@ export function createShareRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
     // The SAME batch the in-app view would run (packages/shared): widget queries
     // plus their derived companions (sparklines, browsers, per-site pages), the
     // same previous-period compare, the same hourly rewrite for the intraday presets.
-    const request: QueryRequest = {
+    const assembled: QueryRequest = {
       site: layout.site,
       range: range.data,
       compare: 'previous',
       queries: hourlyWhenIntraday(collectBatch(layout).queries, range.data.preset),
     };
+
+    // A stored widget's filters may name saved segments; they expand here for
+    // the same reasons as /api/query — the worker-facing request carries no
+    // refs, and the ETag hashes the expanded trees plus any derived-metric
+    // definitions, so editing either expires the link's caches. A ref to a
+    // segment that no longer exists degrades like any other broken layout.
+    const expansion = expandSegments(db, assembled);
+    if (!expansion.ok) {
+      console.error(`share: dashboard ${dashboard.id}: ${expansion.message}`);
+      return c.json(
+        { error: 'this dashboard is misconfigured — ask its owner to re-save it' },
+        500,
+      );
+    }
+    const request = expansion.request;
+    const derived = resolveDerived(db, request);
 
     const now = Date.now();
     let windows: SiteWindow[];
@@ -157,9 +174,14 @@ export function createShareRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
 
     // ETag exactly like /api/query, with the dashboard's identity and edit time
     // folded in — a layout change must expire caches even when data didn't move.
-    const canonical = canonicalize({ id: dashboard.id, updatedAt: dashboard.updated_at, request });
+    const canonical = canonicalize({
+      id: dashboard.id,
+      updatedAt: dashboard.updated_at,
+      request,
+      derived,
+    });
     const schema = schemaVersion(db);
-    const current = etag(dataVersion(db), schema, canonical, windows);
+    const current = etag(dataVersion(db), schema, canonical, windows, now);
     if (anyMatch(c.req.header('if-none-match'), current)) {
       return c.body(null, 304, cacheHeaders(current));
     }
@@ -170,8 +192,8 @@ export function createShareRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
       });
     }
 
-    const response = executeQueryRequest(db, request, { now });
-    const tag = etag(response.meta.dataVersion, schema, canonical, windows);
+    const response = executeQueryRequest(db, request, { now, derived });
+    const tag = etag(response.meta.dataVersion, schema, canonical, windows, now);
     const body: ShareView = {
       dashboard: layout,
       results: response.results,
@@ -223,9 +245,10 @@ function etag(
   schema: number,
   canonicalBody: string,
   windows: readonly SiteWindow[],
+  now: number,
 ): string {
   const hash = createHash('sha256')
-    .update(`${version}|${schema}|${canonicalBody}|${windowTag(windows)}`)
+    .update(`${version}|${schema}|${canonicalBody}|${windowTag(windows, now)}`)
     .digest('base64url');
   return `"${hash}"`;
 }

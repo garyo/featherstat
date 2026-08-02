@@ -156,6 +156,33 @@ describe('compareWindow', () => {
     // Shifting whole local dates instead would land an hour out here.
     expect(previous.toTs).toBe(current.fromTs);
   });
+
+  it('uses an explicit {from, to} exactly as given — equal length or not', () => {
+    const window = at('UTC', { from: '2026-07-21', to: '2026-07-27' });
+    expect(compareWindow(window, { from: '2026-06-01', to: '2026-06-07' })).toEqual({
+      from: '2026-06-01',
+      to: '2026-06-07',
+      fromTs: undefined,
+      toTs: undefined,
+    });
+    // An unequal-length compare window is still used as given: rows align by
+    // index from the start, and meta.windows labels the mismatch (docs/04 § 3).
+    expect(compareWindow(window, { from: '2026-06-01', to: '2026-06-30' })).toMatchObject({
+      from: '2026-06-01',
+      to: '2026-06-30',
+    });
+  });
+
+  it("clears a rolling window's instants under an explicit compare — dates are all it states", () => {
+    const current = resolveWindow({ preset: '24h' }, 'America/New_York', NOW);
+    const compared = compareWindow(at('America/New_York', current), {
+      from: '2026-07-01',
+      to: '2026-07-02',
+    });
+    expect(compared.fromTs).toBeUndefined();
+    expect(compared.toTs).toBeUndefined();
+    expect(compared).toMatchObject({ from: '2026-07-01', to: '2026-07-02' });
+  });
 });
 
 /**

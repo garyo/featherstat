@@ -97,16 +97,38 @@ export type Filter = FilterLeaf;
  * The filter tree: a leaf, or boolean composition over subtrees. A top-level
  * ARRAY of nodes is an implicit AND — exactly the v1 flat-filter shape, which
  * is what keeps every stored dashboard and every old client valid unchanged.
+ *
+ * `{segment: id}` names a saved segment (docs/04 § 3) and exists only on the
+ * REQUEST side: the server substitutes the stored tree before anything is
+ * compiled, so the compiler and the workers never see one. A stored segment
+ * is `SegmentFilterNode` — the same grammar WITHOUT the ref, which is what
+ * makes cycles impossible by construction rather than by check.
  */
+export type SegmentFilterNode =
+  | FilterLeaf
+  | { all: SegmentFilterNode[] }
+  | { any: SegmentFilterNode[] }
+  | { not: SegmentFilterNode };
+
 export type FilterNode =
   | FilterLeaf
   | { all: FilterNode[] }
   | { any: FilterNode[] }
-  | { not: FilterNode };
+  | { not: FilterNode }
+  | { segment: number };
 
 /** A leaf is depth 1; each wrapper adds one. Four is a lot of nesting already. */
 export const MAX_FILTER_DEPTH = 4;
 export const MAX_FILTER_LEAVES = 32;
+
+export const SegmentFilterNodeSchema: z.ZodType<SegmentFilterNode> = z.lazy(() =>
+  z.union([
+    FilterLeafSchema,
+    z.object({ all: z.array(SegmentFilterNodeSchema).min(1).max(MAX_FILTER_LEAVES) }),
+    z.object({ any: z.array(SegmentFilterNodeSchema).min(1).max(MAX_FILTER_LEAVES) }),
+    z.object({ not: SegmentFilterNodeSchema }),
+  ]),
+);
 
 export const FilterNodeSchema: z.ZodType<FilterNode> = z.lazy(() =>
   z.union([
@@ -114,6 +136,7 @@ export const FilterNodeSchema: z.ZodType<FilterNode> = z.lazy(() =>
     z.object({ all: z.array(FilterNodeSchema).min(1).max(MAX_FILTER_LEAVES) }),
     z.object({ any: z.array(FilterNodeSchema).min(1).max(MAX_FILTER_LEAVES) }),
     z.object({ not: FilterNodeSchema }),
+    z.object({ segment: z.number().int().positive() }),
   ]),
 );
 
@@ -124,12 +147,23 @@ function nodeDepth(node: FilterNode): number {
   return 1;
 }
 
-/** Every leaf anywhere in the tree, in document order. */
+/** Every leaf anywhere in the tree, in document order. A segment ref holds
+ * none of its own — its leaves exist only after the server substitutes it. */
 export function filterLeaves(node: FilterNode): FilterLeaf[] {
   if ('all' in node) return node.all.flatMap(filterLeaves);
   if ('any' in node) return node.any.flatMap(filterLeaves);
   if ('not' in node) return filterLeaves(node.not);
+  if ('segment' in node) return [];
   return [node];
+}
+
+/** Every segment id referenced anywhere in the tree, in document order. */
+export function filterSegmentRefs(node: FilterNode): number[] {
+  if ('all' in node) return node.all.flatMap(filterSegmentRefs);
+  if ('any' in node) return node.any.flatMap(filterSegmentRefs);
+  if ('not' in node) return filterSegmentRefs(node.not);
+  if ('segment' in node) return [node.segment];
+  return [];
 }
 
 /** Every dimension mentioned anywhere in the tree. */

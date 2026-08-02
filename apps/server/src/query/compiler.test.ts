@@ -6,7 +6,6 @@ import {
   EVENT_ONLY_METRICS,
   isQueryError,
   type Metric,
-  type MetricQuery,
   MetricSchema,
   POPULATIONS,
   type Population,
@@ -16,6 +15,7 @@ import {
 } from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
 import {
+  type CompilableMetricQuery,
   type CompiledQuery,
   compileMetricQuery,
   measureOf,
@@ -35,7 +35,9 @@ const sites = (count: number): SiteWindow[] =>
     to: '2026-07-31',
   }));
 
-function compile(query: Partial<MetricQuery> & Pick<MetricQuery, 'metrics'>): CompiledQuery {
+function compile(
+  query: Partial<CompilableMetricQuery> & Pick<CompilableMetricQuery, 'metrics'>,
+): CompiledQuery {
   const compiled = compileMetricQuery({ id: 'q', ...query }, [], sites(1));
   if (isQueryError(compiled)) {
     throw new Error(`unexpected compile error: ${compiled.error.message}`);

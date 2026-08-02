@@ -75,6 +75,7 @@ export class QueryPool {
     request: QueryRequest,
     now: number,
     allowedSites?: readonly number[],
+    derived?: Readonly<Record<string, string>>,
   ): Promise<QueryResponse> {
     const reply = await this.submit({
       id: this.nextId++,
@@ -82,6 +83,7 @@ export class QueryPool {
       request,
       now,
       ...(allowedSites === undefined ? {} : { allowedSites }),
+      ...(derived === undefined ? {} : { derived }),
     });
     if (!reply.ok) throw new Error(reply.error);
     return reply.result as QueryResponse;

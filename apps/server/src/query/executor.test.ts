@@ -7,6 +7,7 @@ import {
 import { beforeAll, describe, expect, it } from 'vitest';
 import { binId, event, resultOf, session } from '../../test/rows.ts';
 import {
+  createSegment,
   createSite,
   type Db,
   type EventRow,
@@ -927,5 +928,199 @@ describe("the rolling '24h' window", () => {
       ).meta.windows[0];
     expect(windowAt(AT + 29 * 60_000)).toEqual(windowAt(AT));
     expect(windowAt(AT + 3_600_000)).not.toEqual(windowAt(AT));
+  });
+});
+
+describe('custom compare — {from, to}', () => {
+  it('answers the comparison over the explicit window, used as given', () => {
+    const response = run({
+      compare: { from: '2026-07-20', to: '2026-07-20' },
+      queries: [{ id: 'q', metrics: ['visits'] }],
+    });
+    const entry = resultOf(response, 'q');
+    expect(entry.rows).toEqual([{ visits: 4 }]);
+    expect(entry.compare).toEqual([{ visits: 1 }]); // visitor E on 2026-07-20
+  });
+
+  it('labels the compare window in meta.windows — the unequal-length contract', () => {
+    // One current day against a two-day compare window: the result is still
+    // emitted (index-aligned from the start), and the label says what ran.
+    const response = run({
+      compare: { from: '2026-07-19', to: '2026-07-20' },
+      queries: [{ id: 'q', metrics: ['visits'], bucket: 'day' }],
+    });
+    const entry = resultOf(response, 'q');
+    expect(entry.rows).toEqual([{ bucket: DAY, visits: 4 }]);
+    expect(entry.compare).toEqual([{ bucket: '2026-07-20', visits: 1 }]);
+    for (const window of response.meta.windows) {
+      expect(window.compareFrom).toBe('2026-07-19');
+      expect(window.compareTo).toBe('2026-07-20');
+    }
+  });
+
+  it('does not label preset compares — the field means "custom"', () => {
+    const response = run({ compare: 'previous', queries: [{ id: 'q', metrics: ['visits'] }] });
+    for (const window of response.meta.windows) {
+      expect(window.compareFrom).toBeUndefined();
+      expect(window.compareTo).toBeUndefined();
+    }
+  });
+});
+
+describe('segment compare — {segment: id}', () => {
+  let segmentId: number;
+  beforeAll(() => {
+    withWriteTransaction(db, () => {
+      segmentId = createSegment(
+        db,
+        'US traffic',
+        JSON.stringify({ dim: 'country', op: 'eq', value: 'US' }),
+        1,
+      ).id;
+    });
+  });
+
+  it('equals the same query with the segment filter applied inline', () => {
+    const compared = run({
+      compare: { segment: segmentId },
+      queries: [{ id: 'q', metrics: ['visits', 'pageviews'] }],
+    });
+    const manual = run({
+      filters: [{ dim: 'country', op: 'eq', value: 'US' }],
+      queries: [{ id: 'q', metrics: ['visits', 'pageviews'] }],
+    });
+    const entry = resultOf(compared, 'q');
+    expect(entry.rows).toEqual([{ visits: 4, pageviews: 6 }]); // the unfiltered answer
+    expect(entry.compare).toEqual(resultOf(manual, 'q').rows);
+  });
+
+  it('ANDs the segment tree beside the request filters', () => {
+    const compared = run({
+      compare: { segment: segmentId },
+      filters: [{ dim: 'browser', op: 'eq', value: 'Chrome' }],
+      queries: [{ id: 'q', metrics: ['visits'] }],
+    });
+    const entry = resultOf(compared, 'q');
+    expect(entry.rows).toEqual([{ visits: 1 }]); // Chrome: visit A only
+    expect(entry.compare).toEqual([{ visits: 1 }]); // Chrome AND US: still A
+  });
+
+  it('omits the comparison when the segment vanished under the request (the race)', () => {
+    const response = run({
+      compare: { segment: 9999 },
+      queries: [{ id: 'q', metrics: ['visits'] }],
+    });
+    const entry = resultOf(response, 'q');
+    expect(entry.rows).toEqual([{ visits: 4 }]);
+    expect(entry.compare).toBeUndefined();
+  });
+});
+
+describe('derived metrics — d:<name>', () => {
+  const derived = {
+    events_per_visit: 'events / visits',
+    views_per_visitor: 'pageviews / visitors',
+    engagement_score: '(engaged_ms / 1000 + events * 10) / visits',
+  };
+  const ask = (partial: Omit<QueryRequest, 'site' | 'range'> & Partial<QueryRequest>) =>
+    executeQueryRequest(db, { site: 1, ...RANGE, ...partial }, { derived });
+
+  it('computes the expression from the underlying aggregates — hand math', () => {
+    // events = 1, visits = 4 over the seeded day.
+    const response = ask({ queries: [{ id: 'q', metrics: ['d:events_per_visit'] }] });
+    expect(resultOf(response, 'q').rows).toEqual([
+      { events: 1, visits: 4, 'd:events_per_visit': 0.25 },
+    ]);
+  });
+
+  it('computes per row of a breakdown, beside requested built-ins', () => {
+    const response = ask({
+      queries: [{ id: 'q', metrics: ['pageviews', 'd:events_per_visit'], dim: 'path', limit: 10 }],
+    });
+    for (const row of resultOf(response, 'q').rows) {
+      const events = row.events as number;
+      const visits = row.visits as number;
+      expect(row['d:events_per_visit']).toBe(visits === 0 ? null : events / visits);
+    }
+  });
+
+  it('declares A/B over sums as a proper ratio with both components named', () => {
+    const response = ask({ queries: [{ id: 'q', metrics: ['d:events_per_visit'] }] });
+    expect(resultOf(response, 'q').measures?.['d:events_per_visit']).toEqual({
+      unit: 'value',
+      population: 'events',
+      aggregate: 'ratio',
+      of: { numerator: 'events', denominator: 'visits' },
+    });
+  });
+
+  it("declares any other shape as 'computed' — no client-side total exists", () => {
+    const response = ask({ queries: [{ id: 'q', metrics: ['d:engagement_score'] }] });
+    const measure = resultOf(response, 'q').measures?.['d:engagement_score'];
+    expect(measure?.aggregate).toBe('computed');
+    expect(measure?.of).toBeUndefined();
+    // Hand math: (184000/1000 + 1*10) / 4 = 48.5.
+    expect(resultOf(response, 'q').rows[0]?.['d:engagement_score']).toBe(48.5);
+  });
+
+  it('computes over compare rows too', () => {
+    const response = ask({
+      compare: 'year',
+      queries: [{ id: 'q', metrics: ['d:events_per_visit'] }],
+    });
+    expect(resultOf(response, 'q').compare).toEqual([
+      { events: 0, visits: 1, 'd:events_per_visit': 0 },
+    ]);
+  });
+
+  it("refuses a distinct operand at buckets other than 'day' — never sum a distinct", () => {
+    const refused = ask({
+      queries: [{ id: 'q', metrics: ['d:views_per_visitor'], bucket: 'month' }],
+    });
+    expect(refused.results.q).toHaveProperty(['error', 'code'], 'unsupported');
+    const daily = ask({
+      queries: [{ id: 'q', metrics: ['d:views_per_visitor'], bucket: 'day' }],
+    });
+    expect(resultOf(daily, 'q').rows).toEqual([
+      { bucket: DAY, pageviews: 6, visitors: 4, 'd:views_per_visitor': 1.5 },
+    ]);
+    const total = ask({ queries: [{ id: 'q', metrics: ['d:views_per_visitor'] }] });
+    expect(resultOf(total, 'q').rows).toEqual([
+      { pageviews: 6, visitors: 4, 'd:views_per_visitor': 1.5 },
+    ]);
+  });
+
+  it('answers an unknown name with an honest per-query error', () => {
+    const response = ask({ queries: [{ id: 'q', metrics: ['d:nope'] }] });
+    expect(response.results.q).toEqual({
+      error: { code: 'unsupported', message: "unknown derived metric 'd:nope'" },
+    });
+  });
+
+  it('fails closed on a stored expression that no longer parses', () => {
+    const response = executeQueryRequest(
+      db,
+      { site: 1, ...RANGE, queries: [{ id: 'q', metrics: ['d:broken'] }] },
+      { derived: { broken: 'visits +' } },
+    );
+    expect(response.results.q).toHaveProperty(['error', 'code'], 'unsupported');
+  });
+
+  it('refuses when the component set outgrows the per-query metric ceiling', () => {
+    const wide = {
+      wide: 'visitors + visits + pageviews + events + outlinks + downloads + engaged_ms',
+    };
+    const response = executeQueryRequest(
+      db,
+      {
+        site: 1,
+        ...RANGE,
+        queries: [
+          { id: 'q', metrics: ['engaged_sessions', 'avg_engagement', 'bounce_rate', 'd:wide'] },
+        ],
+      },
+      { derived: wide },
+    );
+    expect(response.results.q).toHaveProperty(['error', 'code'], 'unsupported');
   });
 });

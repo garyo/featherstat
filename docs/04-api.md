@@ -188,7 +188,7 @@ transaction.
 {
   "site": 4,                        // or "all"
   "range": { "preset": "30d" },     // or { "from": "2026-06-01", "to": "2026-06-30" }
-  "compare": "previous",            // optional: previous period | same period last year
+  "compare": "previous",            // optional: "previous" | "year" | {"segment": id} | {"from","to"}
   "filters": [                      // optional, applied to every query
     { "dim": "country", "op": "eq", "value": "US" }
   ],
@@ -251,6 +251,50 @@ batch itself still succeeds, and never returns wrong numbers.
   other direction. **`24h` is the like-for-like answer**: both sides are 24 hour
   buckets, so its comparison needs no clipping to be honest. Adding the preset
   beats mutating what `today` means.
+- **Compare is a union of four forms.** The two strings above, plus:
+  - **`{"segment": id}`** — the same window seen through a saved segment: the
+    compiled query runs a second time with the segment's filter tree AND-ed in
+    beside the request filters, and the rows land in the ordinary `compare`
+    slot. "All traffic vs. US traffic" is one request. A comparison the
+    segment's dimensions make unanswerable (they conflict with the metrics)
+    refuses the query whole — never rows whose comparison silently vanished.
+  - **`{"from", "to"}`** — an explicit compare window, validated like a range
+    and **used as given** (inclusive local dates, per site timezone). When its
+    day count differs from the current window the result is still emitted,
+    **index-aligned from the start** — refusing would forbid legitimate
+    questions — and the mismatch is labeled: each `meta.windows` entry gains
+    `compareFrom`/`compareTo` exactly when the compare was this form. The
+    label rule is the contract; a client that renders an unequal comparison
+    unlabeled is wrong, not the server.
+- **Saved segments** (`GET /api/segments`, admin CRUD under
+  `/api/admin/segments`) are named filter trees. A request's `filters` — at the
+  batch level or inside one query — may use the leaf **`{"segment": id}`**
+  anywhere a node can appear; the server substitutes the stored tree **before
+  compilation**, so the executed request (and the ETag, below) carries the
+  expanded grammar and the compiler never sees a ref. Stored segment
+  definitions use the same grammar WITHOUT the ref — a segment cannot
+  reference a segment, so cycles are impossible by construction. An unknown or
+  unreadable segment id is a 400 naming it: segments are named by the same
+  operator's UI, so a bad id is a mistake to surface, not to skip.
+- **Derived metrics** (`GET /api/derived-metrics`, admin CRUD under
+  `/api/admin/derived-metrics`) are stored arithmetic over the metric
+  vocabulary — `expr := term (('+'|'-') term)*` over metric names, numeric
+  literals, `* /` and parentheses, ≤ 16 AST nodes, parsed by a tiny
+  recursive-descent parser in `packages/shared` (never `eval`, never SQL). A
+  query names one as **`d:<name>`** in its `metrics`. Execution is
+  **post-aggregation**: the component metrics join the compiled set (their
+  columns ride in the rows) and the expression is evaluated per row — compare
+  rows included — in JS. Unknown operands and division by zero/null read as
+  `null`, never `Infinity`. Refusals are per query and honest: an unknown
+  name, a stored expression that no longer parses, or a component set past
+  `MAX_METRICS_PER_QUERY`. The declared measure follows composition rules:
+  exactly `A / B` over two sum-aggregates is a proper `ratio` with
+  `of: {numerator, denominator}` (both columns present in the rows); any other
+  shape is the aggregate **`computed`** — evaluated per row with **no lawful
+  recombination**, so `measureTotal`/`measurePerBucket` return `undefined` and
+  no client invents a total. Any **distinct** operand (`visitors`, routed
+  `visits`) additionally refuses buckets other than `day` — a coarser bucket
+  would ask the expression to recombine distinct counts, which have none.
 - **The response describes itself.** Resolving a range preset needs the site's
   timezone and a clock; enumerating a chart's x axis needs that *and* the
   granularity the query ran at. The server has all three, so it says what it
@@ -369,8 +413,9 @@ batch itself still succeeds, and never returns wrong numbers.
   `visitors`, …) exactly as an event-only dimension refuses session metrics;
   a `scope: "session"` filter on one names a session attribute and blocks
   nothing. Plus `bucket`: `hour|day|week|month`.
-  Filter ops: `eq`, `neq`, `in`, `contains`, `starts`, and `is_null` (no
-  value — matches the NULL group a breakdown returns, e.g. direct traffic
+  Filter ops: `eq`, `neq`, `in`, `contains`, `starts`, `glob` (SQLite GLOB,
+  pattern bound as a parameter, length- and wildcard-capped), and `is_null`
+  (no value — matches the NULL group a breakdown returns, e.g. direct traffic
   under `ref_domain`). The compiler maps this vocabulary to parameterized SQL;
   anything outside it is a 400.
 - **Sequence queries** don't fit metric × dimension, so they are their own
@@ -436,7 +481,19 @@ batch itself still succeeds, and never returns wrong numbers.
   local hour turns and is stable in between, and re-zoning a site expires an
   explicit `from`/`to` range whose bounds did not move but whose hour axis did).
   Unchanged data → 304 with zero queries executed. Realtime SSE tells the
-  client *when* to revalidate, so there's no polling loop.
+  client *when* to revalidate, so there's no polling loop. Two refinements:
+  - **The canonical body is the EXPANDED request** — segment refs substituted,
+    derived-metric definitions hashed beside it. Editing a segment or a
+    derived metric therefore expires every cached answer that used it with
+    zero extra bookkeeping, even though the data version never moved; and two
+    spellings of one question (`{segment: id}` vs. its tree written inline)
+    share one tag.
+  - **Each window's tag folds in `min(to, site-local today)`.** Presets never
+    need it (their dates move with the clock), but an explicit range whose
+    `to` is today or later has static bounds over a moving clip — without the
+    fold, a dashboard left open overnight would 304 forever while today's
+    rows drained into a day the cached body shows empty. A fully past range's
+    fold equals its own `to`, so those tags stay stable and cacheable.
 - **Rate limit.** A stored dashboard is a client-authored query plan executed
   server-side, and better-sqlite3 is synchronous — while a batch runs it owns
   the event loop that also answers beacons. The response-size budget above
@@ -534,7 +591,11 @@ single stream.
 Conventional REST under `/api/admin` (session auth + CSRF): sites CRUD,
 dashboards CRUD (layout JSON — writes validate the schema AND the batch
 invariants: unique query ids, derived-query count within the batch cap),
-share/API tokens, ntfy notification settings (`GET`/`PUT`/`DELETE
+segments and derived-metrics CRUD (`/api/admin/segments`,
+`/api/admin/derived-metrics`; the read lists ride outside the wall at
+`GET /api/segments` and `GET /api/derived-metrics`, session-gated but open to
+every principal — a viewer or token composes queries with them exactly as the
+admin does), share/API tokens, ntfy notification settings (`GET`/`PUT`/`DELETE
 /api/admin/ntfy`, R16 — `DELETE` is the off switch; the endpoint URL must be
 https or loopback-http, carry no query/fragment, and never point at link-local
 or cloud-metadata hosts), auth (`login`, `logout`, first-run setup). Read-only

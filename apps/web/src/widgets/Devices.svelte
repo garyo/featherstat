@@ -2,7 +2,7 @@
 import BarRows from './BarRows.svelte';
 import { barRows } from './bar-rows.ts';
 import { type DeviceSegment, deviceSegments } from './devices.ts';
-import { exactNumber, METRIC_LABELS } from './format.ts';
+import { exactNumber, metricLabel } from './format.ts';
 import { sliceOf, type WidgetProps } from './types.ts';
 
 /**
@@ -25,7 +25,7 @@ const browsers = $derived(sliceOf(env.data, 'browsers'));
 const metric = $derived(
   spec.query !== undefined && !('kind' in spec.query) ? spec.query.metrics[0] : undefined,
 );
-const unit = $derived(metric === undefined ? '' : METRIC_LABELS[metric].toLowerCase());
+const unit = $derived(metric === undefined ? '' : metricLabel(metric).toLowerCase());
 
 const segments = $derived(
   main.kind === 'ready' && metric !== undefined ? deviceSegments(main.result.rows, metric) : [],

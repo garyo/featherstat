@@ -601,6 +601,55 @@ describe('dashboards, share links and notifications are mounted', () => {
   });
 });
 
+describe('segments and derived metrics are mounted with the read/write split', () => {
+  const json = (extra: Record<string, string>): Record<string, string> => ({
+    'content-type': 'application/json',
+    ...extra,
+  });
+
+  it('401s the reads anonymously — they live behind the session gate', async () => {
+    expect((await secured.app.request('/api/segments')).status).toBe(401);
+    expect((await secured.app.request('/api/derived-metrics')).status).toBe(401);
+  });
+
+  it('lets a scoped API token read but never write — the admin wall holds', async () => {
+    const { cookie, csrf } = await setup();
+    // Admin creates one of each, then mints a token principal.
+    expect(
+      (
+        await secured.app.request('/api/admin/segments', {
+          method: 'POST',
+          headers: json({ cookie, 'x-csrf-token': csrf }),
+          body: JSON.stringify({ name: 'US', filter: { dim: 'country', op: 'eq', value: 'US' } }),
+        })
+      ).status,
+    ).toBe(201);
+    const minted = await secured.app.request('/api/admin/tokens', {
+      method: 'POST',
+      headers: json({ cookie, 'x-csrf-token': csrf }),
+      body: JSON.stringify({ name: 'script', sites: 'all' }),
+    });
+    expect(minted.status).toBe(201);
+    const { token } = (await minted.json()) as { token: string };
+
+    const bearer = { authorization: `Bearer ${token}` };
+    const read = await secured.app.request('/api/segments', { headers: bearer });
+    expect(read.status).toBe(200);
+    expect(((await read.json()) as unknown[]).length).toBe(1);
+    expect((await secured.app.request('/api/derived-metrics', { headers: bearer })).status).toBe(
+      200,
+    );
+
+    // The whole admin surface is the write surface (docs/04 § 5).
+    const write = await secured.app.request('/api/admin/segments', {
+      method: 'POST',
+      headers: json(bearer),
+      body: JSON.stringify({ name: 'nope', filter: { dim: 'country', op: 'eq', value: 'DE' } }),
+    });
+    expect(write.status).toBe(403);
+  });
+});
+
 describe('SPA serving', () => {
   it('serves index.html at /, hashed assets immutable, and falls back on navigation paths', async () => {
     const root = await secured.app.request('/');
