@@ -5,9 +5,16 @@ import {
   incrementBotDrops,
   insertEvents,
   type SessionRow,
+  stmt,
   upsertSessions,
   withWriteTransaction,
 } from '../db/index.ts';
+import {
+  applyRollups,
+  type SessionDelta,
+  type SessionSnapshot,
+  snapshotSession,
+} from '../rollup/apply.ts';
 
 export interface FlushSummary {
   events: number;
@@ -40,6 +47,19 @@ export class WriteBatcher {
   private readonly botDrops = new Map<string, BotDropEntry>();
   private readonly hooks: FlushHook[] = [];
   private timer: NodeJS.Timeout | undefined;
+  /**
+   * Each live session row's state as last COMMITTED — what the rollup deltas
+   * subtract (docs/03 § Rollups). Advanced only after a successful flush, so a
+   * retried flush recomputes the same deltas it failed to land; keyed by row
+   * identity because the sessionizer mutates one live object per open session.
+   */
+  private readonly committed = new WeakMap<SessionRow, SessionSnapshot>();
+  /**
+   * Test seam: runs inside the flush transaction, after every write. The drift
+   * suite makes one flush throw here to prove a retry double-counts nothing —
+   * there is no other way to fail a flush without also poisoning the retry.
+   */
+  beforeCommit: (() => void) | undefined;
 
   constructor(
     private readonly db: Db,
@@ -70,6 +90,15 @@ export class WriteBatcher {
     this.sessions.add(row);
   }
 
+  /**
+   * Marks `row` as already committed with its CURRENT values — restart recovery
+   * and session revival, where the row was just read back from the store. Without
+   * this the next flush would book the revived session as a brand-new visit.
+   */
+  seedSnapshot(row: SessionRow): void {
+    this.committed.set(row, snapshotSession(row));
+  }
+
   addBotDrop(siteId: number, localDate: string): void {
     const key = `${siteId}|${localDate}`;
     const entry = this.botDrops.get(key);
@@ -91,22 +120,39 @@ export class WriteBatcher {
     const sessions = [...this.sessions];
     const botDrops = [...this.botDrops.values()];
 
+    const deltas: SessionDelta[] = sessions.map((row) => ({
+      row,
+      before: this.committed.get(row),
+    }));
+
     try {
       withWriteTransaction(this.db, () => {
+        // Read before the inserts, inside the transaction: `id > sinceEventId`
+        // is then exactly this flush's rows, and a rolled-back attempt reads
+        // the same value again on retry.
+        const sinceEventId = stmt(this.db, 'SELECT COALESCE(MAX(id), 0) FROM events')
+          .pluck()
+          .get() as number;
         insertEvents(this.db, events);
         upsertSessions(this.db, sessions);
         for (const drop of botDrops) {
           incrementBotDrops(this.db, drop.siteId, drop.localDate, drop.count);
         }
+        applyRollups(this.db, sinceEventId, events, deltas);
+        this.beforeCommit?.();
       });
     } catch (error) {
       // Everything stays queued and the next interval retries: dropping the
       // batch would leave in-memory session state (seq, counters) permanently
       // ahead of the events table. A crash still loses only what is queued —
-      // the accepted docs/02 trade.
+      // the accepted docs/02 trade. Snapshots deliberately do NOT advance here,
+      // so the retry recomputes the same rollup deltas against the same base.
       console.error('batch flush failed, retrying next interval:', error);
       return undefined;
     }
+    // Only now, after the commit, does "committed" move: better-sqlite3 is
+    // synchronous, so nothing can have mutated the rows since they were written.
+    for (const row of sessions) this.committed.set(row, snapshotSession(row));
     this.events = [];
     this.sessions.clear();
     this.botDrops.clear();

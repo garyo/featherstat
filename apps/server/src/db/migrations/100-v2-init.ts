@@ -336,7 +336,8 @@ CREATE TABLE rollup_sessions_day (
 
 -- Exact-distinct helpers: one row per (visitor|session, day, rolled group).
 -- The daily salt closes a day, so rows older than ingest can reach are dead
--- weight — the retention job prunes them; the counts above are the survivors.
+-- weight — the write path prunes each site's stale days at day rollover
+-- (rollup/apply.ts, PRESENCE_HORIZON_DAYS); the counts above are the survivors.
 CREATE TABLE rollup_visitor_seen (
   site_id    INTEGER NOT NULL,
   local_date TEXT    NOT NULL,

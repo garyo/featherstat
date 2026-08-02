@@ -212,7 +212,7 @@ export function withReadSnapshot<T>(db: Db, fn: () => T): T {
   return db.transaction(fn).deferred();
 }
 
-function assertWritable(db: Db): void {
+export function assertWritable(db: Db): void {
   if (!db.inTransaction) {
     throw new Error('DB writes must run inside withWriteTransaction() — see docs/02 single writer');
   }

@@ -393,15 +393,83 @@ Dropped at the door (`isbot` on the UA), counted per site per day in a
 `settings`-adjacent counter surfaced in diagnostics. Storing bot traffic just
 to filter it from every query is Matomo-brain; we decline.
 
+## Rollups
+
+Pre-aggregated tables maintained **in the same write transaction as the ingest
+flush** (`rollup/apply.ts`, called by the batcher inside `withWriteTransaction`
+— invariant 2 untouched), so within any committed snapshot they can never lag
+the raw rows, and a failed flush rolls both back together. v2 ships the write
+path first; queries keep answering from raw rows until the planner learns to
+route to them.
+
+The tables (see `db/migrations/100-v2-init.ts`, the authoritative DDL):
+
+- `rollup_traffic_hour` — undimensioned hour grain: `hits` (every stored row,
+  pings included), `actions` (non-ping), per-type counts, `event_value_sum`.
+- `rollup_dim_day` — day grain × ONE dimension, EAV over the closed
+  `ROLLUP_DIMS` table (`rollup/tables.ts`). `dim_id` is a small integer
+  **frozen forever** (rollups outlive raw rows, so renumbering merges
+  history); `dim_id 0` is the undimensioned row; SQL NULL rolls into
+  `(dim_value = '', dim_null = 1)`. Additive event metrics over non-ping rows,
+  plus `visitors` / `sessions_touched` — **exact** per-day distincts.
+- `rollup_sessions_day` — day grain × session-capable dimension, keyed by the
+  date the session **started**. Every column is an additive numerator or
+  denominator (`visits`, `measured_sessions`, `engaged_ms`, `bounced`,
+  `session_pageviews`), so bounce rate, average engagement and views/visit
+  recompose exactly.
+- `rollup_visitor_seen` / `rollup_session_seen` — presence tables:
+  `INSERT OR IGNORE`, and `changes === 1` increments the matching distinct
+  count. Exact, never HLL (an estimate would break the equivalence ratchet).
+  The daily salt closes each day, so the write path prunes a site's rows past
+  `PRESENCE_HORIZON_DAYS` at day rollover; a rebuild repopulates them only
+  within that horizon and takes older days' distincts straight from raw
+  `COUNT(DISTINCT …)`.
+- `rollup_meta` — `engagement_threshold_ms` above all: the bounce definition is
+  **baked into `bounced`**, so if the constant changes, session rollups refuse
+  to apply (loud log + `needs_rebuild` flag) until a full rebuild re-derives
+  history under the new definition. Event rollups are threshold-free and
+  continue.
+
+`ROLLUP_DIMS` is exhaustive over the dimension vocabulary, so adding a
+dimension forces a decision: rolled (with a frozen `dimId` and which side —
+events, sessions, or both, exactly mirroring which tables carry the column in
+the compiler's `DIMS`), `derived` (answerable from a rollup row's own keys:
+`site`, `local_hour`, `weekday`), or `raw-only` (`title`).
+
+Maintenance discipline:
+
+- **Event side is insert-only and order-free**: the flush pre-groups its rows
+  in JS and lands one upsert per touched key; the distinct bookkeeping is a
+  FIXED (rolled dims + 1) `INSERT OR IGNORE … SELECT … RETURNING` statements
+  per presence table, ranging over the flush's own rowid interval — never one
+  statement per event per dimension.
+- **Session side is mutation deltas.** The sessionizer mutates one live row
+  per open session, so the batcher keeps a per-row snapshot of the mutable
+  fields **as last committed** and the flush applies before/after deltas —
+  `bounced` can go −1 when a session un-bounces, and `exit_path` (the one
+  rolled dimension that mutates) moves its contribution between keys.
+  Snapshots advance **only after the transaction commits**, sharing the
+  batcher's retry semantics: a failed flush recomputes the same deltas.
+  Restart recovery and session revival seed the snapshot from the row just
+  read back from the store, or the next flush would book a second visit.
+- **Distinct honesty**: per-day distincts are exact; nothing may sum them into
+  a range total (uid/`_id`-derived ids are stable across days).
+- **Repair = per-day delete + recompute** (`rollup/rebuild.ts`), one write
+  transaction per (site, day) with event-loop yields between days. The same
+  recompute SELECTs are the equivalence oracle: `rollup/verify.ts` diffs them
+  against the stored rows, and `test/replay/rollup-equivalence.test.ts` holds
+  flush-incremental == rebuild-from-raw over the whole replay corpus — a
+  permanent ratchet (invariant 6).
+
 ## Size & retention
 
 Rough event row cost ≈ 250–350 B including indexes. Current fleet volume
 (≈ thousands of events/day across six sites) ⇒ **tens of MB per year**. Default
 retention: keep raw events forever.
 
-Escape hatches, deliberately deferred (not in v1): daily rollup tables when a
-deployment approaches ~10 M raw events, and age-based pruning of raw rows once
-rollups exist. The query engine's vocabulary (metric × dimension × range) is
-designed so rollups can slot in behind it without any API change — and a
-rolled-up day's visitor count would now be *exact* for the day it covers, since
-the salt turns over on the same boundary the rollup would key on (§ Identity).
+Age-based pruning of raw rows becomes safe once the rollup read path lands
+(§ Rollups): rollups are never pruned — outliving raw is their point. The query
+engine's vocabulary (metric × dimension × range) is designed so rollups slot in
+behind it without any API change — and a rolled-up day's visitor count is
+*exact* for the day it covers, since the salt turns over on the same boundary
+the rollup keys on (§ Identity).

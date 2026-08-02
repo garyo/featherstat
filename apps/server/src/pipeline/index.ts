@@ -35,9 +35,19 @@ export interface Pipeline {
 export function createPipeline(db: Db, options: PipelineOptions = {}): Pipeline {
   const geo = options.geo ?? new NullProvider();
   const identity = new Identity(db);
-  const sessionizer = new Sessionizer(priorSessionLookup(db));
-  sessionizer.restore(loadOpenSessions(db, Date.now()));
   const batcher = new WriteBatcher(db, options.batchIntervalMs);
+  // Every session row read back from the store is COMMITTED state: seed the
+  // batcher's rollup snapshots before the sessionizer can mutate it, or the
+  // next flush would book a revived visit as a brand-new one (docs/03 § Rollups).
+  const lookup = priorSessionLookup(db);
+  const sessionizer = new Sessionizer((siteId, visitorId, notBefore) => {
+    const prior = lookup(siteId, visitorId, notBefore);
+    if (prior !== undefined) batcher.seedSnapshot(prior.row);
+    return prior;
+  });
+  const restored = loadOpenSessions(db, Date.now());
+  for (const entry of restored) batcher.seedSnapshot(entry.row);
+  sessionizer.restore(restored);
   batcher.onFlush(() => sessionizer.noteFlush());
   batcher.start();
   const hitHooks: HitHook[] = [];
