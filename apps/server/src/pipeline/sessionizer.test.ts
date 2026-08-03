@@ -233,6 +233,25 @@ describe('seq and counters across hit types', () => {
     expect(bad.event.hostname).toBeNull();
     expect(bad.event.path).toBe('not a url');
   });
+
+  it('drops tracking params from page identity but keeps the rest of the query', () => {
+    const s = new Sessionizer();
+    const { event, session } = run(s, T0, {
+      url: 'https://example.com/blog/post/?page=2&fbclid=IwAR123&utm_source=news',
+    });
+    expect(event.path).toBe('/blog/post/?page=2');
+    expect(session.entry_path).toBe('/blog/post/?page=2');
+    expect(session.exit_path).toBe('/blog/post/?page=2');
+    // The raw URL still fed campaign extraction before stripping.
+    expect(session.utm_source).toBe('news');
+  });
+
+  it('collapses an emptied query to the plain pathname — no trailing "?"', () => {
+    const { event } = run(new Sessionizer(), T0, {
+      url: 'https://example.com/blog/ai-future-of-mathematics/?fbclid=IwAR0abc',
+    });
+    expect(event.path).toBe('/blog/ai-future-of-mathematics/');
+  });
 });
 
 describe('engagement-aware bounce ingredients (docs/03)', () => {
@@ -280,6 +299,74 @@ describe('attribution', () => {
     const pk = run(s2, T0, { url: 'https://example.com/?pk_campaign=fall' });
     expect(pk.session.ref_type).toBe('campaign');
     expect(pk.session.utm_campaign).toBe('fall');
+  });
+
+  it('synthesizes campaign attribution from a click id when no utm arrived', () => {
+    const s = new Sessionizer();
+    const { event, session } = run(s, T0, {
+      url: 'https://example.com/blog/post/?fbclid=IwAR123',
+    });
+    expect(event.path).toBe('/blog/post/');
+    expect(session.ref_type).toBe('campaign');
+    expect(session.utm_source).toBe('facebook');
+    expect(session.utm_medium).toBe('social');
+    expect(session.utm_campaign).toBeNull(); // never invented
+    expect(session.utm_source_raw).toBeNull(); // synthesized: nothing normalized away
+    expect(session.utm_medium_raw).toBeNull();
+    expect(session.ref_domain).toBeNull(); // fbclid with no referrer is not direct
+    expect(event.utm_source).toBe('facebook');
+  });
+
+  it('maps each click-id family to its platform', () => {
+    const cases: Array<[string, string, string]> = [
+      ['gclid=x', 'google', 'cpc'],
+      ['gbraid=x', 'google', 'cpc'],
+      ['wbraid=x', 'google', 'cpc'],
+      ['dclid=x', 'google', 'cpc'],
+      ['fbclid=x', 'facebook', 'social'],
+      ['msclkid=x', 'bing', 'cpc'],
+      ['twclid=x', 'twitter', 'social'],
+      ['ttclid=x', 'tiktok', 'social'],
+      ['li_fat_id=x', 'linkedin', 'social'],
+      ['igshid=x', 'instagram', 'social'],
+      ['igsh=x', 'instagram', 'social'],
+    ];
+    for (const [query, source, medium] of cases) {
+      const { session } = run(new Sessionizer(), T0, { url: `https://example.com/?${query}` });
+      expect(session.ref_type, query).toBe('campaign');
+      expect(session.utm_source, query).toBe(source);
+      expect(session.utm_medium, query).toBe(medium);
+    }
+  });
+
+  it('real utm params always win over a click id', () => {
+    const { session } = run(new Sessionizer(), T0, {
+      url: 'https://example.com/?utm_source=newsletter&utm_medium=email&gclid=abc',
+    });
+    expect(session.utm_source).toBe('newsletter');
+    expect(session.utm_medium).toBe('email');
+  });
+
+  it('a click id beside a real referrer still names the platform, keeping the domain', () => {
+    // The click id is the more specific signal: l.facebook.com says "Facebook
+    // let this through"; fbclid says "and it was a tracked placement".
+    const { session } = run(new Sessionizer(), T0, {
+      url: 'https://example.com/landing?fbclid=IwAR9',
+      referrer: 'https://l.facebook.com/l.php?u=x',
+    });
+    expect(session.ref_type).toBe('campaign');
+    expect(session.utm_source).toBe('facebook');
+    expect(session.utm_medium).toBe('social');
+    expect(session.ref_domain).toBe('l.facebook.com');
+  });
+
+  it('identity-only tracking ids strip from the path but attribute nothing', () => {
+    const { event, session } = run(new Sessionizer(), T0, {
+      url: 'https://example.com/newsletter?mc_eid=abc123',
+    });
+    expect(event.path).toBe('/newsletter');
+    expect(session.ref_type).toBe('direct');
+    expect(session.utm_source).toBeNull();
   });
 
   it('classifies own-domain referrers as internal, subdomains included', () => {

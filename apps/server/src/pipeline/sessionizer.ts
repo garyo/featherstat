@@ -18,6 +18,7 @@ import {
 import { plainNormalizer, type UtmNormalizer } from './campaigns.ts';
 import type { DeviceInfo } from './enrich.ts';
 import type { GeoResult } from './geo.ts';
+import { cleanPageUrl, clickIdSource, synthesizedCampaign } from './page-url.ts';
 
 export interface SessionizerInput {
   site: Site;
@@ -323,8 +324,10 @@ function startSession(
 
 interface PageParts {
   hostname: string | null;
-  /** pathname + query — the query is page identity, the fragment is not (docs/04). */
+  /** pathname + query minus tracking params — the query is page identity, the
+   * fragment and tracking identifiers are not (docs/03 § Page identity). */
   path: string | null;
+  /** The RAW parsed URL: campaign extraction reads params `path` dropped. */
   url: URL | null;
 }
 
@@ -332,7 +335,7 @@ function pageParts(raw: string | undefined): PageParts {
   if (raw === undefined) return { hostname: null, path: null, url: null };
   try {
     const url = new URL(raw);
-    return { hostname: url.hostname, path: url.pathname + url.search, url };
+    return { hostname: url.hostname, path: cleanPageUrl(url), url };
   } catch {
     return { hostname: null, path: raw, url: null };
   }
@@ -367,6 +370,18 @@ function classify(hit: Hit, page: PageParts, site: Site, normalizeUtm: UtmNormal
   const host = referrerHost(hit.referrer);
   const campaign = campaignParams(page.url, site.id, normalizeUtm);
   if (campaign !== null) return { ref_domain: host, ref_type: 'campaign', ...campaign };
+  // No campaign params, but a click id names its platform: synthesize
+  // source/medium the way Matomo/GA treat gclid (docs/03 § Attribution). The
+  // click id outranks a referrer too — it is the more specific signal (fbclid
+  // usually arrives with NO referrer, from Facebook's in-app browser).
+  const clicked = page.url === null ? undefined : clickIdSource(page.url.searchParams);
+  if (clicked !== undefined) {
+    return {
+      ref_domain: host,
+      ref_type: 'campaign',
+      ...synthesizedCampaign(clicked, site.id, normalizeUtm),
+    };
+  }
   if (host === null) return { ref_domain: null, ref_type: 'direct', ...NO_CAMPAIGN };
   if (isInternal(host, site.domains))
     return { ref_domain: host, ref_type: 'internal', ...NO_CAMPAIGN };

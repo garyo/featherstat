@@ -350,16 +350,51 @@ Matomo's one-pageview definition (which reports every satisfied
 single-article reader as a bounce); the reporting delta at cutover is called
 out in [06-migration.md](06-migration.md).
 
+## Page identity (`path`)
+
+`path` is `pathname + query`: the query string is part of page identity
+(`?page=2` and `?q=owls` are different pages), the fragment never is — **and
+tracking identifiers are not either**. A click id names the visit, not the
+page, and leaving it in `path` fragments every per-page number (top pages,
+dwell, journeys, adjacency) one click at a time. So ingest strips a **closed,
+documented list** from the query (`pipeline/page-url.ts`, shared with the
+v1 importer) and keeps everything else, survivors in their original order:
+
+- the campaign families attribution already reads: `utm_*`, `mtm_*`, `pk_*`;
+- click ids that also name their platform (see Attribution below): `fbclid`,
+  `gclid`, `gbraid`, `wbraid`, `dclid`, `msclkid`, `twclid`, `ttclid`,
+  `li_fat_id`, `igshid`, `igsh`;
+- identity/mail-merge ids that name nothing: `mc_eid`, `mc_cid`, `yclid`,
+  `_hsenc`, `_hsmi`, `mkt_tok`, `oly_enc_id`, `oly_anon_id`, `vero_id`,
+  `s_kwcid`.
+
+A query emptied by stripping collapses to the plain pathname (no trailing
+`?`). The raw URL still feeds campaign extraction *before* stripping, so
+nothing here loses attribution signal — it moves it where it belongs.
+
 ## Attribution (referrer classification at ingest)
 
 Priority order, evaluated once per session on its first hit:
 
 1. `utm_*` / `mtm_*` / `pk_*` params present → `campaign` (both param
    families accepted; stored under the `utm_*` columns).
-2. Referrer hostname ∈ site's own domains → `internal` (not a referral).
-3. Referrer matches a small built-in search/social table (~50 entries — the
+2. No campaign params but a platform click id (see Page identity) →
+   `campaign`, with **synthesized** `utm_source`/`utm_medium` — derived, not
+   received; industry-standard but inferred, the way Matomo/GA treat `gclid`:
+   `gclid|gbraid|wbraid|dclid` → google/cpc, `fbclid` → facebook/social,
+   `msclkid` → bing/cpc, `twclid` → twitter/social, `ttclid` → tiktok/social,
+   `li_fat_id` → linkedin/social, `igshid|igsh` → instagram/social. This is
+   why `fbclid` from Facebook's in-app browser (which sends no referrer) no
+   longer reads as direct traffic. The click id outranks a referrer too — it
+   is the more specific signal — and the referrer domain is still kept in
+   `ref_domain`. Values pass through the campaign normalizer (§ Campaigns) so
+   aliases apply; `utm_campaign` is never invented and the `utm_*_raw`
+   columns stay NULL (nothing was normalized away). Real campaign params
+   always win over a click id.
+3. Referrer hostname ∈ site's own domains → `internal` (not a referral).
+4. Referrer matches a small built-in search/social table (~50 entries — the
    long tail is not worth a database) → `search` / `social`.
-4. Any other referrer → `referral`; none → `direct`.
+5. Any other referrer → `referral`; none → `direct`.
 
 ## Campaigns
 

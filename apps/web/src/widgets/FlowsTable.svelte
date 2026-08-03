@@ -62,7 +62,8 @@ const shownSessions = $derived(shown.reduce((sum, row) => sum + row.sessions, 0)
   {#each shown as row (JSON.stringify(row.steps))}
     {@const fold = foldMiddle(row.steps)}
     <div class="j-row">
-      <span class="j-steps">
+      <!-- The fold and the ellipsis both hide steps; the title says the whole journey. -->
+      <span class="j-steps" title={row.steps.map((label) => journeyStep(label).text).join(' → ')}>
         {#each fold.head as label, i (i)}
           {#if i > 0}<span class="j-sep">→</span>{/if}
           {@const step = journeyStep(label)}

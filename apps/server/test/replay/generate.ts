@@ -835,6 +835,20 @@ interface LocalStamp {
   hour: number;
 }
 
+/**
+ * The server's URL split, restated for the oracles: pathname + query, fragment
+ * dropped, minus tracking params (docs/03 § Page identity). The corpus's only
+ * tracking params are its campaign families, so the restatement stays that
+ * small — the full closed list is page-url.test.ts's job, not the replay's.
+ */
+export function oraclePath(url: URL): string {
+  const kept = url.search
+    .slice(1)
+    .split('&')
+    .filter((pair) => pair !== '' && !/^(utm|mtm|pk)_/.test(pair));
+  return url.pathname + (kept.length === 0 ? '' : `?${kept.join('&')}`);
+}
+
 /** Every real zone offset is a whole quarter-hour, so a bucket never straddles an hour. */
 const STAMP_BUCKET_MS = 900_000;
 const stampCache = new Map<string, LocalStamp>();

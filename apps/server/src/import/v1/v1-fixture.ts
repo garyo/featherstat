@@ -177,6 +177,10 @@ export const V1_FIXTURE = {
   shareTokens: 1,
   adminSessions: 1,
   days: ['2026-07-01', '2026-07-02'] as const,
+  /** Session 12's fbclid: one event path + the session's entry and exit. */
+  pathsCleaned: 3,
+  /** Session 12's event row and session row, both utm-less with a click id. */
+  attributionsSynthesized: 2,
   /** Allowlisted settings the importer must carry over, with their values. */
   settings: {
     'salt:America/New_York:2026-07-02': 'aabbccdd00112233',
@@ -306,7 +310,10 @@ const EVENTS: FixtureEvent[] = [
     path: '/pricing',
     scroll: 80,
   },
-  // Site 1, 2026-07-01 — visitor 2, session 12: a single-page bounce, no utm.
+  // Site 1, 2026-07-01 — visitor 2, session 12: a single-page bounce with no
+  // utm whose path carries a Facebook click id, exactly as v1 stored real
+  // in-app-browser traffic — the importer must clean the path and synthesize
+  // facebook/social attribution from the click id (docs/03 § Attribution).
   {
     site: 1,
     ts: T0 + 3_600_000,
@@ -316,7 +323,7 @@ const EVENTS: FixtureEvent[] = [
     visitor: 2,
     session: 12,
     seq: 1,
-    path: '/blog',
+    path: '/blog?fbclid=IwAR1fixture',
   },
   // Site 1, 2026-07-02 — visitor 3, session 13: utm already canonical.
   {
@@ -441,8 +448,8 @@ const SESSIONS: FixtureSession[] = [
     started: T0 + 3_600_000,
     last: T0 + 3_600_000,
     date: '2026-07-01',
-    entry: '/blog',
-    exit: '/blog',
+    entry: '/blog?fbclid=IwAR1fixture',
+    exit: '/blog?fbclid=IwAR1fixture',
     pageviews: 1,
     events: 0,
     engaged: 0,

@@ -335,6 +335,28 @@ describe('a bar list draws one row per ranked group', () => {
     expect(root.querySelector('img')).toBeNull();
     expect(text(root.querySelector('.bar-row .name'))).toBe('/<img src=x onerror=alert(1)>');
   });
+
+  it('carries the full label in a native title, so an ellipsized URL can be read', () => {
+    const root = render(
+      [
+        {
+          id: 'pages',
+          viz: 'bar-list',
+          w: 6,
+          h: 2,
+          query: { id: 'pages', metrics: ['pageviews'], dim: 'path', limit: 8 },
+        },
+      ],
+      {
+        results: {
+          pages: { rows: [{ path: '/blog/a-very-long-post-slug-that-truncates/', pageviews: 3 }] },
+        },
+      },
+    );
+    expect(root.querySelector('.bar-row .name')?.getAttribute('title')).toBe(
+      '/blog/a-very-long-post-slug-that-truncates/',
+    );
+  });
 });
 
 describe('the pivot picker becomes the whole heading once a pivot is active', () => {

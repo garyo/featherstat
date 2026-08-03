@@ -69,7 +69,8 @@ const runs = $derived(
           >{/if}
       {/if}
       <span class="where">{placeLabel(hit)}</span>
-      <span class="path">
+      <!-- Long paths ellipsize; the native title says the whole value. -->
+      <span class="path" title={actionLabel(hit)}>
         {#if hit.type === 'event'}<span class="evt-dot"></span>{/if}{actionLabel(hit)}
       </span>
       <!-- Heartbeats fold into the time silently; anything the visitor DID is

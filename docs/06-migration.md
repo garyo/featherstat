@@ -138,6 +138,16 @@ values** (that is its job), so utm-*grouped* numbers can differ from v1's by
 design. The per-day gates never group by utm, so they hold exactly; the
 report counts how many rows were normalized.
 
+The same caveat, twice over, for the healing pass (docs/03 § Page identity):
+**tracking params leave stored paths** (event paths and session entry/exit),
+so path-grouped numbers merge v1's per-click variants onto one page; and a
+row with **no utm whose path carried a platform click id** gets synthesized
+first-touch attribution (facebook/social for `fbclid`, google/cpc for
+`gclid`, …) exactly as live ingest now derives it — v1 booked those visits as
+direct. The per-day gates group by neither path nor attribution, so they hold
+exactly; the path spot-check aggregates the source through the same cleaning
+rule; the report counts paths cleaned and attributions synthesized.
+
 `--dry-run` reads and validates the source, prints all of the above as a
 plan, and writes nothing — not even the target file.
 

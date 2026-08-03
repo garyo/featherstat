@@ -48,6 +48,8 @@ describe('importV1', () => {
       events: V1_FIXTURE.events,
       sessions: V1_FIXTURE.sessions,
       botDropRows: V1_FIXTURE.botDropDays,
+      pathsCleaned: V1_FIXTURE.pathsCleaned,
+      attributionsSynthesized: V1_FIXTURE.attributionsSynthesized,
       dashboards: V1_FIXTURE.dashboards,
       dashboardsSkipped: 0,
       droppedShareTokens: V1_FIXTURE.shareTokens,
@@ -116,6 +118,49 @@ describe('importV1', () => {
       .pluck()
       .get();
     expect(canonical).toBeNull();
+    target.close();
+    source.close();
+  });
+
+  it('heals history: cleans tracking params from paths and synthesizes click-id attribution', async () => {
+    const source = createSeededV1Db();
+    const target = openDb(':memory:');
+    const report = await importV1(target, source);
+    expect(report.gates?.ok).toBe(true);
+    expect(report.pathsCleaned).toBe(V1_FIXTURE.pathsCleaned);
+    expect(report.attributionsSynthesized).toBe(V1_FIXTURE.attributionsSynthesized);
+
+    // v1 stored '/blog?fbclid=IwAR1fixture' as a distinct, direct page; the
+    // import stores the clean page identity with facebook/social first-touch.
+    expect(
+      target.prepare("SELECT COUNT(*) FROM events WHERE path LIKE '%fbclid%'").pluck().get(),
+      'events',
+    ).toBe(0);
+    const event = target
+      .prepare(
+        "SELECT path, ref_type, utm_source, utm_medium, utm_campaign, utm_source_raw FROM events WHERE path = '/blog'",
+      )
+      .get();
+    expect(event).toEqual({
+      path: '/blog',
+      ref_type: 'campaign',
+      utm_source: 'facebook',
+      utm_medium: 'social',
+      utm_campaign: null, // never invented
+      utm_source_raw: null, // synthesized: nothing was normalized away
+    });
+    const session = target
+      .prepare(
+        "SELECT entry_path, exit_path, ref_type, utm_source, utm_medium FROM sessions WHERE entry_path = '/blog'",
+      )
+      .get();
+    expect(session).toEqual({
+      entry_path: '/blog',
+      exit_path: '/blog',
+      ref_type: 'campaign',
+      utm_source: 'facebook',
+      utm_medium: 'social',
+    });
     target.close();
     source.close();
   });

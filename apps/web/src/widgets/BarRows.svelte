@@ -132,7 +132,8 @@ function tipsOf(row: BarRow): readonly TipLine[] {
         onblur={() => (tip = undefined)}
       >
         <span class="bar" style="width: {row.pct}%"></span>
-        <span class="name">
+        <!-- Long labels (URLs) ellipsize; the native title says the whole value. -->
+        <span class="name" title={row.full ?? row.name}>
           {#if flag !== undefined}
             <span class="flag">{flag}</span>
             {countryName(row.name)}

@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../../src/db/index.ts';
 import { executeQueryRequest } from '../../src/query/executor.ts';
 import { resultOf } from '../rows.ts';
-import { BOT_AGENTS, type Corpus, generateCorpus, localStamp } from './generate.ts';
+import { BOT_AGENTS, type Corpus, generateCorpus, localStamp, oraclePath } from './generate.ts';
 import { openReplayDb } from './harness.ts';
 
 /**
@@ -104,8 +104,7 @@ function label(hit: Hit): string {
     return hit.event === undefined ? '' : `event: ${hit.event.category} · ${hit.event.action}`;
   }
   if (hit.url === undefined) return '';
-  const url = new URL(hit.url);
-  return url.pathname + url.search;
+  return oraclePath(new URL(hit.url));
 }
 
 interface Envelope {

@@ -10,7 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../../src/db/index.ts';
 import { executeQueryRequest } from '../../src/query/executor.ts';
 import { resultOf } from '../rows.ts';
-import { BOT_AGENTS, type Corpus, generateCorpus, localStamp } from './generate.ts';
+import { BOT_AGENTS, type Corpus, generateCorpus, localStamp, oraclePath } from './generate.ts';
 import { openReplayDb } from './harness.ts';
 
 /**
@@ -100,11 +100,11 @@ function sessionize(source: Corpus): OracleSession[] {
   return all;
 }
 
-/** The server's URL split, restated: pathname + query string, fragment dropped. */
+/** The server's URL split, restated in journeys.test.ts's oracle: pathname +
+ * query, fragment and tracking params dropped (docs/03 § Page identity). */
 function pathOf(hit: Hit): string {
   if (hit.url === undefined) return '';
-  const url = new URL(hit.url);
-  return url.pathname + url.search;
+  return oraclePath(new URL(hit.url));
 }
 
 /** One page view that could actually be timed: its path and the ms credited to it. */

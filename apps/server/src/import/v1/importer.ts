@@ -18,6 +18,13 @@ import {
 import { RETENTION_DAYS_KEY } from '../../jobs/retention.ts';
 import { NTFY_SETTING_KEYS } from '../../notify/settings.ts';
 import { AliasCache, type UtmNormalizer } from '../../pipeline/campaigns.ts';
+import {
+  cleanStoredPath,
+  clickIdSource,
+  parseStoredPath,
+  type SynthesizedCampaign,
+  synthesizedCampaign,
+} from '../../pipeline/page-url.ts';
 import { executeQueryRequest } from '../../query/executor.ts';
 import { rebuildAllRollups } from '../../rollup/rebuild.ts';
 
@@ -35,7 +42,9 @@ import { rebuildAllRollups } from '../../rollup/rebuild.ts';
  *
  * What transfers: sites/events/sessions/bot_drops 1:1 (utm values through the
  * shared campaign normalizer — the importer and live ingest must not disagree
- * about what `utm_source = 'google'` means), the salt/uid/ntfy/retention
+ * about what `utm_source = 'google'` means; stored paths and click-id
+ * attribution through the shared page-url helpers for the same reason,
+ * docs/03 § Page identity), the salt/uid/ntfy/retention
  * settings (salts imported = zero visitor discontinuity), and dashboards
  * (layouts carried through the `upgradeDashboard` chain). Dropped by design:
  * share_tokens (re-mint) and admin_sessions (re-login).
@@ -102,6 +111,15 @@ export interface V1ImportReport {
    * Per-day totals still hold — the gates never group by utm — but utm-grouped
    * numbers may differ from v1's by design when this is nonzero. */
   utmNormalized: number;
+  /** Stored path values (event paths + session entry/exit paths) a tracking
+   * param left at import (docs/03 § Page identity). Per-day totals still hold —
+   * the gates never group by path — but path-grouped numbers merge v1's
+   * per-click variants onto one page by design when this is nonzero. */
+  pathsCleaned: number;
+  /** Rows (events + sessions) with no utm whose stored path carried a click id,
+   * so source/medium were synthesized from it (docs/03 § Attribution) — v1
+   * booked these as direct/referral, v2 knows the platform. */
+  attributionsSynthesized: number;
   settingsImported: string[];
   /** Settings outside the allowlist, reported by name and left behind. */
   settingsSkipped: string[];
@@ -162,6 +180,8 @@ export async function importV1(
     sessions: 0,
     botDropRows: 0,
     utmNormalized: 0,
+    pathsCleaned: 0,
+    attributionsSynthesized: 0,
     settingsImported: [],
     settingsSkipped: [],
     dashboards: 0,
@@ -286,6 +306,34 @@ function normalizedUtm(
   return { fields, changed };
 }
 
+/**
+ * The importer heals history the way live ingest now records it (docs/03
+ * § Page identity): tracking params leave a stored path, and a row that has no
+ * utm but carried a click id gets the same synthesized attribution live
+ * ingest would give it — through the shared helpers, so the two cannot drift.
+ */
+function healedPath(stored: string | number | null, report: V1ImportReport): string | null {
+  if (typeof stored !== 'string') return null;
+  const cleaned = cleanStoredPath(stored);
+  if (cleaned !== stored) report.pathsCleaned += 1;
+  return cleaned;
+}
+
+/** Click-id attribution for a row with no utm at all, read from its stored path. */
+function healedAttribution(
+  stored: string | number | null,
+  siteId: number,
+  normalizer: UtmNormalizer,
+  report: V1ImportReport,
+): SynthesizedCampaign | undefined {
+  if (typeof stored !== 'string') return undefined;
+  const url = parseStoredPath(stored);
+  const clicked = url === undefined ? undefined : clickIdSource(url.searchParams);
+  if (clicked === undefined) return undefined;
+  report.attributionsSynthesized += 1;
+  return synthesizedCampaign(clicked, siteId, normalizer);
+}
+
 /** Every v1 events column; scroll_pct joined in when the source reached v5. */
 const V1_EVENT_COLUMNS = [
   'site_id',
@@ -347,13 +395,21 @@ FROM events WHERE id > ? ORDER BY id LIMIT ?`;
     if (last === undefined) return;
     const mapped: EventRow[] = rows.map((row) => {
       const { rid: _rid, utm_source, utm_medium, utm_campaign, ...shared } = row;
+      const path = healedPath(row.path, report);
+      const noUtm = utm_source === null && utm_medium === null && utm_campaign === null;
+      const derived = noUtm
+        ? healedAttribution(row.path, row.site_id as number, normalizer, report)
+        : undefined;
+      if (derived !== undefined) {
+        return { ...shared, path, ref_type: 'campaign', ...derived } as EventRow;
+      }
       const utm = normalizedUtm(normalizer, row.site_id as number, {
         utm_source: utm_source as string | null,
         utm_medium: utm_medium as string | null,
         utm_campaign: utm_campaign as string | null,
       });
       if (utm.changed) report.utmNormalized += 1;
-      return { ...shared, ...utm.fields } as EventRow;
+      return { ...shared, path, ...utm.fields } as EventRow;
     });
     report.events += mapped.length;
     if (!dryRun) {
@@ -420,13 +476,23 @@ FROM sessions WHERE rowid > ? ORDER BY rowid LIMIT ?`;
     if (last === undefined) return;
     const mapped: SessionRow[] = rows.map((row) => {
       const { rid: _rid, utm_source, utm_medium, utm_campaign, ...shared } = row;
+      const entry_path = healedPath(row.entry_path, report);
+      const exit_path = healedPath(row.exit_path, report);
+      const noUtm = utm_source === null && utm_medium === null && utm_campaign === null;
+      // First-touch attribution reads the session's first page, i.e. its entry.
+      const derived = noUtm
+        ? healedAttribution(row.entry_path, row.site_id as number, normalizer, report)
+        : undefined;
+      if (derived !== undefined) {
+        return { ...shared, entry_path, exit_path, ref_type: 'campaign', ...derived } as SessionRow;
+      }
       const utm = normalizedUtm(normalizer, row.site_id as number, {
         utm_source: utm_source as string | null,
         utm_medium: utm_medium as string | null,
         utm_campaign: utm_campaign as string | null,
       });
       if (utm.changed) report.utmNormalized += 1;
-      return { ...shared, ...utm.fields } as SessionRow;
+      return { ...shared, entry_path, exit_path, ...utm.fields } as SessionRow;
     });
     report.sessions += mapped.length;
     if (!dryRun) {
@@ -645,16 +711,19 @@ function runSpotChecks(source: Db, target: Db, failures: string[]): void {
     );
   }
 
-  // 2 — a breakdown: pageviews by path, compared as value maps.
-  const expectedPages = new Map(
-    (
-      stmt<{ path: string; n: number }>(
-        source,
-        `SELECT path, COUNT(*) AS n FROM events
+  // 2 — a breakdown: pageviews by path, compared as value maps. The source
+  // side aggregates through the same path cleaning the import applied (like
+  // the utm caveat above): v1's per-click variants merge onto one page, and
+  // the merged totals must still match exactly.
+  const expectedPages = new Map<string | null, number>();
+  for (const row of stmt<{ path: string | null; n: number }>(
+    source,
+    `SELECT path, COUNT(*) AS n FROM events
 WHERE site_id = ? AND type = 'pageview' AND local_date BETWEEN ? AND ? GROUP BY path`,
-      ).all(site, range.from, range.to) as Array<{ path: string; n: number }>
-    ).map((row) => [row.path, row.n]),
-  );
+  ).all(site, range.from, range.to) as Array<{ path: string | null; n: number }>) {
+    const path = row.path === null ? null : cleanStoredPath(row.path);
+    expectedPages.set(path, (expectedPages.get(path) ?? 0) + row.n);
+  }
   for (const row of expectRows('pages')) {
     if (expectedPages.get(row.path as string) !== row.pageviews) {
       failures.push(

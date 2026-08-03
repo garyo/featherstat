@@ -16,7 +16,7 @@ ignored, never errors — a tracker must be impossible to break from the tag sid
 | --- | --- | --- |
 | `idsite` | site id | `site_id` (unknown id → 204, dropped; never 4xx to a browser beacon) |
 | `rec=1` | "record this" | required, else ignored |
-| `url` | page URL | split → `hostname`, `path` (query string kept, fragment dropped) |
+| `url` | page URL | split → `hostname`, `path` (query string kept minus the closed tracking-param list, fragment dropped — docs/03 § Page identity) |
 | `action_name` | page title | `title`; with no `url` it still records a pageview (Matomo title-only actions) |
 | `urlref` | referrer | attribution pipeline |
 | `e_c`,`e_a`,`e_n`,`e_v` | event cat/action/name/value | `type='event'` + fields |
