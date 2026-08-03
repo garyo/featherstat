@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AdminError, createAdminClient } from './admin.ts';
+import { AdminError, createAdminClient, OFFLINE_STATUS } from './admin.ts';
 
 interface Call {
   input: string;
@@ -96,6 +96,17 @@ describe('createAdminClient', () => {
     const headers = calls[1]?.init?.headers as Record<string, string>;
     expect(headers['x-csrf-token']).toBe('tok-9');
     expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({ name: 'x' });
+  });
+
+  it('turns a request the network never answered into an AdminError, not a raw fetch throw', async () => {
+    // A panel must be able to tell "refused" from "never arrived"; both arrive
+    // here as AdminError, so neither can be mistaken for success.
+    const { admin } = client(() => {
+      throw new TypeError('Failed to fetch');
+    });
+    const failure = await admin.call('/api/admin/tokens/4', { method: 'DELETE' }).catch((e) => e);
+    expect(failure).toBeInstanceOf(AdminError);
+    expect((failure as AdminError).status).toBe(OFFLINE_STATUS);
   });
 
   it('propagates rate-limit and non-JSON failures as AdminError', async () => {

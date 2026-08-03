@@ -1,6 +1,7 @@
 <script lang="ts">
 import { MAX_NTFY_RULES, type SiteInfo } from '@featherstat/shared';
 import { type AdminClient, AdminError } from '../lib/admin.ts';
+import { type PanelFailure, panelFailure } from '../lib/admin-failure.ts';
 import {
   draftFrom,
   emptyRule,
@@ -9,6 +10,7 @@ import {
   type NtfyErrors,
   settingsBody,
 } from '../lib/ntfy.ts';
+import PanelError from './settings/PanelError.svelte';
 
 /**
  * Notification settings (docs/01 R16, `/api/admin/ntfy`): where hits go when
@@ -35,7 +37,7 @@ let loadFailed = $state(false);
 let busy = $state(false);
 let saved = $state<string | undefined>(undefined);
 let errors = $state<NtfyErrors>({ rules: new Map() });
-let test = $state<{ ok: boolean; message: string } | undefined>(undefined);
+let test = $state<({ ok: boolean } & PanelFailure) | undefined>(undefined);
 
 $effect(() => {
   void admin
@@ -71,10 +73,11 @@ async function save(event: SubmitEvent): Promise<void> {
         ? `Notification settings saved. ${dropped} empty rule row${dropped === 1 ? '' : 's'} removed.`
         : 'Notification settings saved.';
   } catch (failure) {
+    const said = panelFailure(failure, 'Saving failed — try again.');
     errors =
-      failure instanceof AdminError
-        ? fieldErrors(failure.issues, rows, failure.message)
-        : { rules: new Map(), form: 'Saving failed — try again.' };
+      failure instanceof AdminError && !said.urgent
+        ? fieldErrors(failure.issues, rows, said.message)
+        : { rules: new Map(), form: said };
   } finally {
     busy = false;
   }
@@ -87,12 +90,9 @@ async function sendTest(): Promise<void> {
   test = undefined;
   try {
     await admin.testNtfy();
-    test = { ok: true, message: 'Test notification sent.' };
+    test = { ok: true, message: 'Test notification sent.', urgent: false };
   } catch (failure) {
-    test = {
-      ok: false,
-      message: failure instanceof Error ? failure.message : 'Sending failed — try again.',
-    };
+    test = { ok: false, ...panelFailure(failure, 'Sending failed — try again.') };
   } finally {
     busy = false;
   }
@@ -110,8 +110,8 @@ async function disable(): Promise<void> {
     tokenSet = view.tokenSet;
     storedConfigured = false;
     saved = 'Notifications disabled — endpoint, token and rules forgotten.';
-  } catch {
-    errors = { rules: new Map(), form: 'Disabling failed — try again.' };
+  } catch (failure) {
+    errors = { rules: new Map(), form: panelFailure(failure, 'Disabling failed — try again.') };
   } finally {
     busy = false;
   }
@@ -222,10 +222,12 @@ function removeRule(index: number): void {
         onclick={addRule}>Add rule</button
       >
 
-      {#if errors.form !== undefined}<p class="form-error" role="alert">{errors.form}</p>{/if}
+      <PanelError failure={errors.form} />
       {#if saved !== undefined}<p class="form-ok" role="status">{saved}</p>{/if}
-      {#if test !== undefined}
-        <p class={test.ok ? 'form-ok' : 'form-error'} role="alert">{test.message}</p>
+      {#if test?.ok}
+        <p class="form-ok" role="status">{test.message}</p>
+      {:else}
+        <PanelError failure={test} />
       {/if}
       <div class="row">
         <button

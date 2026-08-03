@@ -1,5 +1,6 @@
 import type { NtfyRule, NtfySettingsInput, NtfySettingsView } from '@featherstat/shared';
 import type { AdminIssue } from './admin.ts';
+import type { PanelFailure } from './admin-failure.ts';
 
 /**
  * The pure half of the notification settings pane (docs/01 R16): the shape the
@@ -39,8 +40,8 @@ export interface NtfyErrors {
   topic?: string;
   /** By draft row index, so the message renders under the row it is about. */
   rules: Map<number, string>;
-  /** Whatever named no field — shown once, above the form. */
-  form?: string;
+  /** Whatever named no field — shown once, above the form, as a panel does. */
+  form?: PanelFailure;
 }
 
 export function emptyRule(): RuleDraft {
@@ -102,10 +103,10 @@ export function fieldErrors(
     else if (field === 'rules' && typeof index === 'number') {
       const row = rows[index];
       if (row !== undefined && !errors.rules.has(row)) errors.rules.set(row, issue.message);
-    } else errors.form ??= issue.message;
+    } else errors.form ??= { message: issue.message, urgent: false };
   }
   if (errors.url === undefined && errors.topic === undefined && errors.rules.size === 0) {
-    errors.form ??= fallback;
+    errors.form ??= { message: fallback, urgent: false };
   }
   return errors;
 }

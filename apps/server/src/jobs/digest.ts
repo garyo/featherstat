@@ -7,7 +7,7 @@ import {
   type QueryResult,
 } from '@featherstat/shared';
 import { type Db, getSetting, listSites, setSetting, withWriteTransaction } from '../db/index.ts';
-import { type ChangesMover, summarizeChanges } from '../query/changes.ts';
+import { type ChangesMover, moversOf, summarizeChanges } from '../query/changes.ts';
 import { executeQueryRequest } from '../query/executor.ts';
 import type { AlertNotifier } from './alerts.ts';
 
@@ -97,19 +97,11 @@ function siteLine(siteName: string, response: QueryResponse): string | undefined
   const current = totalOf(kpis.rows[0]);
   const previous = totalOf(kpis.compare?.[0]);
   if (current === null || previous === null) return undefined;
-  return summarizeChanges(siteName, 'visits', current, previous, moversOf(changes));
+  return summarizeChanges(siteName, 'visits', current, previous, changeMovers(changes));
 }
 
-function moversOf(entry: QueryResult | QueryErrorResult | undefined): ChangesMover[] {
-  if (entry === undefined || isQueryError(entry)) return [];
-  return entry.rows.flatMap((row) => {
-    const delta = row.delta;
-    if (typeof delta !== 'number') return [];
-    const value = row.value;
-    return [
-      { value: typeof value === 'string' || typeof value === 'number' ? value : null, delta },
-    ];
-  });
+function changeMovers(entry: QueryResult | QueryErrorResult | undefined): ChangesMover[] {
+  return entry === undefined || isQueryError(entry) ? [] : moversOf(entry.rows);
 }
 
 function totalOf(row: Record<string, unknown> | undefined): number | null {

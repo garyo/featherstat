@@ -102,6 +102,17 @@
   margin: 0;
 }
 
+/* A failure no field can fix — an expired session, an unreachable server. Boxed
+ * beside the button that was clicked, so it cannot read as the action having
+ * worked (see lib/admin-failure.ts). */
+.form-error.urgent {
+  border: 1px solid var(--bad);
+  border-radius: 7px;
+  padding: 8px 10px;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--bad) 10%, transparent);
+}
+
 .form-ok {
   color: var(--good);
   font-size: 13px;

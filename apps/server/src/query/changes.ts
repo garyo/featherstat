@@ -193,9 +193,39 @@ function compareValues(a: string | number | null, b: string | number | null): nu
 const QUIET_PCT = 3;
 
 export interface ChangesMover {
+  /** The dimension the row was grouped by — it decides how a NULL value reads. */
+  dim: string;
   value: string | number | null;
   delta: number;
 }
+
+/** The `changes` rows as movers, for either caller of the summary. */
+export function moversOf(rows: readonly Record<string, unknown>[]): ChangesMover[] {
+  return rows.flatMap((row) => {
+    const delta = row.delta;
+    if (typeof delta !== 'number') return [];
+    const value = row.value;
+    return [
+      {
+        dim: typeof row.dim === 'string' ? row.dim : '',
+        value: typeof value === 'string' || typeof value === 'number' ? value : null,
+        delta,
+      },
+    ];
+  });
+}
+
+/**
+ * What a NULL group is CALLED in prose, per dimension. A dimension absent here
+ * is never named as a driver: `path` is absent because "no path drove it" is
+ * not a sentence a reader can act on, and the row is still in the result — this
+ * is the wording of the summary, not the query's semantics.
+ */
+const NULL_NAME: Readonly<Record<string, string>> = {
+  ref_domain: 'direct traffic',
+  utm_campaign: 'untagged traffic',
+  country: 'unknown location',
+} satisfies Partial<Record<ChangesDimension, string>>;
 
 /**
  * One sentence: "example.org: visits up 18% (1.2k → 1.4k) — /blog/foo (+212)
@@ -218,13 +248,38 @@ export function summarizeChanges(
   const head =
     `${label}: ${metric} ${delta > 0 ? 'up' : 'down'} ${Math.abs(pct).toFixed(0)}% ` +
     `(${compact(previous)} → ${compact(current)})`;
-  const drivers = movers
-    .filter((mover) => Math.sign(mover.delta) === Math.sign(delta))
-    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
-    .slice(0, 2)
-    .map((mover) => `${mover.value ?? '(none)'} (${signed(mover.delta)})`);
+  const drivers = driversOf(movers, Math.sign(delta));
   if (drivers.length === 0) return head;
   return `${head} — ${drivers.join(' and ')} ${delta > 0 ? 'drove it' : 'drove the drop'}`;
+}
+
+interface Driver {
+  dim: string;
+  name: string;
+  delta: number;
+}
+
+/**
+ * At most two named drivers, biggest first: only movers pushing the net way,
+ * only those a NULL value has a name for, and — because two rows of one
+ * dimension are usually one story told twice — the second is taken from a
+ * DIFFERENT dimension when one is available, falling back to same-dim.
+ */
+function driversOf(movers: readonly ChangesMover[], direction: number): string[] {
+  const named = movers
+    .filter((mover) => Math.sign(mover.delta) === direction)
+    .flatMap((mover): Driver[] => {
+      const name = mover.value === null ? NULL_NAME[mover.dim] : String(mover.value);
+      return name === undefined ? [] : [{ dim: mover.dim, name, delta: mover.delta }];
+    })
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+  const first = named[0];
+  if (first === undefined) return [];
+  const rest = named.slice(1).filter((driver) => driver.name !== first.name);
+  const second = rest.find((driver) => driver.dim !== first.dim) ?? rest[0];
+  return (second === undefined ? [first] : [first, second]).map(
+    (driver) => `${driver.name} (${signed(driver.delta)})`,
+  );
 }
 
 function signed(delta: number): string {

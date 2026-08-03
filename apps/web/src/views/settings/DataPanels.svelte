@@ -6,9 +6,11 @@ import type {
   SiteInfo,
 } from '@featherstat/shared';
 import type { AdminClient } from '../../lib/admin.ts';
+import { type PanelFailure, panelFailure } from '../../lib/admin-failure.ts';
 import { adminObjects } from '../../lib/admin-objects.ts';
 import { botDropTotals, formatBytes, localInputToMs, msToLocalInput } from '../../lib/settings.ts';
 import { exactNumber } from '../../widgets/format.ts';
+import PanelError from './PanelError.svelte';
 
 /**
  * The Data panels: custom-prop governance (docs/03 § Props — key stats, what
@@ -24,15 +26,13 @@ let { admin, sites }: Props = $props();
 // svelte-ignore state_referenced_locally
 const api = adminObjects(admin);
 const nameOf = (id: number): string => sites?.find((s) => s.id === id)?.name ?? `Site ${id}`;
-const said = (failure: unknown, fallback: string): string =>
-  failure instanceof Error ? failure.message : fallback;
 
 // ---------- props governance ----------
 let propSite = $state<number | undefined>(undefined);
 const propSiteId = $derived(propSite ?? sites?.[0]?.id);
 let propStats = $state<AdminPropsResponse | undefined>(undefined);
 let propsFailed = $state(false);
-let propError = $state<string | undefined>(undefined);
+let propError = $state<PanelFailure | undefined>(undefined);
 /** The key whose delete is awaiting the second, explicit click. */
 let confirming = $state<string | undefined>(undefined);
 
@@ -58,7 +58,7 @@ async function deleteKey(key: string): Promise<void> {
     confirming = undefined;
     propStats = await api.props(propSiteId);
   } catch (failure) {
-    propError = said(failure, 'Deleting failed — try again.');
+    propError = panelFailure(failure, 'Deleting failed — try again.');
   }
 }
 
@@ -73,7 +73,9 @@ let annOpen = $state(false);
 let annEditing = $state<number | undefined>(undefined);
 let annDraft = $state({ site: '', when: '', text: '' });
 let annBusy = $state(false);
-let annError = $state<string | undefined>(undefined);
+let annError = $state<PanelFailure | undefined>(undefined);
+/** The row verbs report beside the rows; the form has its own line. */
+let annRowError = $state<PanelFailure | undefined>(undefined);
 
 const loadAnnotations = (): Promise<void> =>
   api
@@ -103,7 +105,7 @@ async function saveAnnotation(event: SubmitEvent): Promise<void> {
   event.preventDefault();
   const ts = localInputToMs(annDraft.when);
   if (ts === undefined) {
-    annError = 'pick a date and time';
+    annError = { message: 'pick a date and time', urgent: false };
     return;
   }
   annBusy = true;
@@ -119,19 +121,19 @@ async function saveAnnotation(event: SubmitEvent): Promise<void> {
     annOpen = false;
     await loadAnnotations();
   } catch (failure) {
-    annError = said(failure, 'Saving failed — try again.');
+    annError = panelFailure(failure, 'Saving failed — try again.');
   } finally {
     annBusy = false;
   }
 }
 
 async function deleteAnnotation(id: number): Promise<void> {
-  annError = undefined;
+  annRowError = undefined;
   try {
     await api.deleteAnnotation(id);
     await loadAnnotations();
   } catch (failure) {
-    annError = said(failure, 'Deleting failed — try again.');
+    annRowError = panelFailure(failure, 'Deleting failed — try again.');
   }
 }
 
@@ -141,7 +143,7 @@ let dsFailed = $state(false);
 let dsDraft = $state({ retention: '', backupDir: '', backupKeep: '7' });
 let dsBusy = $state(false);
 let dsSaved = $state(false);
-let dsError = $state<string | undefined>(undefined);
+let dsError = $state<PanelFailure | undefined>(undefined);
 
 $effect(() => {
   void api
@@ -177,7 +179,7 @@ async function saveDataSettings(event: SubmitEvent): Promise<void> {
     };
     dsSaved = true;
   } catch (failure) {
-    dsError = said(failure, 'Saving failed — try again.');
+    dsError = panelFailure(failure, 'Saving failed — try again.');
   } finally {
     dsBusy = false;
   }
@@ -249,7 +251,7 @@ const botTotals = $derived(diagnostics === undefined ? [] : botDropTotals(diagno
     {:else}
       <p class="widget-note">No props recorded for this site.</p>
     {/each}
-    {#if propError !== undefined}<p class="form-error" role="alert">{propError}</p>{/if}
+    <PanelError failure={propError} />
     {#if dropTotal > 0}
       <p class="widget-note">
         {exactNumber(dropTotal)} prop values clamped in the last 7 days:
@@ -288,6 +290,7 @@ const botTotals = $derived(diagnostics === undefined ? [] : botDropTotals(diagno
     {:else}
       <p class="widget-note">No annotations yet.</p>
     {/each}
+    <PanelError failure={annRowError} />
     {#if annOpen}
       <form class="oform" onsubmit={saveAnnotation}>
         <div class="wrap">
@@ -309,7 +312,7 @@ const botTotals = $derived(diagnostics === undefined ? [] : botDropTotals(diagno
           Note (300 characters)
           <input bind:value={annDraft.text} maxlength="300" required />
         </label>
-        {#if annError !== undefined}<p class="form-error" role="alert">{annError}</p>{/if}
+        <PanelError failure={annError} />
         <div class="row">
           <button
             class="btn primary"
@@ -352,7 +355,7 @@ const botTotals = $derived(diagnostics === undefined ? [] : botDropTotals(diagno
         Backups to keep
         <input type="number" min="1" max="365" bind:value={dsDraft.backupKeep} />
       </label>
-      {#if dsError !== undefined}<p class="form-error" role="alert">{dsError}</p>{/if}
+      <PanelError failure={dsError} />
       {#if dsSaved}<p class="form-ok">Saved.</p>{/if}
       <div class="row">
         <button class="btn primary" type="submit" disabled={dsBusy}>

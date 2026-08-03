@@ -1,11 +1,13 @@
 <script lang="ts">
 import type { SiteInfo } from '@featherstat/shared';
 import type { AdminClient } from '../lib/admin.ts';
+import { type PanelFailure, panelFailure } from '../lib/admin-failure.ts';
 import { parseDomains, trackingSnippet } from '../lib/settings.ts';
 import AccessPanels from './settings/AccessPanels.svelte';
 import CampaignPanels from './settings/CampaignPanels.svelte';
 import DataPanels from './settings/DataPanels.svelte';
 import NotifyPanels from './settings/NotifyPanels.svelte';
+import PanelError from './settings/PanelError.svelte';
 import QueryPanels from './settings/QueryPanels.svelte';
 
 /**
@@ -69,7 +71,7 @@ interface Draft {
 
 let draft = $state<Draft | undefined>(undefined);
 let siteBusy = $state(false);
-let siteError = $state<string | undefined>(undefined);
+let siteError = $state<PanelFailure | undefined>(undefined);
 /** The typed-confirmation gate: the name must be re-typed exactly to delete. */
 let deleting = $state(false);
 let deleteConfirm = $state('');
@@ -113,7 +115,7 @@ async function saveDraft(event: SubmitEvent): Promise<void> {
     draft = undefined;
     onsiteschanged();
   } catch (failure) {
-    siteError = failure instanceof Error ? failure.message : 'Saving failed — try again.';
+    siteError = panelFailure(failure, 'Saving failed — try again.');
   } finally {
     siteBusy = false;
   }
@@ -129,7 +131,7 @@ async function deleteSite(): Promise<void> {
     deleting = false;
     onsiteschanged();
   } catch (failure) {
-    siteError = failure instanceof Error ? failure.message : 'Deleting failed — try again.';
+    siteError = panelFailure(failure, 'Deleting failed — try again.');
   } finally {
     siteBusy = false;
   }
@@ -184,6 +186,8 @@ async function changePassword(event: SubmitEvent): Promise<void> {
     nextPassword = '';
     confirmPassword = '';
   } catch (failure) {
+    // NOT panelFailure(): this route answers a wrong CURRENT password with 403,
+    // which is the typed password's fault, not the session's.
     passwordError = failure instanceof Error ? failure.message : 'Change failed — try again.';
   } finally {
     passwordBusy = false;
@@ -248,7 +252,7 @@ const nameOf = (id: number): string => sites?.find((s) => s.id === id)?.name ?? 
             <datalist id="timezones">
               {#each timezones as tz (tz)}<option value={tz}></option>{/each}
             </datalist>
-            {#if siteError !== undefined}<p class="form-error" role="alert">{siteError}</p>{/if}
+            <PanelError failure={siteError} />
             <div class="row">
               <button
                 class="btn primary"

@@ -2,13 +2,18 @@
 import type { ApiTokenInfo, SiteInfo, ViewerInfo } from '@featherstat/shared';
 import { emptyScope, type ScopeDraft, scopeLabel, scopeOf, toggleSite } from '../../lib/access.ts';
 import type { AdminClient } from '../../lib/admin.ts';
+import { type PanelFailure, panelFailure } from '../../lib/admin-failure.ts';
 import { adminObjects } from '../../lib/admin-objects.ts';
+import PanelError from './PanelError.svelte';
 
 /**
  * The Access panels (docs/04 § 5): API tokens and invited viewers — the two
  * read-only principals an admin mints. Both secrets (the bearer token, the
  * magic-link URL) appear exactly once, in the mint response; the lists that
  * follow only ever show names, scopes and dates.
+ *
+ * A row's verb reports beside the row, not down in the mint form: a revoke that
+ * failed must not look like one that worked.
  */
 interface Props {
   admin: AdminClient;
@@ -27,7 +32,9 @@ let tokensFailed = $state(false);
 let tokenName = $state('');
 let tokenScope = $state<ScopeDraft>(emptyScope());
 let tokenBusy = $state(false);
-let tokenError = $state<string | undefined>(undefined);
+let tokenError = $state<PanelFailure | undefined>(undefined);
+/** The revoke button's own report — the mint form is elsewhere on the card. */
+let tokenRowError = $state<PanelFailure | undefined>(undefined);
 /** The one appearance of the raw bearer token — gone on reload, by design. */
 let minted = $state<string | undefined>(undefined);
 
@@ -57,19 +64,19 @@ async function mintToken(event: SubmitEvent): Promise<void> {
     tokenScope = emptyScope();
     await loadTokens();
   } catch (failure) {
-    tokenError = failure instanceof Error ? failure.message : 'Minting failed — try again.';
+    tokenError = panelFailure(failure, 'Minting failed — try again.');
   } finally {
     tokenBusy = false;
   }
 }
 
 async function revokeToken(id: number): Promise<void> {
-  tokenError = undefined;
+  tokenRowError = undefined;
   try {
     await api.revokeToken(id);
     await loadTokens();
   } catch (failure) {
-    tokenError = failure instanceof Error ? failure.message : 'Revoking failed — try again.';
+    tokenRowError = panelFailure(failure, 'Revoking failed — try again.');
   }
 }
 
@@ -79,7 +86,8 @@ let viewersFailed = $state(false);
 let viewerEmail = $state('');
 let viewerScope = $state<ScopeDraft>(emptyScope());
 let viewerBusy = $state(false);
-let viewerError = $state<string | undefined>(undefined);
+let viewerError = $state<PanelFailure | undefined>(undefined);
+let viewerRowError = $state<PanelFailure | undefined>(undefined);
 /** The one appearance of a magic link, with whose it is. */
 let invite = $state<{ email: string; url: string } | undefined>(undefined);
 
@@ -112,29 +120,29 @@ async function inviteViewer(event: SubmitEvent): Promise<void> {
     viewerScope = emptyScope();
     await loadViewers();
   } catch (failure) {
-    viewerError = failure instanceof Error ? failure.message : 'Inviting failed — try again.';
+    viewerError = panelFailure(failure, 'Inviting failed — try again.');
   } finally {
     viewerBusy = false;
   }
 }
 
 async function reinvite(viewer: ViewerInfo): Promise<void> {
-  viewerError = undefined;
+  viewerRowError = undefined;
   try {
     const link = await api.reinviteViewer(viewer.id);
     invite = { email: viewer.email, url: inviteUrl(link.url) };
   } catch (failure) {
-    viewerError = failure instanceof Error ? failure.message : 'Inviting failed — try again.';
+    viewerRowError = panelFailure(failure, 'Inviting failed — try again.');
   }
 }
 
 async function revokeViewer(id: number): Promise<void> {
-  viewerError = undefined;
+  viewerRowError = undefined;
   try {
     await api.revokeViewer(id);
     await loadViewers();
   } catch (failure) {
-    viewerError = failure instanceof Error ? failure.message : 'Revoking failed — try again.';
+    viewerRowError = panelFailure(failure, 'Revoking failed — try again.');
   }
 }
 
@@ -222,6 +230,7 @@ async function copySecret(secret: string): Promise<void> {
     {:else}
       <p class="widget-note">No live tokens.</p>
     {/each}
+    <PanelError failure={tokenRowError} />
     {#if minted !== undefined}
       {@render secretOnce(minted, 'Store it where the script runs.')}
     {/if}
@@ -231,7 +240,7 @@ async function copySecret(secret: string): Promise<void> {
         <input bind:value={tokenName} maxlength="64" placeholder="nightly-export" required />
       </label>
       {@render scopePicker(tokenScope, 'token')}
-      {#if tokenError !== undefined}<p class="form-error" role="alert">{tokenError}</p>{/if}
+      <PanelError failure={tokenError} />
       <button
         class="btn primary"
         type="submit"
@@ -270,6 +279,7 @@ async function copySecret(secret: string): Promise<void> {
     {:else}
       <p class="widget-note">No viewers yet.</p>
     {/each}
+    <PanelError failure={viewerRowError} />
     {#if invite !== undefined}
       {@render secretOnce(invite.url, `Send it to ${invite.email} yourself.`)}
     {/if}
@@ -279,7 +289,7 @@ async function copySecret(secret: string): Promise<void> {
         <input type="email" bind:value={viewerEmail} maxlength="254" required />
       </label>
       {@render scopePicker(viewerScope, 'viewer')}
-      {#if viewerError !== undefined}<p class="form-error" role="alert">{viewerError}</p>{/if}
+      <PanelError failure={viewerError} />
       <button
         class="btn primary"
         type="submit"

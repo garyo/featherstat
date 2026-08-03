@@ -11,7 +11,7 @@ import {
   withWriteTransaction,
 } from '../db/index.ts';
 import { META_RAW_HORIZON, setRollupMeta } from '../rollup/apply.ts';
-import { summarizeChanges } from './changes.ts';
+import { moversOf, summarizeChanges } from './changes.ts';
 import { executeQueryRequest } from './executor.ts';
 
 /**
@@ -221,9 +221,9 @@ describe('summarizeChanges', () => {
   it('phrases a rise with its drivers', () => {
     expect(
       summarizeChanges('example.org', 'visits', 1400, 1187, [
-        { value: '/blog/foo', delta: 212 },
-        { value: 'news.ycombinator.com', delta: 180 },
-        { value: '/quiet', delta: -40 },
+        { dim: 'path', value: '/blog/foo', delta: 212 },
+        { dim: 'ref_domain', value: 'news.ycombinator.com', delta: 180 },
+        { dim: 'path', value: '/quiet', delta: -40 },
       ]),
     ).toBe(
       'example.org: visits up 18% (1.2k → 1.4k) — /blog/foo (+212) and news.ycombinator.com (+180) drove it',
@@ -232,7 +232,9 @@ describe('summarizeChanges', () => {
 
   it('phrases a fall symmetrically', () => {
     expect(
-      summarizeChanges('example.org', 'visits', 800, 1000, [{ value: '/gone', delta: -150 }]),
+      summarizeChanges('example.org', 'visits', 800, 1000, [
+        { dim: 'path', value: '/gone', delta: -150 },
+      ]),
     ).toBe('example.org: visits down 20% (1k → 800) — /gone (-150) drove the drop');
   });
 
@@ -242,9 +244,64 @@ describe('summarizeChanges', () => {
     );
   });
 
-  it('names the NULL mover as (none)', () => {
-    expect(summarizeChanges('s', 'visits', 200, 100, [{ value: null, delta: 100 }])).toBe(
-      's: visits up 100% (100 → 200) — (none) (+100) drove it',
+  it('names a NULL group by what its dimension means, never "(none)"', () => {
+    const said = (dim: string): string =>
+      summarizeChanges('s', 'visits', 200, 100, [{ dim, value: null, delta: 100 }]);
+    expect(said('ref_domain')).toBe(
+      's: visits up 100% (100 → 200) — direct traffic (+100) drove it',
     );
+    expect(said('utm_campaign')).toBe(
+      's: visits up 100% (100 → 200) — untagged traffic (+100) drove it',
+    );
+    expect(said('country')).toBe(
+      's: visits up 100% (100 → 200) — unknown location (+100) drove it',
+    );
+  });
+
+  it('skips a NULL driver its dimension cannot name, rather than saying nothing useful', () => {
+    // A null path is not a story; the sentence keeps its head and drops the driver.
+    expect(
+      summarizeChanges('s', 'visits', 200, 100, [{ dim: 'path', value: null, delta: 100 }]),
+    ).toBe('s: visits up 100% (100 → 200)');
+    expect(
+      summarizeChanges('s', 'visits', 200, 100, [
+        { dim: 'path', value: null, delta: 100 },
+        { dim: 'ref_domain', value: null, delta: 90 },
+      ]),
+    ).toBe('s: visits up 100% (100 → 200) — direct traffic (+90) drove it');
+  });
+
+  it('takes the second driver from another dimension — two rows of one dim are one story', () => {
+    expect(
+      summarizeChanges('s', 'visits', 400, 200, [
+        { dim: 'path', value: '/a', delta: 120 },
+        { dim: 'path', value: '/b', delta: 110 },
+        { dim: 'ref_domain', value: 'news.example', delta: 60 },
+      ]),
+    ).toBe('s: visits up 100% (200 → 400) — /a (+120) and news.example (+60) drove it');
+  });
+
+  it('falls back to the same dimension when nothing else moved that way', () => {
+    expect(
+      summarizeChanges('s', 'visits', 400, 200, [
+        { dim: 'path', value: '/a', delta: 120 },
+        { dim: 'path', value: '/b', delta: 110 },
+      ]),
+    ).toBe('s: visits up 100% (200 → 400) — /a (+120) and /b (+110) drove it');
+  });
+});
+
+describe('moversOf', () => {
+  it("carries each row's dimension, so the summary can name its NULL group", () => {
+    expect(
+      moversOf([
+        { dim: 'ref_domain', value: null, delta: 12 },
+        { dim: 'path', value: '/a', delta: -3 },
+        { dim: 'path', value: '/b', delta: 'not a number' },
+      ]),
+    ).toEqual([
+      { dim: 'ref_domain', value: null, delta: 12 },
+      { dim: 'path', value: '/a', delta: -3 },
+    ]);
   });
 });

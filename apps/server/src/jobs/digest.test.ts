@@ -91,9 +91,10 @@ describe('runDigest', () => {
     expect(posted[0]?.title).toBe(DIGEST_TITLE);
     const lines = posted[0]?.body.split('\n') ?? [];
     // Rising site: the movers come from the changes kind — /blog/foo carries
-    // the story, the (none)-valued groups of the other dims ride behind it.
+    // the story, and the second driver is another dimension's NULL group, named
+    // for what it means rather than shown as "(none)".
     expect(lines[0]).toBe(
-      'one: visits up 20% (10 → 12) — /blog/foo (+12) and (none) (+2) drove it',
+      'one: visits up 20% (10 → 12) — /blog/foo (+12) and direct traffic (+2) drove it',
     );
     expect(lines[1]).toBe('two: steady (±0%)');
     db.close();

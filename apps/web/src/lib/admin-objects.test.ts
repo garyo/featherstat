@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { createAdminClient } from './admin.ts';
+import { describe, expect, it, vi } from 'vitest';
+import { AdminError, createAdminClient } from './admin.ts';
+import { panelFailure, SIGNED_OUT_MESSAGE } from './admin-failure.ts';
 import { type AdminObjects, adminObjects } from './admin-objects.ts';
 
 interface Call {
@@ -172,6 +173,25 @@ describe('adminObjects', () => {
         expect(JSON.parse(String(calls[0]?.init?.body)), entry.path).toEqual(entry.body);
       }
     }
+  });
+
+  it('rejects a mutation the session no longer covers, as the failure panels render', async () => {
+    // The reported bug: a revoke refused with 401 resolved as far as the panel
+    // could tell. It must throw, report the expired session, and map to prose.
+    const onUnauthorized = vi.fn();
+    const fetchImpl = (async () =>
+      new Response(JSON.stringify({ error: 'unauthorized' }), {
+        status: 401,
+        headers: { 'content-type': 'application/json' },
+      })) as typeof fetch;
+    const api = adminObjects(createAdminClient({ fetch: fetchImpl, onUnauthorized }));
+    const failure = await api.revokeToken(4).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(AdminError);
+    expect(panelFailure(failure, 'Revoking failed — try again.')).toEqual({
+      message: SIGNED_OUT_MESSAGE,
+      urgent: true,
+    });
+    expect(onUnauthorized).toHaveBeenCalledOnce();
   });
 
   it('unwraps the alert rules envelope both ways', async () => {

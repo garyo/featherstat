@@ -79,6 +79,12 @@ export const RENDERINGS: readonly Rendering[] = [
     instead: 'render the changes viz; sections and rows come from widgets/changes.ts',
   },
   {
+    what: "a settings panel's report that a mutation failed",
+    marks: ['class:urgent'],
+    owners: ['views/settings/PanelError.svelte'],
+    instead: 'render <PanelError> with the panelFailure() of whatever was thrown',
+  },
+  {
     what: 'the per-visitor tally row',
     marks: ['class="visitor-row"'],
     owners: ['widgets/VisitorTally.svelte'],

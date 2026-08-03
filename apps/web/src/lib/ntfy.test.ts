@@ -92,10 +92,14 @@ describe('fieldErrors', () => {
   });
 
   it('falls back to the response message when no issue named a field', () => {
-    expect(fieldErrors([], [], 'invalid request').form).toBe('invalid request');
-    expect(fieldErrors([{ path: [], message: 'body too large' }], [], 'x').form).toBe(
-      'body too large',
-    );
+    expect(fieldErrors([], [], 'invalid request').form).toEqual({
+      message: 'invalid request',
+      urgent: false,
+    });
+    expect(fieldErrors([{ path: [], message: 'body too large' }], [], 'x').form).toEqual({
+      message: 'body too large',
+      urgent: false,
+    });
   });
 
   it('keeps the first message per field', () => {

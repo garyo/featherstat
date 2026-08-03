@@ -25,7 +25,7 @@ import { Hono } from 'hono';
 import type { Auth, AuthEnv } from '../auth/auth.ts';
 import { canReadSite, type Principal, readableSites } from '../auth/principal.ts';
 import { type Db, listDerivedMetrics, listGoals, listPropKeys, listSites } from '../db/index.ts';
-import { type ChangesMover, summarizeChanges } from '../query/changes.ts';
+import { moversOf, summarizeChanges } from '../query/changes.ts';
 import { executeQueryRequest, UnknownSiteError } from '../query/executor.ts';
 import { PoolSaturatedError } from '../query/pool/pool.ts';
 import { expandSegments, resolveDerived, resolveGoals } from '../query/stored.ts';
@@ -239,17 +239,6 @@ function totalOf(
   const row = (side === 'rows' ? entry.rows : (entry.compare ?? []))[0];
   const value = row?.visits;
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
-}
-
-function moversOf(rows: readonly Record<string, unknown>[]): ChangesMover[] {
-  return rows.flatMap((row) => {
-    const delta = row.delta;
-    if (typeof delta !== 'number') return [];
-    const value = row.value;
-    return [
-      { value: typeof value === 'string' || typeof value === 'number' ? value : null, delta },
-    ];
-  });
 }
 
 /** A refusal the model can learn from — an MCP tool error, never a thrown 500. */

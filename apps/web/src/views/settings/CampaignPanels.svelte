@@ -1,6 +1,7 @@
 <script lang="ts">
 import type { CampaignAlias, CampaignInfo, SiteInfo } from '@featherstat/shared';
 import type { AdminClient } from '../../lib/admin.ts';
+import { type PanelFailure, panelFailure } from '../../lib/admin-failure.ts';
 import { adminObjects } from '../../lib/admin-objects.ts';
 import {
   buildUtmUrl,
@@ -8,6 +9,7 @@ import {
   normalizationWarnings,
   type UtmDraft,
 } from '../../lib/utm-builder.ts';
+import PanelError from './PanelError.svelte';
 
 /**
  * The campaign panels (docs/03 § Campaigns): the registry `campaign_status`
@@ -24,9 +26,6 @@ let { admin, sites }: Props = $props();
 // svelte-ignore state_referenced_locally
 const api = adminObjects(admin);
 
-const said = (failure: unknown, fallback: string): string =>
-  failure instanceof Error ? failure.message : fallback;
-
 // ---------- registry ----------
 let regSite = $state<number | undefined>(undefined);
 const regSiteId = $derived(regSite ?? sites?.[0]?.id);
@@ -36,7 +35,9 @@ let regOpen = $state(false);
 let regEditing = $state<number | undefined>(undefined);
 let regDraft = $state({ name: '', sources: '', mediums: '', startsAt: '', endsAt: '', notes: '' });
 let regBusy = $state(false);
-let regError = $state<string | undefined>(undefined);
+let regError = $state<PanelFailure | undefined>(undefined);
+/** A row's Delete reports beside the row — the editor form may not even be open. */
+let regRowError = $state<PanelFailure | undefined>(undefined);
 
 $effect(() => {
   if (regSiteId === undefined) return;
@@ -93,7 +94,7 @@ async function saveCampaign(event: SubmitEvent): Promise<void> {
     regOpen = false;
     campaigns = await api.listCampaigns(regSiteId);
   } catch (failure) {
-    regError = said(failure, 'Saving failed — try again.');
+    regError = panelFailure(failure, 'Saving failed — try again.');
   } finally {
     regBusy = false;
   }
@@ -101,11 +102,12 @@ async function saveCampaign(event: SubmitEvent): Promise<void> {
 
 async function deleteCampaign(id: number): Promise<void> {
   if (regSiteId === undefined) return;
+  regRowError = undefined;
   try {
     await api.deleteCampaign(id);
     campaigns = await api.listCampaigns(regSiteId);
   } catch (failure) {
-    regError = said(failure, 'Deleting failed — try again.');
+    regRowError = panelFailure(failure, 'Deleting failed — try again.');
   }
 }
 
@@ -116,7 +118,7 @@ const aliasSiteId = $derived(Number(aliasSite));
 let aliases = $state<CampaignAlias[] | undefined>(undefined);
 let aliasFailed = $state(false);
 let aliasBusy = $state(false);
-let aliasError = $state<string | undefined>(undefined);
+let aliasError = $state<PanelFailure | undefined>(undefined);
 let aliasSaved = $state(false);
 
 $effect(() => {
@@ -148,7 +150,7 @@ async function saveAliases(event: SubmitEvent): Promise<void> {
     aliases = await api.saveCampaignAliases(aliasSiteId, rows);
     aliasSaved = true;
   } catch (failure) {
-    aliasError = said(failure, 'Saving failed — try again.');
+    aliasError = panelFailure(failure, 'Saving failed — try again.');
   } finally {
     aliasBusy = false;
   }
@@ -216,6 +218,7 @@ async function copyUtm(): Promise<void> {
     {:else}
       <p class="widget-note">No registered campaigns for this site.</p>
     {/each}
+    <PanelError failure={regRowError} />
     {#if regOpen}
       <form class="oform" onsubmit={saveCampaign}>
         <div class="wrap">
@@ -246,7 +249,7 @@ async function copyUtm(): Promise<void> {
             <input bind:value={regDraft.notes} maxlength="2000" />
           </label>
         </div>
-        {#if regError !== undefined}<p class="form-error" role="alert">{regError}</p>{/if}
+        <PanelError failure={regError} />
         <div class="row">
           <button
             class="btn primary"
@@ -316,7 +319,7 @@ async function copyUtm(): Promise<void> {
         <p class="widget-note">No aliases here yet.</p>
       {/each}
       <button class="btn addv" type="button" onclick={addAlias}>Add alias</button>
-      {#if aliasError !== undefined}<p class="form-error" role="alert">{aliasError}</p>{/if}
+      <PanelError failure={aliasError} />
       {#if aliasSaved}
         <p class="form-ok" role="status">Aliases saved — stored history is being rewritten.</p>
       {/if}

@@ -19,6 +19,11 @@ import type { DashboardDetail, DashboardInfo } from './dashboards.ts';
  *
  * A 401 from any authenticated call reports to `onUnauthorized` (the app flips
  * to the login view) and still throws, so callers never see a half-result.
+ *
+ * Every failure leaves as an `AdminError`, including the one the network never
+ * answered: a panel that cannot tell "refused" from "never arrived" tells the
+ * reader an action succeeded when it did not (`admin-failure.ts` does the
+ * telling).
  */
 
 /** One zod issue from a 400, kept structured so a form can point at the field. */
@@ -26,6 +31,9 @@ export interface AdminIssue {
   path: (string | number)[];
   message: string;
 }
+
+/** The status of a request that never got one — the server was unreachable. */
+export const OFFLINE_STATUS = 0;
 
 export class AdminError extends Error {
   constructor(
@@ -100,11 +108,16 @@ export function createAdminClient(options: AdminClientOptions = {}): AdminClient
       const token = csrf ?? csrfCookie();
       if (token !== undefined) headers['x-csrf-token'] = token;
     }
-    const response = await fetchImpl(path, {
-      method,
-      headers,
-      body: init.body === undefined ? undefined : JSON.stringify(init.body),
-    });
+    let response: Response;
+    try {
+      response = await fetchImpl(path, {
+        method,
+        headers,
+        body: init.body === undefined ? undefined : JSON.stringify(init.body),
+      });
+    } catch {
+      throw new AdminError(OFFLINE_STATUS, 'no response');
+    }
     if (response.status === 401 && (init.authenticated ?? true)) options.onUnauthorized?.();
     if (!response.ok) {
       const failure = await errorBody(response);

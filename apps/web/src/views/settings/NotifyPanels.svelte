@@ -1,9 +1,11 @@
 <script lang="ts">
 import { BaseDimensionSchema, MetricSchema, type SiteInfo } from '@featherstat/shared';
 import type { AdminClient } from '../../lib/admin.ts';
+import { type PanelFailure, panelFailure } from '../../lib/admin-failure.ts';
 import { adminObjects } from '../../lib/admin-objects.ts';
 import { type AlertDraft, draftsOf, emptyAlert, rulesOf } from '../../lib/alerts.ts';
 import NtfyPanel from '../NtfyPanel.svelte';
+import PanelError from './PanelError.svelte';
 
 /**
  * The Notifications panels: the ntfy endpoint + per-hit rules (NtfyPanel, docs/01
@@ -24,7 +26,8 @@ let drafts = $state<AlertDraft[] | undefined>(undefined);
 let loadFailed = $state(false);
 let busy = $state(false);
 let saved = $state(false);
-let error = $state<{ message: string; row?: number } | undefined>(undefined);
+/** `row` points the message at the rule that caused it; the rest is a panel failure. */
+let error = $state<(PanelFailure & { row?: number }) | undefined>(undefined);
 
 $effect(() => {
   void api
@@ -44,7 +47,7 @@ async function save(event: SubmitEvent): Promise<void> {
   saved = false;
   const parsed = rulesOf(drafts);
   if ('error' in parsed) {
-    error = { message: parsed.error, row: parsed.row };
+    error = { message: parsed.error, row: parsed.row, urgent: false };
     return;
   }
   busy = true;
@@ -52,9 +55,7 @@ async function save(event: SubmitEvent): Promise<void> {
     drafts = draftsOf(await api.saveAlertRules(parsed.rules));
     saved = true;
   } catch (failure) {
-    error = {
-      message: failure instanceof Error ? failure.message : 'Saving failed — try again.',
-    };
+    error = panelFailure(failure, 'Saving failed — try again.');
   } finally {
     busy = false;
   }
@@ -145,8 +146,8 @@ async function save(event: SubmitEvent): Promise<void> {
       >
         Add alert rule
       </button>
-      {#if error !== undefined && error.row === undefined}
-        <p class="form-error" role="alert">{error.message}</p>
+      {#if error?.row === undefined}
+        <PanelError failure={error} />
       {/if}
       {#if saved}<p class="form-ok" role="status">Alert rules saved.</p>{/if}
       <div class="row">

@@ -1,6 +1,7 @@
 <script lang="ts">
 import type { DerivedMetricInfo, GoalInfo, SegmentInfo, SiteInfo } from '@featherstat/shared';
 import type { AdminClient } from '../../lib/admin.ts';
+import { type PanelFailure, panelFailure } from '../../lib/admin-failure.ts';
 import { adminObjects } from '../../lib/admin-objects.ts';
 import {
   describeFilter,
@@ -14,6 +15,7 @@ import {
   rowsOfNodes,
 } from '../../lib/filter-builder.ts';
 import FilterBuilder from './FilterBuilder.svelte';
+import PanelError from './PanelError.svelte';
 
 /**
  * The query-object panels (docs/04 § 3): saved segments, derived metrics and
@@ -46,9 +48,6 @@ const freshFilter = (): FilterDraft => ({
   error: undefined,
 });
 
-const said = (failure: unknown, fallback: string): string =>
-  failure instanceof Error ? failure.message : fallback;
-
 // ---------- segments ----------
 let segments = $state<SegmentInfo[] | undefined>(undefined);
 let segmentsFailed = $state(false);
@@ -57,6 +56,10 @@ let segEditing = $state<number | undefined>(undefined);
 let segOpen = $state(false);
 let seg = $state<FilterDraft>(freshFilter());
 let segBusy = $state(false);
+/** The server's refusal of a save, beside the Save button; `seg.error` is the
+ *  draft's own complaint, which the filter editor renders. */
+let segError = $state<PanelFailure | undefined>(undefined);
+let segRowError = $state<PanelFailure | undefined>(undefined);
 
 const loadSegments = (): Promise<void> =>
   api
@@ -127,6 +130,7 @@ async function saveSegment(event: SubmitEvent): Promise<void> {
     return;
   }
   segBusy = true;
+  segError = undefined;
   try {
     const body = { name: segName.trim(), filter: filter.node };
     if (segEditing === undefined) await api.createSegment(body);
@@ -134,18 +138,19 @@ async function saveSegment(event: SubmitEvent): Promise<void> {
     segOpen = false;
     await loadSegments();
   } catch (failure) {
-    seg.error = said(failure, 'Saving failed — try again.');
+    segError = panelFailure(failure, 'Saving failed — try again.');
   } finally {
     segBusy = false;
   }
 }
 
 async function deleteSegment(id: number): Promise<void> {
+  segRowError = undefined;
   try {
     await api.deleteSegment(id);
     await loadSegments();
   } catch (failure) {
-    seg.error = said(failure, 'Deleting failed — try again.');
+    segRowError = panelFailure(failure, 'Deleting failed — try again.');
   }
 }
 
@@ -157,7 +162,8 @@ let dmExpr = $state('');
 let dmEditing = $state<number | undefined>(undefined);
 let dmOpen = $state(false);
 let dmBusy = $state(false);
-let dmError = $state<string | undefined>(undefined);
+let dmError = $state<PanelFailure | undefined>(undefined);
+let dmRowError = $state<PanelFailure | undefined>(undefined);
 
 const loadDerived = (): Promise<void> =>
   api
@@ -191,18 +197,19 @@ async function saveDerived(event: SubmitEvent): Promise<void> {
     dmOpen = false;
     await loadDerived();
   } catch (failure) {
-    dmError = said(failure, 'Saving failed — try again.');
+    dmError = panelFailure(failure, 'Saving failed — try again.');
   } finally {
     dmBusy = false;
   }
 }
 
 async function deleteDerived(id: number): Promise<void> {
+  dmRowError = undefined;
   try {
     await api.deleteDerivedMetric(id);
     await loadDerived();
   } catch (failure) {
-    dmError = said(failure, 'Deleting failed — try again.');
+    dmRowError = panelFailure(failure, 'Deleting failed — try again.');
   }
 }
 
@@ -219,6 +226,8 @@ let goalValueKind = $state<'none' | 'event_value' | 'fixed'>('none');
 let goalFixed = $state('');
 let goalTarget = $state('');
 let goalBusy = $state(false);
+let goalError = $state<PanelFailure | undefined>(undefined);
+let goalRowError = $state<PanelFailure | undefined>(undefined);
 
 $effect(() => {
   if (goalSiteId === undefined) return;
@@ -305,6 +314,7 @@ async function saveGoal(event: SubmitEvent): Promise<void> {
     return;
   }
   goalBusy = true;
+  goalError = undefined;
   try {
     const body = {
       name: goalName.trim(),
@@ -322,7 +332,7 @@ async function saveGoal(event: SubmitEvent): Promise<void> {
     goalOpen = false;
     goals = await api.listGoals(goalSiteId);
   } catch (failure) {
-    goal.error = said(failure, 'Saving failed — try again.');
+    goalError = panelFailure(failure, 'Saving failed — try again.');
   } finally {
     goalBusy = false;
   }
@@ -330,11 +340,12 @@ async function saveGoal(event: SubmitEvent): Promise<void> {
 
 async function deleteGoal(id: number): Promise<void> {
   if (goalSiteId === undefined) return;
+  goalRowError = undefined;
   try {
     await api.deleteGoal(id);
     goals = await api.listGoals(goalSiteId);
   } catch (failure) {
-    goal.error = said(failure, 'Deleting failed — try again.');
+    goalRowError = panelFailure(failure, 'Deleting failed — try again.');
   }
 }
 </script>
@@ -364,6 +375,7 @@ async function deleteGoal(id: number): Promise<void> {
     {:else}
       <p class="widget-note">No segments yet.</p>
     {/each}
+    <PanelError failure={segRowError} />
     {#if segOpen}
       <form class="oform" onsubmit={saveSegment}>
         <label class="field">
@@ -377,6 +389,7 @@ async function deleteGoal(id: number): Promise<void> {
           error={seg.error}
           ontoggle={toggleSegmentEditor}
         />
+        <PanelError failure={segError} />
         <div class="row">
           <button class="btn primary" type="submit" disabled={segBusy || segName.trim() === ''}>
             {segBusy ? 'Saving…' : 'Save segment'}
@@ -415,6 +428,7 @@ async function deleteGoal(id: number): Promise<void> {
     {:else}
       <p class="widget-note">No derived metrics yet.</p>
     {/each}
+    <PanelError failure={dmRowError} />
     {#if dmOpen}
       <form class="oform" onsubmit={saveDerived}>
         <label class="field">
@@ -425,7 +439,7 @@ async function deleteGoal(id: number): Promise<void> {
           Expression
           <input bind:value={dmExpr} maxlength="200" placeholder="events / visits" required />
         </label>
-        {#if dmError !== undefined}<p class="form-error" role="alert">{dmError}</p>{/if}
+        <PanelError failure={dmError} />
         <div class="row">
           <button
             class="btn primary"
@@ -482,6 +496,7 @@ async function deleteGoal(id: number): Promise<void> {
     {:else}
       <p class="widget-note">No goals for this site yet.</p>
     {/each}
+    <PanelError failure={goalRowError} />
     {#if goalOpen}
       <form class="oform" onsubmit={saveGoal}>
         <label class="field">
@@ -515,6 +530,7 @@ async function deleteGoal(id: number): Promise<void> {
             <input bind:value={goalTarget} inputmode="numeric" placeholder="100" />
           </label>
         </div>
+        <PanelError failure={goalError} />
         <div class="row">
           <button class="btn primary" type="submit" disabled={goalBusy || goalName.trim() === ''}>
             {goalBusy ? 'Saving…' : 'Save goal'}
