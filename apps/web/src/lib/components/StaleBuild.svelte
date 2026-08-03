@@ -4,13 +4,17 @@
  * can fix it — the build this page is running is gone from the server — so this
  * says so plainly and offers the only move there is. It never dismisses itself:
  * every code-split part of the app is dead until the reload.
+ *
+ * The named examples are examples, not the list: `lib/chunks.ts` decides what is
+ * code-split, and a message that enumerates it goes stale the next time one is
+ * added — which is how the detail views came to be missing from it.
  */
 </script>
 
 <div class="stale" role="alert">
   <span
-    >featherstat has been updated. This page is still running the old version, so Share, Edit and
-    Settings can no longer load.</span
+    >featherstat has been updated. This page is still running the old version, so parts of it —
+    Share, Edit, Settings, the detail views — can no longer open.</span
   >
   <button class="btn slim primary" type="button" onclick={() => location.reload()}>Reload</button>
 </div>
