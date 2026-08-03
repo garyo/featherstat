@@ -5,6 +5,7 @@ import { createQueryClient } from '../lib/api.ts';
 import type { AuthState } from '../lib/auth.svelte.ts';
 import Header from '../lib/components/Header.svelte';
 import { createDashboardStore } from '../lib/dashboards.svelte.ts';
+import { confirmDashboardSwitch, createEditorMode } from '../lib/editor-mode.svelte.ts';
 import { createLiveStream } from '../lib/live.ts';
 import { pushFeed, seedFeed } from '../lib/realtime.ts';
 import { createSiteDirectory } from '../lib/sites.svelte.ts';
@@ -115,6 +116,26 @@ live.on('status', (status) => {
 
 const site = $derived(view.current.site);
 const current = $derived(view.current.view);
+
+// Edit mode is owned HERE, beside the store and the switcher that must respect
+// it: the header could otherwise change ?dash= (or the scope, which clears the
+// dash) under an open draft. The editor chunk itself still loads on entry.
+// svelte-ignore state_referenced_locally
+const mode = createEditorMode(dashboards, () => site);
+// Leaving the dashboard view discards the draft, as unmounting the views did
+// when they owned the mode — tabs are not the switcher's confirm flow.
+$effect(() => {
+  if (current !== 'dash') mode.close();
+});
+
+/** The header pickers ask before a switch would discard an open draft. */
+function guardEdit(): boolean {
+  const ok = confirmDashboardSwitch(mode.editing, dashboards.selection?.name, (message) =>
+    window.confirm(message),
+  );
+  if (ok && mode.editing) mode.close();
+  return ok;
+}
 
 // The dashboard views hold their batch until the library lookup answers, so
 // the (scope, dash) load belongs to the same owner as the switcher. `dashRef`
@@ -237,6 +258,7 @@ const app = $derived<AppEnv>({
     library={dashboards.library}
     dash={dashboards.selection?.ref}
     {connected}
+    guard={guardEdit}
     onselect={selectSite}
     onselectview={selectView}
     onselectdash={selectDash}
@@ -295,6 +317,7 @@ const app = $derived<AppEnv>({
       {live}
       {app}
       store={dashboards}
+      {mode}
       range={view.current.range}
       cmp={view.current.cmp}
       onselectrange={selectRange}
@@ -308,6 +331,7 @@ const app = $derived<AppEnv>({
       {live}
       {app}
       store={dashboards}
+      {mode}
       {site}
       timezone={directory.byId.get(site)?.timezone}
       range={view.current.range}
@@ -330,7 +354,9 @@ const app = $derived<AppEnv>({
       library={dashboards.library}
       dash={view.current.dash}
       onchanged={() => dashboards.refresh()}
-      onselectdash={selectDash}
+      onselectdash={(ref) => {
+        if (guardEdit()) selectDash(ref);
+      }}
       onclose={() => (managing = false)}
     />
   {/if}

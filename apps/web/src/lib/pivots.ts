@@ -65,7 +65,10 @@ export function applyPivots(dashboard: Dashboard, pivots: readonly PivotChoice[]
     // under a new one it would decorate rows with an unrelated second column.
     const { dim2: _dim2, ...query } = spec.query;
     const { flags: _flags, nullLabel: _nullLabel, ...options } = spec.options;
-    return { ...spec, query: { ...query, dim }, options: { ...options, ...pivotOptions(dim) } };
+    // The saved title described the saved breakdown ("Top pages" over browsers
+    // is a lie) — pivoted, the picker IS the heading (BarList).
+    const { title: _title, ...rest } = spec;
+    return { ...rest, query: { ...query, dim }, options: { ...options, ...pivotOptions(dim) } };
   });
   return changed ? { ...dashboard, grid } : dashboard;
 }

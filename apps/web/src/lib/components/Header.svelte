@@ -16,6 +16,9 @@ interface Props {
   dash?: DashRef;
   /** SSE health — false shows the "reconnecting" note (docs/05 R22: never silently stale). */
   connected?: boolean;
+  /** Asked before a scope/dashboard pick lands — false vetoes it (an open
+   * editor draft confirms the discard); the select snaps back to what is on screen. */
+  guard?: () => boolean;
   /** Opens the dashboard for a scope — one state update (site + view together). */
   onselect: (site: SiteScope) => void;
   onselectview: (view: ViewName) => void;
@@ -33,6 +36,7 @@ let {
   library = [],
   dash,
   connected = true,
+  guard = () => true,
   onselect,
   onselectview,
   onselectdash,
@@ -44,7 +48,12 @@ let {
 const selected = $derived(site === 'all' ? 'all' : String(site));
 
 function onchange(event: Event): void {
-  const raw = (event.currentTarget as HTMLSelectElement).value;
+  const select = event.currentTarget as HTMLSelectElement;
+  if (!guard()) {
+    select.value = selected;
+    return;
+  }
+  const raw = select.value;
   if (raw === 'all') {
     onselect('all');
     return;
@@ -59,6 +68,10 @@ function ondashchange(event: Event): void {
     // A command, not a selection: restore the picker to what is on screen.
     select.value = String(dash ?? '');
     onmanage?.();
+    return;
+  }
+  if (!guard()) {
+    select.value = String(dash ?? '');
     return;
   }
   const ref = parseDashRef(select.value);

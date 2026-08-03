@@ -5,7 +5,7 @@ import type { QueryClient } from '../lib/api.ts';
 import FilterRow from '../lib/components/FilterRow.svelte';
 import type { DashboardStore } from '../lib/dashboards.svelte.ts';
 import { builtTemplate, withLiveSiteIds } from '../lib/dashboards.ts';
-import { createEditorMode } from '../lib/editor-mode.svelte.ts';
+import type { EditorMode } from '../lib/editor-mode.svelte.ts';
 import { createRevalidator, type LiveStream } from '../lib/live.ts';
 import {
   type CompareChoice,
@@ -32,6 +32,8 @@ interface Props {
   live: LiveStream;
   /** The scope's dashboard library + selection — owned by the Shell (see SiteView). */
   store: DashboardStore;
+  /** Edit mode — owned by the Shell, whose switcher guards an open draft. */
+  mode: EditorMode;
   range: ViewRange;
   cmp: CompareChoice;
   onselectrange: (range: ViewRange) => void;
@@ -45,6 +47,7 @@ let {
   client,
   live,
   store,
+  mode,
   range,
   cmp,
   onselectrange,
@@ -114,9 +117,6 @@ const dayKey = $derived(
     new Date(app.now),
   ),
 );
-// Edit mode (docs/05): the editor is a code-split chunk, loaded on entry.
-// svelte-ignore state_referenced_locally
-const mode = createEditorMode(store, () => 'all');
 
 /** Save, then point the URL at the row — editing a template just cloned it. */
 async function save(next: Parameters<typeof mode.save>[0]): Promise<void> {

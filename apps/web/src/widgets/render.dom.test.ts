@@ -1,4 +1,5 @@
 import {
+  contentTemplate,
   type Dashboard,
   DashboardSchema,
   type Measures,
@@ -234,6 +235,41 @@ describe('a KPI tile writes its number the way its measure says', () => {
   });
 });
 
+describe('a KPI row draws every tile its spec declares', () => {
+  it('renders the content template’s four tiles — views/visit included', () => {
+    // What actually shipped: `views_per_visit` was absent from the tile catalog,
+    // so `tileNames` silently dropped it and the row rendered 3 of 4. Defined
+    // tiles and rendered tiles must be the same list.
+    const kpis = contentTemplate.build(1).grid.find((spec) => spec.id === 'kpis');
+    if (kpis === undefined) throw new Error('content kpis widget expected');
+    const root = render([kpis], {
+      results: {
+        kpis: {
+          rows: [
+            { pageviews: 3_000, visitors: 1_200, avg_engagement: 106_000, views_per_visit: 3.14 },
+          ],
+          measures: {
+            ...MEASURES,
+            pageviews: { unit: 'count', population: 'pageviews', aggregate: 'sum' },
+            views_per_visit: {
+              unit: 'value',
+              population: 'sessions',
+              aggregate: 'ratio',
+              of: { denominator: 'visits' },
+            },
+          },
+        },
+      },
+    });
+    const labels = [...root.querySelectorAll('.tile .label')].map((label) =>
+      text(label).replace(/~.*$/, '').trim(),
+    );
+    expect(labels).toHaveLength((kpis.options.tiles as string[]).length);
+    expect(labels).toEqual(['Pageviews', 'Visitors', 'Avg engagement', 'Views / visit']);
+    expect([...root.querySelectorAll('.tile .value')].map((value) => text(value))).toContain('3.1');
+  });
+});
+
 describe('a bar list draws one row per ranked group', () => {
   const grid = [
     {
@@ -298,6 +334,45 @@ describe('a bar list draws one row per ranked group', () => {
     );
     expect(root.querySelector('img')).toBeNull();
     expect(text(root.querySelector('.bar-row .name'))).toBe('/<img src=x onerror=alert(1)>');
+  });
+});
+
+describe('the pivot picker becomes the whole heading once a pivot is active', () => {
+  const PIVOT_PAGE: ViewEnv = { ...APP_PAGE, onpivot: () => undefined };
+  const spec = (over: Record<string, unknown>): Record<string, unknown> => ({
+    id: 'pages',
+    viz: 'bar-list',
+    w: 6,
+    h: 2,
+    query: { id: 'pages', metrics: ['pageviews'], dim: 'path', limit: 8 },
+    ...over,
+  });
+
+  /** The heading's own words, with the picker (and its option list) taken out. */
+  const heading = (root: HTMLElement): string => {
+    const head = root.querySelector('h2.pivot-head');
+    const picker = head?.querySelector('select[aria-label="Breakdown"]');
+    expect(picker).not.toBeNull();
+    picker?.remove();
+    return text(head);
+  };
+
+  it('reads "title · picker" while the saved breakdown is up', () => {
+    const root = render([spec({ title: 'Top pages' })], {
+      results: { pages: { rows: [] } },
+      env: PIVOT_PAGE,
+    });
+    expect(heading(root)).toBe('Top pages ·');
+  });
+
+  it('shows the picker alone for a pivoted spec — no stale title beside it', () => {
+    // What `applyPivots` hands the widget: the new dim, the title stripped —
+    // "Top pages" must not sit over browser rows.
+    const root = render(
+      [spec({ query: { id: 'pages', metrics: ['pageviews'], dim: 'browser', limit: 8 } })],
+      { results: { pages: { rows: [] } }, env: PIVOT_PAGE },
+    );
+    expect(heading(root)).toBe('');
   });
 });
 

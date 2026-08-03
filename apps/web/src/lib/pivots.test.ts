@@ -30,6 +30,13 @@ describe('applyPivots', () => {
     expect(toPath.grid.find((spec) => spec.id === 'refs')?.options.nullLabel).toBeUndefined();
   });
 
+  it('strips the saved title — it described the saved breakdown, not this one', () => {
+    // "Top pages" over browser rows is a lie; untitled, the widget's picker
+    // becomes the whole heading (BarList).
+    const pivoted = applyPivots(dashboard, [{ widget: 'refs', dim: 'country' }]);
+    expect(pivoted.grid.find((spec) => spec.id === 'refs')?.title).toBeUndefined();
+  });
+
   it('drops the second grouping — it composed labels for the original dim', () => {
     const pivoted = applyPivots(dashboard, [{ widget: 'events', dim: 'path' }]);
     const events = pivoted.grid.find((spec) => spec.id === 'events');

@@ -93,6 +93,7 @@ const TILES: Record<string, TileDef> = {
   visits: { label: 'Visits', metric: 'visits', goodWhenUp: true },
   events: { label: 'Events', metric: 'events', goodWhenUp: true },
   avg_engagement: { label: 'Avg engagement', metric: 'avg_engagement', goodWhenUp: true },
+  views_per_visit: { label: 'Views / visit', metric: 'views_per_visit', goodWhenUp: true },
   bounce_rate: { label: 'Bounce rate', metric: 'bounce_rate', goodWhenUp: false },
 };
 

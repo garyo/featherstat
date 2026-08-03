@@ -50,10 +50,13 @@ const rows = $derived.by(() => {
 });
 </script>
 
+<!-- Untitled + pivotable is a PIVOTED spec (applyPivots stripped the title):
+     the picker is the whole heading, so no stale title contradicts the rows. -->
 <h2 class="pivot-head">
-  {spec.title ?? spec.id}
   {#if pivotable && query !== undefined}
-    ·
+    {#if spec.title !== undefined}{spec.title}
+      ·
+    {/if}
     <select
       aria-label="Breakdown"
       value={query.dim}
@@ -63,6 +66,8 @@ const rows = $derived.by(() => {
         <option value={option}>{dimLabel(option)}</option>
       {/each}
     </select>
+  {:else}
+    {spec.title ?? spec.id}
   {/if}
 </h2>
 <div class="list-pane">

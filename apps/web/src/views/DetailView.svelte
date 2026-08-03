@@ -47,7 +47,7 @@ interface Props {
   onselectrange: (range: ViewRange) => void;
   onselectcmp: (cmp: CompareChoice) => void;
   onfilters: (filters: Filter[]) => void;
-  /** Drill sideways (a "Next pages" row → that page's own detail view). */
+  /** Drill sideways (an "After this page" row → that page's own detail view). */
   onopendetail: (detail: DetailRef) => void;
 }
 

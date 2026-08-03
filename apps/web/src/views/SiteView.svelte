@@ -5,7 +5,7 @@ import type { QueryClient } from '../lib/api.ts';
 import FilterRow from '../lib/components/FilterRow.svelte';
 import type { DashboardStore } from '../lib/dashboards.svelte.ts';
 import { builtTemplate } from '../lib/dashboards.ts';
-import { createEditorMode } from '../lib/editor-mode.svelte.ts';
+import type { EditorMode } from '../lib/editor-mode.svelte.ts';
 import { sameFilter } from '../lib/filters.ts';
 import { createRevalidator, type LiveStream } from '../lib/live.ts';
 import { applyPivots } from '../lib/pivots.ts';
@@ -42,6 +42,8 @@ interface Props {
   /** The scope's dashboard library + selection — owned by the Shell, which also
    * feeds the header switcher from it (docs/05 § The dashboard library). */
   store: DashboardStore;
+  /** Edit mode — owned by the Shell, whose switcher guards an open draft. */
+  mode: EditorMode;
   site: number;
   /** The site's IANA timezone (site directory) — its midnight re-runs the batch. */
   timezone: string | undefined;
@@ -67,6 +69,7 @@ let {
   client,
   live,
   store,
+  mode,
   site,
   timezone,
   range,
@@ -149,9 +152,6 @@ $effect(() =>
 );
 
 const dayKey = $derived(localDayKey(timezone === undefined ? [] : [timezone], new Date(app.now)));
-// Edit mode (docs/05): the editor is a code-split chunk, loaded on entry.
-// svelte-ignore state_referenced_locally
-const mode = createEditorMode(store, () => site);
 
 /** Save, then point the URL at the row — editing a template just cloned it. */
 async function save(next: Parameters<typeof mode.save>[0]): Promise<void> {

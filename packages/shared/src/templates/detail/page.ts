@@ -84,7 +84,9 @@ export function pageDetail(site: number, path: string): Dashboard {
       {
         id: 'prev',
         viz: 'bar-list',
-        title: 'Previous pages',
+        // "Before/After", not "pages": a step is a MOVE, and an event row
+        // ('event: scroll · read') is an honest answer here (STEP_LABEL).
+        title: 'Before this page',
         w: 6,
         h: 2,
         query: { id: 'prev', kind: 'adjacency', path, direction: 'in', limit: 8 },
@@ -92,7 +94,7 @@ export function pageDetail(site: number, path: string): Dashboard {
       {
         id: 'next',
         viz: 'bar-list',
-        title: 'Next pages',
+        title: 'After this page',
         w: 6,
         h: 2,
         query: { id: 'next', kind: 'adjacency', path, direction: 'out', limit: 8 },
