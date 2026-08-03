@@ -3,8 +3,8 @@
 # One container serves the SPA, the query/admin API and the tracking endpoints;
 # the SQLite file lives on the /data volume.
 
-# ---------------------------------------------------------------- build ----
-FROM oven/bun:1-slim AS build
+# ----------------------------------------------------------------- deps ----
+FROM oven/bun:1-slim AS deps
 # bun install runs better-sqlite3's gyp step, which needs python even when it
 # only detects prebuilds.
 RUN apt-get update \
@@ -20,12 +20,10 @@ COPY packages/shared/package.json packages/shared/
 COPY packages/tracker/package.json packages/tracker/
 RUN bun install --frozen-lockfile
 
-COPY . .
-# Tracker bundles + SPA + bundled server (esbuild, better-sqlite3 external).
-RUN bun run build
-
 # Stage better-sqlite3 (plus its build-time header dep) out of bun's store,
-# dereferencing symlinks, for the native rebuild below.
+# dereferencing symlinks, for the native rebuild below. This lives in the
+# deps stage ON PURPOSE: the native stage's ~10-minute sqlite3.c compile then
+# caches on the lockfile alone, so a source-only redeploy never repeats it.
 RUN cd apps/server && bun -e "\
   const { execSync } = require('child_process'); \
   const path = require('path'); \
@@ -36,6 +34,12 @@ RUN cd apps/server && bun -e "\
   execSync('cp -rL ' + napi + ' /better-sqlite3/node_modules/node-addon-api');" \
  && test -f /better-sqlite3/lib/index.js
 
+# ---------------------------------------------------------------- build ----
+FROM deps AS build
+COPY . .
+# Tracker bundles + SPA + bundled server (esbuild, better-sqlite3 external).
+RUN bun run build
+
 # ------------------------------------------------------------- native ------
 # Rebuild the one native module from source against the runtime image's exact
 # glibc and Node ABI. The shipped prebuilds want a newer glibc than
@@ -45,7 +49,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends python3 make g++ \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /better-sqlite3
-COPY --from=build /better-sqlite3 .
+COPY --from=deps /better-sqlite3 .
 RUN rm -rf prebuilds build \
  && node /usr/local/lib/node_modules/npm/node_modules/node-gyp/bin/node-gyp.js rebuild --release \
  && rm -rf build/Release/obj.target build/Release/.deps deps node_modules src
