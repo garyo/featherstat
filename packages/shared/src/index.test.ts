@@ -95,6 +95,33 @@ describe('QueryRequestSchema', () => {
     expect(dwell && 'kind' in dwell && 'limit' in dwell && dwell.limit).toBe(10);
   });
 
+  /**
+   * A `kind` query carries its own filters like a metric query does. The guard
+   * is here because the failure was SILENT: zod strips what a schema does not
+   * declare, so a filtered widget parsed clean and answered the unfiltered
+   * question — byte-identical rows under two different labels.
+   */
+  it.each(['transitions', 'flows', 'dwell', 'adjacency', 'distribution', 'changes'])(
+    'keeps a %s query’s own filters instead of stripping them',
+    (kind) => {
+      const filters = [{ dim: 'country', op: 'eq', value: 'SG' }];
+      const req = QueryRequestSchema.parse({
+        ...base,
+        compare: 'previous',
+        queries: [
+          {
+            id: 'q',
+            kind,
+            filters,
+            ...(kind === 'adjacency' ? { path: '/pricing', direction: 'in' } : {}),
+            ...(kind === 'distribution' ? { of: 'scroll' } : {}),
+          },
+        ],
+      });
+      expect(req.queries[0]?.filters).toEqual(filters);
+    },
+  );
+
   it('rejects an oversized batch', () => {
     const queries = Array.from({ length: MAX_QUERIES_PER_BATCH + 1 }, (_, i) => ({
       id: `q${i}`,

@@ -92,6 +92,31 @@ describe('collectBatch', () => {
     expect(pages.filters).toEqual([{ dim: 'site', op: 'eq', value: '4' }]);
   });
 
+  /**
+   * A widget's own filters are part of its question, and the batch carries them
+   * verbatim for a `kind` query exactly as for a metric one — two histograms
+   * filtered differently must leave here as two different queries.
+   */
+  it('carries a kind widget’s own filters into the batch', () => {
+    const filters = [{ dim: 'country' as const, op: 'eq' as const, value: 'SG' }];
+    const { queries } = collectBatch({
+      ...siteOverview,
+      grid: [
+        {
+          id: 'scrollhist',
+          viz: 'histogram',
+          w: 6,
+          h: 2,
+          options: {},
+          query: { id: 'scrollhist', kind: 'distribution', of: 'scroll', filters },
+        },
+      ],
+    });
+    expect(queries[0]?.filters).toEqual(filters);
+    // The blocked-metric trim is a metric-query concern; it must not eat them.
+    expect(withoutBlockedMetrics(queries, [])[0]?.filters).toEqual(filters);
+  });
+
   it('ignores junk site ids in the widget options', () => {
     const dashboard = allSites([2]);
     const spec = dashboard.grid[0];

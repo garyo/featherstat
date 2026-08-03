@@ -344,6 +344,24 @@ describe('dwell envelope filters', () => {
     ]);
   });
 
+  /**
+   * A widget's own filters must land in the SAME envelope as the view's chips
+   * (docs/04 § 3). They were silently dropped for every `kind` query, so a
+   * filtered widget answered the unfiltered question under a narrow label —
+   * hence the third expectation, which no "it applied a filter" test can skip.
+   */
+  it('takes a filter at the query level exactly as at the request level', () => {
+    const filter = { dim: 'country', op: 'eq', value: 'US' } as const;
+    const unfiltered = resultOf(run({ queries: dwell() }), 'q').rows;
+    const viaRequest = resultOf(run({ filters: [filter], queries: dwell() }), 'q').rows;
+    const viaQuery = resultOf(
+      run({ queries: [{ id: 'q', kind: 'dwell', limit: 10, filters: [filter] }] }),
+      'q',
+    ).rows;
+    expect(viaQuery).toEqual(viaRequest);
+    expect(viaQuery).not.toEqual(unfiltered);
+  });
+
   it("'is_null' picks the NULL group, like the metric path", () => {
     const response = run({ filters: [{ dim: 'country', op: 'is_null' }], queries: dwell() });
     expect(resultOf(response, 'q').rows.map((row) => row.path)).toEqual(['/after', '/d', '/late']);
@@ -378,6 +396,7 @@ describe('scroll depth', () => {
       withWriteTransaction(fresh, () => {
         seedVisit({
           sess: 90,
+          country: 'SG',
           hits: [
             { path: '/long', at: 0 },
             { path: '/long', type: 'ping', at: 15_000, scroll: 40 },
@@ -389,6 +408,7 @@ describe('scroll depth', () => {
         });
         seedVisit({
           sess: 91,
+          country: 'SG',
           hits: [
             { path: '/long', at: 0 },
             { path: '/long', type: 'ping', at: 15_000, scroll: 55 },
@@ -399,6 +419,7 @@ describe('scroll depth', () => {
         // A full read: 100 % belongs to the last decile, not an eleventh.
         seedVisit({
           sess: 92,
+          country: 'US',
           hits: [
             { path: '/full', at: 0 },
             { path: '/full', type: 'ping', at: 15_000, scroll: 100 },
@@ -469,6 +490,41 @@ describe('scroll depth', () => {
     });
   });
 
+  /**
+   * The reported bug: two scroll histograms in ONE batch, each carrying its own
+   * country filter, came back byte-identical — a widget-level filter on a
+   * `kind` query was silently dropped, so both answered the unfiltered
+   * question. Silent wrong numbers, which is why this asserts the two differ
+   * AND names the rows each should hold.
+   */
+  it('answers two differently filtered scroll histograms differently', () => {
+    const fresh = scrollDb();
+    const response = executeQueryRequest(fresh, {
+      site: 1,
+      ...RANGE,
+      queries: [
+        {
+          id: 'sg',
+          kind: 'distribution',
+          of: 'scroll',
+          filters: [{ dim: 'country', op: 'eq', value: 'SG' }],
+        },
+        {
+          id: 'rest',
+          kind: 'distribution',
+          of: 'scroll',
+          filters: [{ dim: 'country', op: 'neq', value: 'SG' }],
+        },
+      ],
+    });
+    // SG read 55 % and 95 %; the rest is the one full read.
+    expect(resultOf(response, 'sg').rows).toEqual([
+      { bucket: 5, legs: 1 },
+      { bucket: 9, legs: 1 },
+    ]);
+    expect(resultOf(response, 'rest').rows).toEqual([{ bucket: 9, legs: 1 }]);
+  });
+
   it('restricts the scroll histogram to one page via `path`', () => {
     const fresh = scrollDb();
     const response = executeQueryRequest(fresh, {
@@ -524,6 +580,21 @@ describe('dwell distribution', () => {
       { bucket: '10–30s', legs: 1 },
       { bucket: '30–60s', legs: 1 },
     ]);
+
+    // The same filter carried by the query itself, which is where the histogram
+    // widget puts it — one envelope, whichever level named it.
+    const perQuery = run({
+      queries: [
+        {
+          id: 'q',
+          kind: 'distribution',
+          of: 'dwell',
+          filters: [{ dim: 'country', op: 'eq', value: 'US' }],
+        },
+      ],
+    });
+    expect(resultOf(perQuery, 'q').rows).toEqual(resultOf(filtered, 'q').rows);
+    expect(resultOf(perQuery, 'q').rows).not.toEqual(resultOf(query(), 'q').rows);
 
     const refused = run({
       filters: [{ dim: 'path', op: 'starts', value: '/a' }],

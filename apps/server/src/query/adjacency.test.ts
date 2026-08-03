@@ -199,6 +199,31 @@ describe('adjacency envelope filters', () => {
     ]);
   });
 
+  /** A filter the QUERY carries is the same filter (docs/04 § 3): every `kind`
+   * dropped these silently, answering wider than the label it wore. */
+  it('takes a filter at the query level exactly as at the request level', () => {
+    const filter = { dim: 'country', op: 'eq', value: 'US' } as const;
+    const unfiltered = resultOf(run({ queries: adjacency('in') }), 'q').rows;
+    const viaRequest = resultOf(run({ filters: [filter], queries: adjacency('in') }), 'q').rows;
+    const viaQuery = resultOf(
+      run({
+        queries: [
+          {
+            id: 'q',
+            kind: 'adjacency',
+            path: '/pricing',
+            direction: 'in',
+            limit: 10,
+            filters: [filter],
+          },
+        ],
+      }),
+      'q',
+    ).rows;
+    expect(viaQuery).toEqual(viaRequest);
+    expect(viaQuery).not.toEqual(unfiltered);
+  });
+
   it("scope:'session' lets a visited path pick whole sessions", () => {
     const response = run({
       filters: [{ dim: 'path', op: 'eq', value: '/a', scope: 'session' }],

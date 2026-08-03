@@ -452,6 +452,24 @@ describe('POST /api/query', () => {
       expect(viaSegment.headers.get('etag')).toBe(inline.headers.get('etag'));
     });
 
+    // Expansion happens before dispatch, so it must reach EVERY query's own
+    // filters — a `kind` query naming a segment must not meet the compiler with
+    // the ref still in it (which throws) or without the filter (silent, worse).
+    it('expands a {segment} ref inside a kind query’s own filters', async () => {
+      const dwell = { id: 'q', kind: 'dwell' as const };
+      const viaSegment = await post({
+        ...BODY,
+        queries: [{ ...dwell, filters: [{ segment: usSegment }] }],
+      });
+      const inline = await post({
+        ...BODY,
+        queries: [{ ...dwell, filters: [{ dim: 'country', op: 'eq', value: 'US' }] }],
+      });
+      expect(viaSegment.status).toBe(200);
+      expect(inline.status).toBe(200);
+      expect(viaSegment.headers.get('etag')).toBe(inline.headers.get('etag'));
+    });
+
     it('400s an unknown segment with a clear message', async () => {
       const res = await post({ ...BODY, filters: [{ segment: 99 }] });
       expect(res.status).toBe(400);

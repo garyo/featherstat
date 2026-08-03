@@ -294,6 +294,21 @@ describe('envelope filters', () => {
     ]);
   });
 
+  /** A filter the QUERY carries is the same filter (docs/04 § 3): every `kind`
+   * dropped these silently, answering wider than the label it wore. */
+  it('takes a filter at the query level exactly as at the request level', () => {
+    const filter = { dim: 'country', op: 'eq', value: 'US' } as const;
+    const unfiltered = run({ queries: QUERIES });
+    const viaRequest = run({ filters: [filter], queries: QUERIES });
+    const viaQuery = run({
+      queries: QUERIES.map((query) => ({ ...query, filters: [filter] })),
+    });
+    for (const id of ['sankey', 'journeys']) {
+      expect(resultOf(viaQuery, id).rows).toEqual(resultOf(viaRequest, id).rows);
+      expect(resultOf(viaQuery, id).rows).not.toEqual(resultOf(unfiltered, id).rows);
+    }
+  });
+
   it("'is_null' picks the NULL group, like the metric path", () => {
     const response = run({ filters: [{ dim: 'country', op: 'is_null' }], queries: QUERIES });
     expect(resultOf(response, 'sankey').rows).toEqual([

@@ -547,6 +547,16 @@ batch itself still succeeds, and never returns wrong numbers.
   deciles `0–9` (100 % belongs to 9). Rows are sparse — empty buckets are
   omitted — and scroll counts only measured legs: an unmeasured leg is in no
   bucket, never in bucket 0.
+- **Filters ride at two levels, and both reach the same envelope.** The
+  request's `filters` apply to every query; a query's OWN `filters` — the
+  per-widget filters of docs/05 — are AND-ed with them for that query alone.
+  This holds for **every** shape, metric and kind alike: a `distribution`,
+  `dwell`, `adjacency`, `transitions`/`flows` or `changes` query carrying its
+  own filters narrows its session envelope exactly as a request filter would
+  (and refuses a hit-scoped event-level leaf exactly as one would). Dropping
+  them would be the worst failure this API can have — the wider answer under
+  the narrower label — so each kind has a test that its filtered rows differ
+  from its unfiltered ones.
 - **What changed** is the contribution-ranking kind:
   `{ "id": "ch", "kind": "changes", "metric": "visits", "dims": ["path",
   "ref_domain", "utm_campaign", "country"], "limit": 8 }` (every field past

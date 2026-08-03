@@ -11,6 +11,7 @@ import {
   touchApiToken,
   withWriteTransaction,
 } from '../db/index.ts';
+import { bearerCredential } from './bearer.ts';
 import { hashPassword } from './password.ts';
 import { type Principal, parseSiteScope } from './principal.ts';
 import {
@@ -58,8 +59,9 @@ export interface AuthOptions {
 export type AuthVariables = { sessionId: string; principal: Principal };
 export type AuthEnv = { Variables: AuthVariables };
 
-/** `Authorization: Bearer fs_<43 base64url>` — shape-checked before any hash. */
-const BEARER_SHAPE = /^Bearer (fs_[A-Za-z0-9_-]{43})$/;
+/** The credential of a `Bearer` header: `fs_<43 base64url>`, shape-checked
+ * before any hash. Case-sensitive — the scheme before it is not (bearer.ts). */
+const TOKEN_SHAPE = /^fs_[A-Za-z0-9_-]{43}$/;
 /** last_used_at is a coarse audit column, written at most this often. */
 const TOKEN_TOUCH_INTERVAL_MS = 60 * 60 * 1000;
 
@@ -122,11 +124,9 @@ export function createAuth(db: Db, options: AuthOptions = {}): Auth {
 
   /** `Authorization: Bearer` → token principal, or undefined. */
   const tokenPrincipalOf = (c: Context): Principal | undefined => {
-    const match = BEARER_SHAPE.exec(c.req.header('authorization') ?? '');
-    if (match === null) return undefined;
-    const hash = createHash('sha256')
-      .update(match[1] as string)
-      .digest();
+    const credential = bearerCredential(c.req.header('authorization'));
+    if (credential === undefined || !TOKEN_SHAPE.test(credential)) return undefined;
+    const hash = createHash('sha256').update(credential).digest();
     const row = getApiTokenByHash(db, hash);
     if (row === undefined || row.revoked_at !== null) return undefined;
     if (row.last_used_at === null || now() - row.last_used_at > TOKEN_TOUCH_INTERVAL_MS) {

@@ -315,6 +315,7 @@ export const SequenceQuerySchema = z.object({
   kind: z.enum(['transitions', 'flows']),
   /** transitions: how many steps out from entry; flows: signature length. */
   steps: z.number().int().min(2).max(8).default(4),
+  filters: FiltersSchema.optional(),
   limit: z.number().int().min(1).max(200).default(20),
 });
 export type SequenceQuery = z.infer<typeof SequenceQuerySchema>;
@@ -330,6 +331,7 @@ export const DwellQuerySchema = z.object({
   kind: z.literal('dwell'),
   /** Restricts the per-page legs to this page — a leg selection, not a session filter. */
   path: z.string().min(1).max(2048).optional(),
+  filters: FiltersSchema.optional(),
   limit: z.number().int().min(1).max(200).default(10),
 });
 export type DwellQuery = z.infer<typeof DwellQuerySchema>;
@@ -346,6 +348,7 @@ export const AdjacencyQuerySchema = z.object({
   kind: z.literal('adjacency'),
   path: z.string().min(1).max(2048),
   direction: z.enum(['in', 'out']),
+  filters: FiltersSchema.optional(),
   limit: z.number().int().min(1).max(100).default(10),
 });
 export type AdjacencyQuery = z.infer<typeof AdjacencyQuerySchema>;
@@ -362,6 +365,7 @@ export const DistributionQuerySchema = z.object({
   of: z.enum(['dwell', 'scroll']),
   /** Restricts the legs to one page, like `dwell.path`. */
   path: z.string().min(1).max(2048).optional(),
+  filters: FiltersSchema.optional(),
 });
 export type DistributionQuery = z.infer<typeof DistributionQuerySchema>;
 
@@ -391,11 +395,18 @@ export const ChangesQuerySchema = z.object({
     .min(1)
     .max(4)
     .default([...CHANGES_DIMENSIONS]),
+  filters: FiltersSchema.optional(),
   /** Movers kept PER dimension; rows from all dims ride in one result. */
   limit: z.number().int().min(1).max(20).default(8),
 });
 export type ChangesQuery = z.infer<typeof ChangesQuerySchema>;
 
+/**
+ * Every shape a batch can carry. All of them — metric and kind alike — take an
+ * optional `filters` of their own, AND-ed with the request's, so one widget can
+ * ask a narrower question than the view around it (docs/04 § 3). A kind that
+ * silently dropped them would answer the WIDER question under the narrow label.
+ */
 export const QuerySchema = z.union([
   SequenceQuerySchema,
   DwellQuerySchema,

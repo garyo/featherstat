@@ -90,12 +90,12 @@ async function mintToken(sites: 'all' | number[]): Promise<ApiTokenMinted> {
 async function bearerRequest(
   token: string,
   path: string,
-  init: { method?: string; body?: string } = {},
+  init: { method?: string; body?: string; scheme?: string } = {},
 ): Promise<Response> {
   return await secured.app.request(path, {
     method: init.method ?? 'GET',
     headers: {
-      authorization: `Bearer ${token}`,
+      authorization: `${init.scheme ?? 'Bearer'} ${token}`,
       ...(init.body === undefined ? {} : { 'content-type': 'application/json' }),
     },
     ...(init.body === undefined ? {} : { body: init.body }),
@@ -234,6 +234,32 @@ describe('token principals', () => {
     for (const bad of ['fs_short', 'nope', `fs_${'x'.repeat(44)}`, ' ']) {
       const res = await bearerRequest(bad, '/api/sites');
       expect(res.status).toBe(401);
+    }
+  });
+
+  /**
+   * RFC 7235: `auth-scheme` is a case-insensitive token, so `bearer` and
+   * `BEARER` name the same scheme — a client spelling it lowercase is not
+   * unauthorized. The credential after it stays case-SENSITIVE: an fs_ token is
+   * base64url, and folding it would turn a mistyped token into a different one.
+   */
+  it.each(['Bearer', 'bearer', 'BEARER', 'BeArEr'])(
+    'reads the scheme case-insensitively, spelled %s, and the token exactly',
+    async (scheme) => {
+      const minted = await mintToken('all');
+      expect((await bearerRequest(minted.token, '/api/sites', { scheme })).status).toBe(200);
+      const folded = `FS_${minted.token.slice(3)}`;
+      expect((await bearerRequest(folded, '/api/sites', { scheme })).status).toBe(401);
+      expect((await bearerRequest(`fs_${'x'.repeat(43)}`, '/api/sites', { scheme })).status).toBe(
+        401,
+      );
+    },
+  );
+
+  it('is not fooled by a scheme that merely starts with the word', async () => {
+    const minted = await mintToken('all');
+    for (const scheme of ['Bearerish', 'Basic', 'Bear']) {
+      expect((await bearerRequest(minted.token, '/api/sites', { scheme })).status).toBe(401);
     }
   });
 });

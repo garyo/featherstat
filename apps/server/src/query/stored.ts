@@ -54,9 +54,7 @@ export function expandSegments(db: Db, request: QueryRequest): SegmentExpansion 
 
   const refs = [
     ...(request.filters ?? []).flatMap(filterSegmentRefs),
-    ...request.queries.flatMap((query) =>
-      'kind' in query ? [] : (query.filters ?? []).flatMap(filterSegmentRefs),
-    ),
+    ...request.queries.flatMap((query) => (query.filters ?? []).flatMap(filterSegmentRefs)),
   ];
   for (const id of refs) {
     const tree = resolve(id);
@@ -82,10 +80,10 @@ export function expandSegments(db: Db, request: QueryRequest): SegmentExpansion 
   const expanded: QueryRequest = {
     ...request,
     filters: substituteAll(request.filters),
-    queries: request.queries.map((query): Query => {
-      if ('kind' in query || query.filters === undefined) return query;
-      return { ...query, filters: substituteAll(query.filters) };
-    }),
+    queries: request.queries.map(
+      (query): Query =>
+        query.filters === undefined ? query : { ...query, filters: substituteAll(query.filters) },
+    ),
   };
   if (expanded.filters === undefined) delete expanded.filters;
   return compareFilter === undefined

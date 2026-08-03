@@ -76,6 +76,8 @@ describe('GET /metrics', () => {
       { authorization: 'Bearer wrong' },
       { authorization: 'Bearer sekrit-but-longer' },
       { authorization: 'Basic sekrit' },
+      // The scheme folds; the credential does not (RFC 7235).
+      { authorization: 'bearer SEKRIT' },
     ];
     for (const headers of attempts) {
       const res = await app.request('/metrics', { headers });
@@ -84,11 +86,18 @@ describe('GET /metrics', () => {
     }
   });
 
-  it('serves the exposition to the right bearer', async () => {
-    const app = createMetricsRoutes({ metrics: new Metrics(), token: 'sekrit' });
-    const res = await app.request('/metrics', { headers: { authorization: 'Bearer sekrit' } });
-    expect(res.status).toBe(200);
-    expect(res.headers.get('content-type')).toBe(METRICS_CONTENT_TYPE);
-    expect(await res.text()).toContain('analytics_ingest_hits_total 0');
-  });
+  // The auth-scheme is a case-insensitive token (RFC 7235), so every spelling of
+  // `Bearer` is the same scheme — a lowercase one is not unauthorized.
+  it.each(['Bearer', 'bearer', 'BEARER', 'BeArEr'])(
+    'serves the exposition to the right bearer, spelled %s',
+    async (scheme) => {
+      const app = createMetricsRoutes({ metrics: new Metrics(), token: 'sekrit' });
+      const res = await app.request('/metrics', {
+        headers: { authorization: `${scheme} sekrit` },
+      });
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toBe(METRICS_CONTENT_TYPE);
+      expect(await res.text()).toContain('analytics_ingest_hits_total 0');
+    },
+  );
 });

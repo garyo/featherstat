@@ -161,6 +161,17 @@ describe('changes kind', () => {
     ]);
   });
 
+  /** A filter the QUERY carries is the same filter (docs/04 § 3); the `kind`
+   * queries dropped these silently, ranking movers the widget never asked about. */
+  it('takes a filter at the query level exactly as at the request level', () => {
+    const filter = { dim: 'country' as const, op: 'eq' as const, value: 'DE' };
+    const unfiltered = rowsOf(changesRequest({ dims: ['path'] }));
+    const viaRequest = rowsOf(changesRequest({ dims: ['path'] }, { filters: [filter] }));
+    const viaQuery = rowsOf(changesRequest({ dims: ['path'], filters: [filter] }));
+    expect(viaQuery.rows).toEqual(viaRequest.rows);
+    expect(viaQuery.rows).not.toEqual(unfiltered.rows);
+  });
+
   it('declares the metric’s measure — visitors wears distinct, so clients mark ~', () => {
     const entry = rowsOf(changesRequest({ metric: 'visitors' }));
     expect(entry.measures?.current).toEqual({

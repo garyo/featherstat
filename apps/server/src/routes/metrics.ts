@@ -1,5 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import { Hono } from 'hono';
+import { bearerCredential } from '../auth/bearer.ts';
 import { countEvents, type Db, databaseSizeBytes } from '../db/index.ts';
 import type { FlushSummary } from '../pipeline/batcher.ts';
 
@@ -107,8 +108,9 @@ export function createMetricsRoutes({ metrics, db, token }: MetricsRoutesOptions
 }
 
 function bearerMatches(header: string | undefined, token: string): boolean {
-  if (header === undefined || !header.startsWith('Bearer ')) return false;
-  const presented = Buffer.from(header.slice('Bearer '.length));
+  const credential = bearerCredential(header);
+  if (credential === undefined) return false;
+  const presented = Buffer.from(credential);
   const expected = Buffer.from(token);
   return presented.length === expected.length && timingSafeEqual(presented, expected);
 }

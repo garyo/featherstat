@@ -194,11 +194,15 @@ a `scope:'session'` referrer list.
   — the share route assembles its batch from the stored row. Keeping a pivot
   is saving it: the editor opens on the pivoted document, so "Customize/Edit
   → Save" persists it.
-- **Per-widget filters** are already first-class in the schema
-  (`MetricQuery.filters`, merged AND with the view's chips by the compiler).
-  The editor's WidgetSettings carries a filter-row editor (dim/op/value over
-  the shared vocabulary; eq/neq/contains in the UI, the schema accepts more)
-  in its own lazy chunk. A scoped widget wears a **"filtered" badge** in view
+- **Per-widget filters** are first-class in the schema — on **every** query
+  shape, metric and kind alike, merged AND with the view's chips (docs/04 § 3).
+  Two scroll histograms filtered to different countries are two different
+  questions, and the `kind` queries once dropped theirs silently.
+  The editor's WidgetSettings carries a filter-row editor for metric queries
+  (dim/op/value over the shared vocabulary; eq/neq/contains in the UI, the
+  schema accepts more) in its own lazy chunk; a kind query takes its filters
+  from a template or the JSON editor. A scoped widget of either shape wears a
+  **"filtered" badge** in view
   chrome whose tooltip lists its filters in chip words; a contradiction with
   the view's chips renders honestly empty with both in sight.
   `withoutBlockedMetrics` judges blocked combinations **per query** — the

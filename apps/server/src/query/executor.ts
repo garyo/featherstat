@@ -14,6 +14,7 @@ import {
   type Metric,
   type MetricQuery,
   parseDerivedExpr,
+  type Query,
   type QueryErrorResult,
   type QueryRequest,
   type QueryResponse,
@@ -151,6 +152,13 @@ export function executeQueryRequest(
     const horizonTs = rawHorizonTs(db);
 
     const results: QueryResponse['results'] = {};
+    const requestFilters = request.filters ?? [];
+    /** The request's filters AND this query's own — the same merge the metric
+     * path makes in `compileMetricQuery`, so no kind can quietly answer wider. */
+    const filtersFor = (query: Query): FilterNode[] => [
+      ...requestFilters,
+      ...(query.filters ?? []),
+    ];
     for (const query of request.queries) {
       const queryStarted = performance.now();
       if ('kind' in query) {
@@ -160,7 +168,7 @@ export function executeQueryRequest(
           // before the blanket horizon refusal below — its sub-queries mostly
           // ride rollups, which keep answering below the raw floor.
           const entry = runChangesQuery(query, {
-            filters: request.filters ?? [],
+            filters: filtersFor(query),
             windows,
             compareWindows,
             compare,
@@ -175,7 +183,7 @@ export function executeQueryRequest(
         // Session-scoped kinds answer only the primary window: a journey (or a
         // per-page dwell) comparison has no defined shape (docs/04), so
         // `compare` is never fabricated.
-        const filters = request.filters ?? [];
+        const filters = filtersFor(query);
         // Every kind walks raw session/event rows; below the retention horizon
         // that walk would return partial numbers, so it refuses instead.
         const pruned = rawHorizonRefusal(windows, horizonTs);
@@ -217,7 +225,6 @@ export function executeQueryRequest(
       // multi-day custom compare under a distinct count) must pull the whole
       // query to raw, or the two row sets would answer different questions.
       // Goal statements aggregate raw event rows, so any goal forces raw.
-      const requestFilters = request.filters ?? [];
       const planWindows = compareWindows === undefined ? windows : [...windows, ...compareWindows];
       const route = hasGoals
         ? 'raw'

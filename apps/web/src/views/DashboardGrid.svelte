@@ -57,8 +57,7 @@ async function showQuery(spec: WidgetSpec): Promise<void> {
  * in sight.
  */
 function scopeNote(spec: WidgetSpec): string | undefined {
-  const filters =
-    spec.query !== undefined && !('kind' in spec.query) ? spec.query.filters : undefined;
+  const filters = spec.query?.filters;
   if (filters === undefined) return undefined;
   const labels = filters.flatMap(filterLeaves).map(chipLabel);
   return labels.length === 0 ? undefined : labels.join(' · ');
