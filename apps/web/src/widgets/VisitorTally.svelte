@@ -38,6 +38,11 @@ const toggle = (ref: string): void => {
   <div class="visitor-tally" role="list">
     {#each visitors as row (row.ref)}
       {@const isOpen = opened === row.ref}
+      {@const meta = visitorMeta(
+        row,
+        placeOf(row),
+        env.scope === 'all' ? siteNameOf(row.siteId) : undefined,
+      )}
       <div class="visitor-row" role="listitem" class:hl={hover === row.ref}>
         <button
           class="visitor-open"
@@ -50,13 +55,7 @@ const toggle = (ref: string): void => {
           <span class="caret" class:open={isOpen}>▸</span>
           <span class="vdot" style="background: {dotColor(row.color)}"></span>
           <span class="vname">{row.name}</span>
-          <span class="vmeta"
-            >· {visitorMeta(
-              row,
-              placeOf(row),
-              env.scope === 'all' ? siteNameOf(row.siteId) : undefined,
-            )}</span
-          >
+          <span class="vmeta" title={meta}>· {meta}</span>
         </button>
       </div>
       {#if isOpen}
@@ -65,8 +64,9 @@ const toggle = (ref: string): void => {
           {#each trail as step, i (i)}
             <li>
               <span class="ago">{relativeAgo(step.ts, env.now)}</span>
-              {#if step.isEvent}<span class="evt-dot"></span>{/if}<span class="step"
-                >{step.label}</span
+              {#if step.isEvent}<span class="evt-dot"></span>{/if}<span
+                class="step"
+                title={step.label}>{step.label}</span
               >
             </li>
           {/each}

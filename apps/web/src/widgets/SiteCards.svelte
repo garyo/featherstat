@@ -102,7 +102,9 @@ function onKeydown(event: KeyboardEvent, site: number): void {
           <div class="pages">
             {#each pages as page (page.path)}
               <div class="page-row">
-                <span class="p">{page.path}</span>
+                <!-- Card width truncates hardest here; the native title says the
+                     whole path, as it does in every other list (BarRows). -->
+                <span class="p" title={page.path}>{page.path}</span>
                 <span class="micro">
                   <Sparkline data={page.spark} width={52} height={16} micro />
                 </span>

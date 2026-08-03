@@ -3,7 +3,9 @@ import type { Filter, RealtimeEngagement, RealtimeHit } from '@featherstat/share
 import type { AdminClient } from '../lib/admin.ts';
 import { createQueryClient } from '../lib/api.ts';
 import type { AuthState } from '../lib/auth.svelte.ts';
+import { loadChunk, onChunkFailure } from '../lib/chunks.ts';
 import Header from '../lib/components/Header.svelte';
+import StaleBuild from '../lib/components/StaleBuild.svelte';
 import { createDashboardStore } from '../lib/dashboards.svelte.ts';
 import { confirmDashboardSwitch, createEditorMode } from '../lib/editor-mode.svelte.ts';
 import { createLiveStream } from '../lib/live.ts';
@@ -146,13 +148,21 @@ $effect(() => {
   if (current === 'dash') dashboards.load(site, dashRef);
 });
 
+// A tab open across a deploy asks for chunk hashes the server has dropped, and
+// every lazy part of the app below is then dead (lib/chunks.ts). Latched: the
+// build this page is running is gone, so nothing here can un-break it.
+let staleBuild = $state(false);
+onChunkFailure(() => {
+  staleBuild = true;
+});
+
 // Library management is a code-split chunk (docs/05 § What editability costs),
 // loaded on the switcher's "Manage dashboards…" line.
 let Manage = $state<typeof import('../editor/manage.ts').Manage | undefined>(undefined);
 let managing = $state(false);
 async function openManage(): Promise<void> {
-  Manage = (await import('../editor/manage.ts')).Manage;
-  managing = true;
+  Manage = (await loadChunk(() => import('../editor/manage.ts')))?.Manage;
+  if (Manage !== undefined) managing = true;
 }
 
 // Settings (sites CRUD, snippet, password, notifications, diagnostics) is a
@@ -161,8 +171,8 @@ async function openManage(): Promise<void> {
 let SettingsPanel = $state<typeof import('./SettingsView.svelte').default | undefined>(undefined);
 $effect(() => {
   if (current === 'settings' && SettingsPanel === undefined) {
-    void import('./SettingsView.svelte').then((chunk) => {
-      SettingsPanel = chunk.default;
+    void loadChunk(() => import('./SettingsView.svelte')).then((chunk) => {
+      SettingsPanel = chunk?.default;
     });
   }
 });
@@ -172,8 +182,8 @@ $effect(() => {
 let DetailPanel = $state<typeof import('./DetailView.svelte').default | undefined>(undefined);
 $effect(() => {
   if (current === 'detail' && DetailPanel === undefined) {
-    void import('./DetailView.svelte').then((chunk) => {
-      DetailPanel = chunk.default;
+    void loadChunk(() => import('./DetailView.svelte')).then((chunk) => {
+      DetailPanel = chunk?.default;
     });
   }
 });
@@ -359,5 +369,11 @@ const app = $derived<AppEnv>({
       }}
       onclose={() => (managing = false)}
     />
+  {/if}
+
+  <!-- Last, and above everything: a chunk that will not load is the one thing on
+       screen the page cannot resolve for itself. -->
+  {#if staleBuild}
+    <StaleBuild />
   {/if}
 </main>

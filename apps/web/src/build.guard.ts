@@ -26,14 +26,20 @@ import { gzipSync } from 'node:zlib';
  *   pads a chunk that is NOT the entry, and fails the build if this does not
  *   notice. A guard that has never been seen to fail is not known to work.
  *
- * 80 KiB against ~71 KB today: real headroom for ordinary work, tight enough
- * that an accidental import still trips it. Raised from 64 KiB deliberately on
+ * 88 KiB against ~82 KB today: real headroom for ordinary work, tight enough
+ * that an accidental import still trips it. Raised deliberately twice, both
+ * times by the owner rather than to make a change pass — 64 → 80 KiB on
  * 2026-07-30 (Gary: "64k is still a tiny bundle... even the GCE machine we're
- * targeting has decent network IO") — the split-chunk budgets are what keep the
- * editor, settings and share page off this path.
+ * targeting has decent network IO"), and 80 → 88 KiB on 2026-08-03, when the
+ * stale-build notice (lib/chunks.ts) tipped a ceiling ordinary work had already
+ * eaten to within ~50 bytes (Gary: "Don't let tiny size increases stop you from
+ * doing the right thing. The site is plenty fast"). That notice is the one thing
+ * that CANNOT be split off this path: it is what the app shows when splitting
+ * fails. The split-chunk budgets are what keep the editor, settings and share
+ * page off this path.
  */
 
-export const FIRST_LOAD_MAX_GZIP = 81_920;
+export const FIRST_LOAD_MAX_GZIP = 90_112;
 
 export const WEB_ROOT = fileURLToPath(new URL('../', import.meta.url));
 

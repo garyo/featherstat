@@ -61,7 +61,9 @@ const runs = $derived(
     >
       <span class="ago">{relativeAgo(hit.ts, now)}</span>
       <span class="vdot" style="background: {dotColor(hit.visitor.color)}"></span>
-      <span class="vname">{hit.visitor.name}</span>
+      <!-- The alias is there to be read (invariant 8); at 34% of the row it can
+           still ellipsize, and a half-name identifies nobody. -->
+      <span class="vname" title={hit.visitor.name}>{hit.visitor.name}</span>
       {#if spent !== undefined}<span class="vtime" title="time on this page">{spent}</span>{/if}
       {#if hit.country !== undefined}
         {@const flag = flagEmoji(hit.country)}

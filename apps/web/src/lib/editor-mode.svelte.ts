@@ -1,4 +1,5 @@
 import type { Dashboard } from '@featherstat/shared';
+import { loadChunk } from './chunks.ts';
 import type { DashboardStore } from './dashboards.svelte.ts';
 import type { SiteScope } from './state.ts';
 
@@ -6,10 +7,11 @@ import type { SiteScope } from './state.ts';
  * The ONE import site of the code-split editor chunk (docs/05 § What
  * editability costs — the view path ships zero editor code). Everything that
  * needs a piece of it, including the view grids' lazy "show query" modal,
- * loads through here.
+ * loads through here. Undefined means the chunk is unreachable — the shell says
+ * why, so a caller just renders nothing.
  */
-export function loadEditor(): Promise<typeof import('../editor/editor.ts')> {
-  return import('../editor/editor.ts');
+export function loadEditor(): Promise<typeof import('../editor/editor.ts') | undefined> {
+  return loadChunk(() => import('../editor/editor.ts'));
 }
 
 /**
@@ -56,7 +58,9 @@ export function createEditorMode(store: DashboardStore, scope: () => SiteScope):
     },
     async open() {
       chunk = await loadEditor();
-      editing = true;
+      // Without the chunk there is no editor to enter; the stale-build notice
+      // is already up, and flipping this would blank the dashboard behind it.
+      if (chunk !== undefined) editing = true;
     },
     close() {
       editing = false;

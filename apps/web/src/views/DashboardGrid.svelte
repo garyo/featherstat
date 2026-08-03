@@ -45,8 +45,8 @@ let ShowQueryModal = $state<typeof ShowQuery | undefined>(undefined);
 let shownQuery = $state<WidgetSpec | undefined>(undefined);
 
 async function showQuery(spec: WidgetSpec): Promise<void> {
-  ShowQueryModal ??= (await loadEditor()).ShowQuery;
-  shownQuery = spec;
+  ShowQueryModal ??= (await loadEditor())?.ShowQuery;
+  if (ShowQueryModal !== undefined) shownQuery = spec;
 }
 
 /**

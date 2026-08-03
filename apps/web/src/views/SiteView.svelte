@@ -2,6 +2,7 @@
 import type { Filter, Query, QueryRequest } from '@featherstat/shared';
 import type { AdminClient } from '../lib/admin.ts';
 import type { QueryClient } from '../lib/api.ts';
+import { loadChunk } from '../lib/chunks.ts';
 import FilterRow from '../lib/components/FilterRow.svelte';
 import type { DashboardStore } from '../lib/dashboards.svelte.ts';
 import { builtTemplate } from '../lib/dashboards.ts';
@@ -162,7 +163,7 @@ async function save(next: Parameters<typeof mode.save>[0]): Promise<void> {
 // Share links are admin chrome: another code-split chunk, loaded on first use.
 let ShareDialog = $state<typeof import('../share/dialog.ts').ShareDialog | undefined>(undefined);
 async function openShare(): Promise<void> {
-  ShareDialog = (await import('../share/dialog.ts')).ShareDialog;
+  ShareDialog = (await loadChunk(() => import('../share/dialog.ts')))?.ShareDialog;
 }
 
 /** Click-to-filter (docs/05): a repeated chip is a no-op, not a duplicate. */
