@@ -6,7 +6,8 @@ Svelte dashboards. **The design docs in `docs/` are the source of truth** —
 read the relevant one before implementing in an area: 01 requirements ·
 02 architecture/stack · 03 schema/sessionization · 04 APIs · 05 dashboards ·
 06 migration · 07 roadmap · 08 build order (WP0–WP14; both carry a v2
-epilogue) · 09 cutover runbook · 10 the read-only SQLite contract.
+epilogue) · 09 cutover runbook · 10 the read-only SQLite contract ·
+11 installing the tracker (the operator's guide; § 3 is the 404 trap).
 
 The project is named **featherstat** (chosen 2026-07-28). Package scope is
 `@featherstat/*`; the brand mark and favicon sources live in `brand/`
