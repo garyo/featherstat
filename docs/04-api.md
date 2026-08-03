@@ -179,6 +179,12 @@ Props are a native-collector feature only (§ 2).
   `track(action, {category, name, value, props})`,
   `page(url?, title?, props?)` — auto pageviews send no props —
   and scroll depth (below).
+- **Every hit is addressed to the page as REPORTED**, not to `location.href`:
+  once a view is announced under its own URL (an SPA naming its route, or a
+  404 page reporting itself as one canonical `/404`), its pings, read
+  milestone, outlinks, downloads and custom events all carry that same URL.
+  Reading the address bar instead scattered one page view across two paths and
+  left a second, view-less row in path reports for a page nobody visited.
   CORS: `Access-Control-Allow-Origin: *` on collect only — belt and braces,
   since `send.ts` keeps every beacon CORS-safelisted (`text/plain` body,
   `no-cors` fetch fallback) and so never triggers a preflight at all.

@@ -444,3 +444,72 @@ describe('scroll depth', () => {
     expect(pings()[1]?.scroll).toBe(100);
   });
 });
+
+/**
+ * A view announced under its own URL owns every hit that follows it.
+ *
+ * Found in production: a 404 page reporting itself as one canonical `/404`
+ * still emitted its read milestone against the raw address, so the path report
+ * grew a second row — the probed URL, 0 page views — for a page nobody
+ * visited. A scanner sweeping 28 bad paths left 28 of those rows. Pings, the
+ * read milestone, link clicks and custom events must all name the page the
+ * pageview named.
+ */
+describe('hits follow the reported page, not the address bar', () => {
+  const REPORTED = 'https://deep-timeline.org/404';
+
+  it('addresses pings, events and links to the URL page() reported', () => {
+    vi.useFakeTimers();
+    start({ autoPageviews: false });
+    page(REPORTED, 'Not found');
+
+    track('signup', { category: 'account' });
+    document.addEventListener('click', (event) => event.preventDefault());
+    const link = document.createElement('a');
+    link.href = 'https://github.com/garyo/pcons';
+    document.body.append(link);
+    link.click();
+    vi.advanceTimersByTime(15_000);
+
+    const hits = sent();
+    expect(hits[0]).toMatchObject({ type: 'pageview', url: REPORTED });
+    for (const hit of hits) expect(hit.url, String(hit.type)).toBe(REPORTED);
+    // The whole point: nothing carries the address bar's own URL.
+    expect(hits.some((hit) => hit.url === location.href)).toBe(false);
+  });
+
+  it('addresses the exit ping to it too — the hit that closes the page out', () => {
+    vi.useFakeTimers();
+    start({ autoPageviews: false });
+    page(REPORTED, 'Not found');
+    vi.advanceTimersByTime(30_000);
+    window.dispatchEvent(new Event('pagehide'));
+
+    const pings = sent().filter((hit) => hit.type === 'ping');
+    expect(pings.length).toBeGreaterThan(0);
+    for (const ping of pings) expect(ping.url).toBe(REPORTED);
+  });
+
+  it('addresses the read milestone to it, which is the row that leaked', () => {
+    vi.useFakeTimers();
+    Object.defineProperty(window, 'innerHeight', { value: 1_000, configurable: true });
+    Object.defineProperty(document.documentElement, 'scrollHeight', {
+      value: 1_000, // fits the viewport: read the moment it is measured
+      configurable: true,
+    });
+    start({ autoPageviews: false });
+    page(REPORTED, 'Not found');
+
+    const reads = sent().filter((hit) => hit.action === 'read');
+    expect(reads).toHaveLength(1);
+    expect(reads[0]?.url).toBe(REPORTED);
+  });
+
+  it('still uses the real location when no view has named one', () => {
+    // Auto pageviews report `location.href`, so this must not have moved.
+    vi.useFakeTimers();
+    start();
+    vi.advanceTimersByTime(15_000);
+    for (const hit of sent()) expect(hit.url).toBe(location.href);
+  });
+});

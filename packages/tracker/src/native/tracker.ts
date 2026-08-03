@@ -79,6 +79,21 @@ const INPUT_OPTIONS = { capture: true, passive: true } as const;
 
 let runtime: Runtime | undefined;
 
+/**
+ * The page as REPORTED, which is not always the page in the address bar.
+ *
+ * A view announced under its own URL — `page('…/404', …)` for a page that does
+ * not exist, or an SPA naming its route — owns every hit that follows it, and
+ * they must all say so. Reading `location.href` instead scatters one page view
+ * across two paths: the pageview lands on the reported URL while its pings,
+ * read milestone and link clicks land on the raw one, which then shows up in
+ * path reports as a second, view-less row for a page nobody visited.
+ *
+ * Falls back to the real location before the first view is announced, so a hit
+ * that somehow precedes it is still addressed to something real.
+ */
+const viewUrl = (): string => runtime?.url || location.href;
+
 /** Start tracking. Calling it again replaces the running tracker; the result detaches it. */
 export function init(config: TrackerConfig): () => void {
   runtime?.stop();
@@ -116,7 +131,7 @@ export function init(config: TrackerConfig): () => void {
     if (!isExitPingWorthwhile(runtime.lastHitAt, Date.now(), heartbeatMs)) return;
     exited = true;
     measure();
-    emit({ type: 'ping', url: location.href, scroll: reading() });
+    emit({ type: 'ping', url: viewUrl(), scroll: reading() });
   };
   /**
    * Re-read the depth. Cheap enough to run on input, but `documentHeight` forces
@@ -133,7 +148,7 @@ export function init(config: TrackerConfig): () => void {
     // filters and shows up in the live feed exactly like any other (docs/04 § 2).
     if (!runtime.read && runtime.maxScroll >= READ_THRESHOLD_PCT) {
       runtime.read = true;
-      emit({ type: 'event', url: location.href, category: SCROLL_CATEGORY, action: READ_ACTION });
+      emit({ type: 'event', url: viewUrl(), category: SCROLL_CATEGORY, action: READ_ACTION });
     }
   };
   /**
@@ -168,7 +183,7 @@ export function init(config: TrackerConfig): () => void {
     if (target) {
       emit({
         type: target.kind === 'download' ? 'download' : 'outlink',
-        url: location.href,
+        url: viewUrl(),
         targetUrl: target.url,
       });
     }
@@ -180,7 +195,7 @@ export function init(config: TrackerConfig): () => void {
       // content — moves the end away without the reader touching anything, and
       // only a fresh reading notices.
       measure();
-      emit({ type: 'ping', url: location.href, scroll: reading() });
+      emit({ type: 'ping', url: viewUrl(), scroll: reading() });
     }
   }, heartbeatMs);
 
@@ -265,7 +280,7 @@ export function page(
 export function track(action: string, props: EventProps = {}): void {
   emit({
     type: 'event',
-    url: location.href,
+    url: viewUrl(),
     category: props.category ?? DEFAULT_EVENT_CATEGORY,
     action,
     name: props.name,
