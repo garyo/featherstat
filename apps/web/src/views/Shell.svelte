@@ -15,6 +15,7 @@ import { createViewState } from '../lib/state.svelte.ts';
 import {
   type CompareChoice,
   type DashRef,
+  DEFAULT_VIEW_STATE,
   type DetailRef,
   type PivotChoice,
   resolveNav,
@@ -234,6 +235,8 @@ const selectRange = (range: ViewRange): void => view.update({ range });
 const selectCompare = (cmp: CompareChoice): void => view.update({ cmp });
 const selectDash = (dash: DashRef | undefined): void =>
   view.update(resolveNav(view.current, { dash }, siteTab));
+/** The wordmark: every axis back to its default, which serializes to a bare `/`. */
+const selectHome = (): void => view.update(DEFAULT_VIEW_STATE);
 const setFilters = (filters: Filter[]): void => view.update({ filters });
 const setPivots = (pivots: PivotChoice[]): void => view.update({ pivots });
 /** A drill is a history push — back returns to the dashboard that was left. */
@@ -273,6 +276,7 @@ const app = $derived<AppEnv>({
     onselectview={selectView}
     onselectdash={selectDash}
     onmanage={() => void openManage()}
+    onhome={selectHome}
     ontoggletheme={toggleTheme}
     onlogout={logout}
   />

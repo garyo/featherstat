@@ -25,6 +25,8 @@ interface Props {
   onselectdash?: (dash: DashRef) => void;
   /** Opens the library management panel (a code-split chunk). */
   onmanage?: () => void;
+  /** The wordmark: back to the default view state, which is the bare `/` URL. */
+  onhome: () => void;
   ontoggletheme: () => void;
   onlogout: () => void;
 }
@@ -41,6 +43,7 @@ let {
   onselectview,
   onselectdash,
   onmanage,
+  onhome,
   ontoggletheme,
   onlogout,
 }: Props = $props();
@@ -77,13 +80,21 @@ function ondashchange(event: Event): void {
   const ref = parseDashRef(select.value);
   if (ref !== undefined) onselectdash?.(ref);
 }
+
+/** A real href, so a modified click still opens `/` in a tab; a plain one stays
+ * in the app and resets the view state, and asks first like the pickers do. */
+function onhomeclick(event: MouseEvent): void {
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  event.preventDefault();
+  if (guard()) onhome();
+}
 </script>
 
 <header class="top">
-  <div class="wordmark">
+  <a class="wordmark" href="/" onclick={onhomeclick}>
     <span class="fs-mark" role="img" aria-label="featherstat mark"></span>
     featherstat
-  </div>
+  </a>
   <!-- Plain navigation, not a tablist: these change the URL, and there is no
        tabpanel for aria-controls to name. -->
   <!-- Scope x View (docs/05): ONE scope picker, three view tabs. The picker's
