@@ -81,9 +81,11 @@ list to actually hold in your head.
   `epoch·2⁴⁰ + MAX(events.id)`, so an in-place rewrite that skips the bump
   leaves every pre-rewrite ETag answering 304 forever. Current rewriters:
   campaign backfill (including its post-backfill rollup rebuild), prop scrub,
-  site purge. `apps/server/test/guards/epoch.guard.ts` scans the job sources
-  and objects to a rewriter without the bump — or a new job that rewrites
-  events/sessions unregistered; the meta-guard proves the scan binds.
+  site purge, and reconcile's drift repair (bump conditional on having
+  repaired — a clean nightly run costs the caches nothing).
+  `apps/server/test/guards/epoch.guard.ts` scans the job sources and objects
+  to a rewriter without the bump — or a new job that rewrites events/sessions
+  or rebuilds rollup days unregistered; the meta-guard proves the scan binds.
   (Residue: a rewriter outside `src/jobs/` is outside the scan.)
 
 ### Memory — no guard, or only half of one

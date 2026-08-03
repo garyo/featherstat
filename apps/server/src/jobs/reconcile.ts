@@ -1,5 +1,11 @@
 import { DAY_MS, localClock } from '@featherstat/shared';
-import { type Db, listSites, withReadSnapshot, withWriteTransaction } from '../db/index.ts';
+import {
+  bumpDataEpoch,
+  type Db,
+  listSites,
+  withReadSnapshot,
+  withWriteTransaction,
+} from '../db/index.ts';
 import { rebuildRollupDay } from '../rollup/rebuild.ts';
 import { type RollupDiscrepancy, verifyRollupDay } from '../rollup/verify.ts';
 
@@ -59,6 +65,12 @@ export async function runReconcile(
     result.repaired += 1;
     result.cells += drift.length;
   }
+  // A repair means every cached answer touching the day is known-wrong, and a
+  // 304 would keep serving it until unrelated traffic happened to move
+  // MAX(events.id) — on an idle instance, indefinitely. The bump is
+  // conditional, so the nightly no-drift run costs the caches nothing
+  // (invariant 10: every history rewrite moves the epoch).
+  if (result.repaired > 0) withWriteTransaction(db, () => bumpDataEpoch(db));
   return result;
 }
 

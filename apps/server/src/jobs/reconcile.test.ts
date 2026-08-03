@@ -4,6 +4,7 @@ import { binId, event, session, syncRollups } from '../../test/rows.ts';
 import {
   createSite,
   type Db,
+  dataVersion,
   insertEvents,
   openDb,
   stmt,
@@ -54,11 +55,14 @@ describe('runReconcile', () => {
     seedDay(1, yesterdayOf('UTC'), 1);
     seedDay(2, yesterdayOf('Asia/Tokyo'), 2);
 
+    const before = dataVersion(db);
     expect(await runReconcile(db, { now: () => NOW })).toEqual({
       checked: 2,
       repaired: 0,
       cells: 0,
     });
+    // A clean run costs the caches nothing — the epoch moves only on repair.
+    expect(dataVersion(db)).toBe(before);
   });
 
   it('logs a drifted day loudly as a defect and repairs it by rebuilding', async () => {
@@ -80,6 +84,10 @@ describe('runReconcile', () => {
     expect(result.cells).toBeGreaterThan(0);
     expect(logged).toHaveBeenCalledWith(expect.stringContaining('delta-logic BUG'));
     expect(verifyRollupDay(db, 1, yesterday)).toEqual([]);
+    // The repair replaced rows cached ETags were computed against: the epoch
+    // must move or a revalidating client keeps the pre-repair numbers
+    // (invariant 10).
+    expect(dataVersion(db)).toBeGreaterThanOrEqual(2 ** 40);
     logged.mockRestore();
   });
 

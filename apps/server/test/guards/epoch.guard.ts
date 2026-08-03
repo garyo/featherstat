@@ -40,14 +40,24 @@ export function jobSources(dir: string = JOBS_DIR): JobSource[] {
     .map((name) => ({ name, source: readFileSync(join(dir, name), 'utf8') }));
 }
 
-/** The shape of an in-place history rewrite, template-table variants included. */
-export const HISTORY_REWRITE = /\b(?:UPDATE|DELETE\s+FROM)\s+(?:(?:events|sessions)\b|\$\{table\})/;
+/**
+ * The shape of an in-place history rewrite, template-table variants included —
+ * and a rollup rebuild, which rewrites the derived history queries answer from
+ * (reconcile's repair path replaces rows a cached ETag was computed against).
+ */
+export const HISTORY_REWRITE =
+  /\b(?:UPDATE|DELETE\s+FROM)\s+(?:(?:events|sessions)\b|\$\{table\})|\brebuildRollupDay\s*\(/;
 
 /** The call every rewriter must make after its last chunk commits. */
 const EPOCH_BUMP = 'bumpDataEpoch(';
 
 /** The known rewrite entry points. A new one is added HERE, with its bump. */
-export const REWRITERS = ['campaign-backfill.ts', 'prop-scrub.ts', 'site-purge.ts'] as const;
+export const REWRITERS = [
+  'campaign-backfill.ts',
+  'prop-scrub.ts',
+  'site-purge.ts',
+  'reconcile.ts',
+] as const;
 
 /**
  * Files that match the rewrite shape but legitimately never bump. Each needs a
