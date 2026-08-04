@@ -168,14 +168,17 @@ const customCmp = $derived(cmp !== undefined && typeof cmp !== 'string');
   {/each}
   {#each filters as filter, i (i)}
     {@const label = chipLabel(filter, segmentNames)}
+    <!-- An expression chip is far longer than a `Country: US` one, so the label
+         is its own flex item: a bare text node cannot take `text-overflow`, and
+         the whole expression is in `title` because the pill will truncate it. -->
     <button
       class="fchip"
       type="button"
-      title="Remove filter"
+      title="{label} — click to remove"
       aria-label="Remove filter {label}"
       onclick={() => onremovefilter?.(i)}
     >
-      {label}<span class="x" aria-hidden="true">×</span>
+      <span class="fchip-label">{label}</span><span class="x" aria-hidden="true">×</span>
     </button>
   {/each}
   {#if oneditfilters !== undefined}

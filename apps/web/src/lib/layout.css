@@ -170,7 +170,7 @@ select.site-switch {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  max-width: 260px;
+  max-width: 340px;
   border: 1px solid color-mix(in srgb, var(--s1) 35%, transparent);
   background: color-mix(in srgb, var(--s1) 10%, transparent);
   color: var(--ink);
@@ -183,6 +183,14 @@ select.site-switch {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+/* Its own flex item so the ellipsis lands on the label and never on the ×. */
+.fchip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .fchip:hover {

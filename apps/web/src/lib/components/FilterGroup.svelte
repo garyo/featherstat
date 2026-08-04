@@ -1,7 +1,13 @@
 <script lang="ts">
-import { BaseDimensionSchema, type SegmentInfo } from '@featherstat/shared';
+import {
+  BaseDimensionSchema,
+  type Dimension,
+  DimensionSchema,
+  type SegmentInfo,
+} from '@featherstat/shared';
 import { ROW_OPS } from '../filter-builder.ts';
 import type { DraftGroup, DraftPath } from '../filter-tree.ts';
+import { dimLabel } from '../filters.ts';
 import Self from './FilterGroup.svelte';
 
 /**
@@ -43,6 +49,11 @@ let { group, path, segments, errorPath, errorMessage, onedit }: Props = $props()
 
 const dims = BaseDimensionSchema.options;
 const root = $derived(path.length === 0);
+
+/** Whether `dimLabel` can name it — a half-typed dim has no label yet. */
+function knownDim(dim: string): boolean {
+  return DimensionSchema.safeParse(dim).success;
+}
 
 function samePath(a: DraftPath, b: DraftPath | undefined): boolean {
   return b !== undefined && a.length === b.length && a.every((step, i) => step === b[i]);
@@ -125,6 +136,8 @@ const leafEdit = (patch: Omit<Extract<EditIntent, { type: 'set-leaf' }>, 'type'>
           class="field fdim"
           list="filter-dims"
           aria-label="Dimension"
+          title={knownDim(child.row.dim) ? dimLabel(child.row.dim as Dimension) : 'Dimension'}
+          placeholder="dimension"
           value={child.row.dim}
           oninput={(e) =>
             onedit(childPath, leafEdit({ dim: (e.currentTarget as HTMLInputElement).value }))}
@@ -197,8 +210,12 @@ const leafEdit = (patch: Omit<Extract<EditIntent, { type: 'set-leaf' }>, 'type'>
     </button>
   </div>
   {#if root}
+    <!-- `label` is what makes this usable: the values are the vocabulary the URL
+         and the API speak (`ref_domain`), which nobody would guess from
+         "Referrer". A datalist rather than a <select> because `prop:<key>` dims
+         are open-ended — the list suggests, it does not bound. -->
     <datalist id="filter-dims">
-      {#each dims as dim (dim)}<option value={dim}></option>{/each}
+      {#each dims as dim (dim)}<option value={dim} label={dimLabel(dim)}></option>{/each}
     </datalist>
   {/if}
 </div>

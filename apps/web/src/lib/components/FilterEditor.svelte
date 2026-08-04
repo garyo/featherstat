@@ -1,6 +1,18 @@
 <script lang="ts">
-import type { FilterNode, FilterOp, SegmentInfo } from '@featherstat/shared';
+import {
+  BaseDimensionSchema,
+  type FilterNode,
+  type FilterOp,
+  type SegmentInfo,
+} from '@featherstat/shared';
 import { emptyRow } from '../filter-builder.ts';
+import {
+  dimensionReference,
+  OPERATOR_REFERENCE,
+  parseFilterText,
+  printFilterText,
+  type TextError,
+} from '../filter-text.ts';
 import {
   type DraftGroup,
   type DraftPath,
@@ -53,6 +65,43 @@ let saveName = $state('');
 let saving = $state(false);
 let saveError = $state<string | undefined>(undefined);
 
+/**
+ * Text mode is a second way to SAY the expression, never a second place to keep
+ * it: `root` stays the one draft. Entering prints the draft, leaving parses the
+ * text back into it, and a refusal keeps the text on screen so the reader can
+ * fix it rather than losing what they typed.
+ */
+let asText = $state(false);
+let text = $state('');
+let textError = $state<TextError | undefined>(undefined);
+
+function toText(): void {
+  const converted = nodesOf(root);
+  if ('error' in converted) {
+    // The visual editor still holds an unfinished condition; it says where.
+    return;
+  }
+  text = printFilterText(converted.nodes, segmentNames);
+  textError = undefined;
+  asText = true;
+}
+
+/** Text → draft. Answers whether it took, so Apply can refuse to close on junk. */
+function fromText(): boolean {
+  const parsed = parseFilterText(text, segmentIds);
+  if ('error' in parsed) {
+    textError = parsed.error;
+    return false;
+  }
+  root = draftOfNodes(parsed.nodes);
+  textError = undefined;
+  return true;
+}
+
+function toVisual(): void {
+  if (fromText()) asText = false;
+}
+
 const converted = $derived(nodesOf(root));
 const error = $derived('error' in converted ? converted.error : undefined);
 /**
@@ -68,6 +117,9 @@ const preview = $derived.by(() => {
   return chipLabel(rest.length === 0 ? first : { all: converted.nodes }, segmentNames);
 });
 const segmentNames = $derived(new Map((segments ?? []).map((info) => [info.id, info.name])));
+const segmentIds = $derived(new Map((segments ?? []).map((info) => [info.name, info.id])));
+/** Generated from the zod enum, so the reference cannot drift from the parser. */
+const DIMENSIONS = dimensionReference(BaseDimensionSchema.options);
 
 function apply(path: DraftPath, intent: EditIntent): void {
   switch (intent.type) {
@@ -124,7 +176,10 @@ function addSegmentRef(): void {
 }
 
 function submit(): void {
-  if ('nodes' in converted) onapply(converted.nodes);
+  // In text mode the text is the truth, so parse it before reading the draft.
+  if (asText && !fromText()) return;
+  const result = nodesOf(root);
+  if ('nodes' in result) onapply(result.nodes);
 }
 
 async function saveSegment(): Promise<void> {
@@ -138,21 +193,54 @@ async function saveSegment(): Promise<void> {
 </script>
 
 <Modal {title} size="wide" {onclose}>
-  <FilterGroup
-    group={root}
-    path={[]}
-    {segments}
-    errorPath={error?.path}
-    errorMessage={error?.message}
-    onedit={apply}
-  />
+  {#if asText}
+    <textarea
+      class="filter-text"
+      rows="3"
+      spellcheck="false"
+      aria-label="Filter expression"
+      bind:value={text}
+      oninput={() => (textError = undefined)}
+    ></textarea>
+    {#if textError !== undefined}
+      <p class="form-error" role="alert">
+        {textError.message} — at character {textError.index + 1}
+      </p>
+    {/if}
+    <details class="vocab">
+      <summary>What can I write here?</summary>
+      <p><code>and</code> <code>or</code> <code>not</code>, brackets to group, and:</p>
+      <p class="vocab-list">{OPERATOR_REFERENCE.join('  ·  ')}</p>
+      <p>
+        <code>session &lt;dim&gt; …</code> matches the whole visit;
+        <code>segment "name"</code> names a saved one.
+      </p>
+      <p class="vocab-list">
+        {#each DIMENSIONS as entry (entry.dim)}<span class="vocab-dim"
+            ><code>{entry.dim}</code> {entry.label}</span
+          >{/each}
+      </p>
+    </details>
+  {:else}
+    <FilterGroup
+      group={root}
+      path={[]}
+      {segments}
+      errorPath={error?.path}
+      errorMessage={error?.message}
+      onedit={apply}
+    />
 
-  {#if segments !== undefined && segments.length > 0}
-    <button class="btn subtle addseg" type="button" onclick={addSegmentRef}>+ saved segment</button>
+    {#if segments !== undefined && segments.length > 0}
+      <button class="btn subtle addseg" type="button" onclick={addSegmentRef}>+ saved segment</button
+      >
+    {/if}
   {/if}
 
   <p class="widget-note reading">
-    {#if error !== undefined}
+    {#if asText}
+      Applying reads this back into the conditions.
+    {:else if error !== undefined}
       {error.message}
     {:else if preview === undefined || preview === ''}
       No filter — every visit counts.
@@ -180,7 +268,26 @@ async function saveSegment(): Promise<void> {
   {/if}
 
   <div class="foot">
-    <button class="btn subtle" type="button" onclick={() => (root = groupDraft('all'))}>
+    <button
+      class="btn subtle"
+      type="button"
+      disabled={!asText && error !== undefined}
+      title={!asText && error !== undefined
+        ? 'Finish the condition first — text mode shows the whole expression'
+        : undefined}
+      onclick={() => (asText ? toVisual() : toText())}
+    >
+      {asText ? 'Edit as conditions' : 'Edit as text'}
+    </button>
+    <button
+      class="btn subtle"
+      type="button"
+      onclick={() => {
+        root = groupDraft('all');
+        text = '';
+        textError = undefined;
+      }}
+    >
       Clear all
     </button>
     <div class="spacer"></div>
@@ -192,6 +299,41 @@ async function saveSegment(): Promise<void> {
 </Modal>
 
 <style>
+  .filter-text {
+    width: 100%;
+    font: 12px/1.6 ui-monospace, monospace;
+    color: var(--ink);
+    background: var(--page);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 8px 10px;
+    resize: vertical;
+  }
+
+  .vocab {
+    margin-top: 8px;
+    font-size: 11.5px;
+    color: var(--ink-2);
+  }
+
+  .vocab summary {
+    cursor: pointer;
+  }
+
+  .vocab p {
+    margin: 6px 0 0;
+  }
+
+  .vocab-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+  }
+
+  .vocab-dim {
+    white-space: nowrap;
+  }
+
   .reading {
     margin: 10px 0 0;
     font-style: italic;

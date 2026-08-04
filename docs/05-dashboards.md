@@ -206,6 +206,31 @@ group, per-condition **session** scope, and a saved segment as a condition.
   `f=segment:<id>`. Offered to everyone and refused by the server for a
   principal who may not write one, exactly as the ⚙ Settings tab already is.
 
+**Text mode** ("Edit as text") is a second way to *say* the same draft, never a
+second place to keep it — `lib/filter-text.ts` prints the draft and parses it
+back, and `root` stays the one source:
+
+```
+country != "SG" and (path contains "/blog" or path starts "/docs")
+not (segment "Paying customers" or session path = "/pricing")
+```
+
+`not` binds tighter than `and`, which binds tighter than `or`. Values may be
+bare (`country != SG`) unless they collide with a keyword; the printer always
+quotes, so its output is stable and `parse(print(x)) === x` for every tree — the
+property that makes the toggle lossless. Typing is forgiving where reading is
+not: `is` / `is not` / `starts with` all work, and keywords are case-insensitive.
+
+A refusal names the character it stopped at and **keeps the text on screen** —
+losing a half-written expression to a typo is the failure mode this mode would
+otherwise have. Applying from text parses first and refuses to close on junk.
+
+The vocabulary reference under the box is generated from the same zod enums the
+parser validates against (`dimensionReference`, `OPERATOR_REFERENCE`), so it
+cannot drift from what is actually accepted, and it names each dimension —
+nobody guesses `ref_domain` from "Referrer". Values have no completion: the
+editor cannot know a country is `SG` rather than "Singapore". Open work.
+
 **The `f` param** takes one top-level node per entry, in three spellings:
 `dim:op:value` (unchanged, so every link written before the editor still
 parses), `segment:<id>`, and `~<base64url JSON>` for anything the flat spelling
