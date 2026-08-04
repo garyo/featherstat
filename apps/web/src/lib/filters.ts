@@ -1,5 +1,6 @@
 import {
   type BaseDimension,
+  BaseDimensionSchema,
   type Dimension,
   type Filter,
   type FilterNode,
@@ -67,6 +68,18 @@ export const DIM_LABELS: Record<BaseDimension, string> = {
 export function dimLabel(dim: Dimension): string {
   return isPropDimension(dim) ? propKeyOf(dim) : DIM_LABELS[dim];
 }
+
+/**
+ * Every base dimension with the name a reader knows it by — for the pickers
+ * that offer all of them, so there is one list rather than one per picker.
+ *
+ * NOT `DimensionSchema.options`: that schema is a zod **union**, so `.options`
+ * is its two member schemas, and a `{#each}` over it renders "[object Object]"
+ * twice. The Add-widget breakdown picker shipped that way. `prop:` dims are
+ * open-ended and belong to whichever picker can accept free text.
+ */
+export const DIMENSION_CHOICES: readonly { value: BaseDimension; label: string }[] =
+  BaseDimensionSchema.options.map((value) => ({ value, label: DIM_LABELS[value] }));
 
 /** What a chip (or a breakdown row) names the NULL group of a dimension. */
 export const NULL_LABELS: Partial<Record<BaseDimension, string>> = {

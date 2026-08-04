@@ -9,6 +9,7 @@ import {
   type WidgetSpec,
 } from '@featherstat/shared';
 import Modal from '../lib/components/Modal.svelte';
+import { DIMENSION_CHOICES } from '../lib/filters.ts';
 import { METRIC_LABELS } from '../widgets/format.ts';
 import { REGISTRY } from '../widgets/registry.ts';
 import { buildWidget } from './model.ts';
@@ -104,8 +105,8 @@ function add(): void {
         Breakdown
         <select bind:value={dim}>
           <option value="">(none)</option>
-          {#each DimensionSchema.options as dimension (dimension)}
-            <option value={dimension}>{dimension}</option>
+          {#each DIMENSION_CHOICES as choice (choice.value)}
+            <option value={choice.value}>{choice.label}</option>
           {/each}
         </select>
       </label>

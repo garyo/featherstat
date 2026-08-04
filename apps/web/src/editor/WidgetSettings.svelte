@@ -1,7 +1,7 @@
 <script lang="ts">
-import { BaseDimensionSchema, type WidgetSpec } from '@featherstat/shared';
+import type { WidgetSpec } from '@featherstat/shared';
 import Modal from '../lib/components/Modal.svelte';
-import { DIM_LABELS } from '../lib/filters.ts';
+import { DIMENSION_CHOICES } from '../lib/filters.ts';
 import { type SiteSort, siteSortOf } from '../widgets/site-stats.ts';
 
 /**
@@ -39,10 +39,7 @@ $effect(() => {
 
 /** The vocabulary the filter rows offer, read here so the lazy chunk imports
  * no shared module (see WidgetFilters' own note). */
-const FILTER_DIMS = BaseDimensionSchema.options.map((dim) => ({
-  value: dim,
-  label: DIM_LABELS[dim],
-}));
+const FILTER_DIMS = DIMENSION_CHOICES;
 
 const SORTS: { value: SiteSort; label: string }[] = [
   { value: 'traffic', label: 'Traffic (busiest first)' },

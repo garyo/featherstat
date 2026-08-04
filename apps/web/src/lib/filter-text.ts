@@ -5,7 +5,6 @@ import {
   type FilterNode,
   type FilterOp,
 } from '@featherstat/shared';
-import { dimLabel } from './filters.ts';
 
 /**
  * The filter grammar as text (docs/05 § The filter editor), both ways:
@@ -386,11 +385,6 @@ function describe(token: Token): string {
 // ---------------------------------------------------------------------------
 // the vocabulary, for the reference the editor shows
 // ---------------------------------------------------------------------------
-
-/** Every dimension with the name a reader knows it by — generated, never listed. */
-export function dimensionReference(dims: readonly Dimension[]): { dim: string; label: string }[] {
-  return dims.map((dim) => ({ dim, label: dimLabel(dim) }));
-}
 
 /** Every operator as it is written here — generated from the same table. */
 export const OPERATOR_REFERENCE: readonly string[] = [

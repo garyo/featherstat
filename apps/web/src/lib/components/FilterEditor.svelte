@@ -7,7 +7,6 @@ import {
 } from '@featherstat/shared';
 import { emptyRow } from '../filter-builder.ts';
 import {
-  dimensionReference,
   OPERATOR_REFERENCE,
   parseFilterText,
   printFilterText,
@@ -31,7 +30,7 @@ import {
   unwrapAt,
   wrapAt,
 } from '../filter-tree.ts';
-import { chipLabel } from '../filters.ts';
+import { chipLabel, DIMENSION_CHOICES } from '../filters.ts';
 import FilterGroup, { type EditIntent } from './FilterGroup.svelte';
 import Modal from './Modal.svelte';
 
@@ -119,7 +118,7 @@ const preview = $derived.by(() => {
 const segmentNames = $derived(new Map((segments ?? []).map((info) => [info.id, info.name])));
 const segmentIds = $derived(new Map((segments ?? []).map((info) => [info.name, info.id])));
 /** Generated from the zod enum, so the reference cannot drift from the parser. */
-const DIMENSIONS = dimensionReference(BaseDimensionSchema.options);
+const DIMENSIONS = DIMENSION_CHOICES;
 
 function apply(path: DraftPath, intent: EditIntent): void {
   switch (intent.type) {
@@ -216,8 +215,8 @@ async function saveSegment(): Promise<void> {
         <code>segment "name"</code> names a saved one.
       </p>
       <p class="vocab-list">
-        {#each DIMENSIONS as entry (entry.dim)}<span class="vocab-dim"
-            ><code>{entry.dim}</code> {entry.label}</span
+        {#each DIMENSIONS as entry (entry.value)}<span class="vocab-dim"
+            ><code>{entry.value}</code> {entry.label}</span
           >{/each}
       </p>
     </details>

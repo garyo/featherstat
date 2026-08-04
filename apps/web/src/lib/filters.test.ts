@@ -1,4 +1,5 @@
 import {
+  BaseDimensionSchema,
   type Filter,
   type FilterNode,
   filterDepth,
@@ -6,7 +7,14 @@ import {
   MAX_FILTER_NODES,
 } from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
-import { chipLabel, parseFilter, parseFilters, sameFilters, serializeFilter } from './filters.ts';
+import {
+  chipLabel,
+  DIMENSION_CHOICES,
+  parseFilter,
+  parseFilters,
+  sameFilters,
+  serializeFilter,
+} from './filters.ts';
 import { applyViewState, DEFAULT_VIEW_STATE, parseViewState } from './state.ts';
 
 describe('filter serialization', () => {
@@ -183,5 +191,28 @@ describe('chipLabel over an expression', () => {
   it('names a segment when it can and numbers it when it cannot', () => {
     expect(chipLabel({ segment: 3 }, new Map([[3, 'Paying customers']]))).toBe('Paying customers');
     expect(chipLabel({ segment: 3 })).toBe('Segment 3');
+  });
+});
+
+describe('DIMENSION_CHOICES', () => {
+  /**
+   * The Add-widget breakdown picker rendered "[object Object]" twice in
+   * production: it iterated `DimensionSchema.options`, and that schema is a zod
+   * UNION whose `.options` are its two member schemas, not the dimension names.
+   */
+  it('offers every dimension, each with a readable label', () => {
+    expect(DIMENSION_CHOICES).toHaveLength(BaseDimensionSchema.options.length);
+    expect(DIMENSION_CHOICES.map((c) => c.value)).toEqual([...BaseDimensionSchema.options]);
+    for (const choice of DIMENSION_CHOICES) {
+      expect(typeof choice.label, choice.value).toBe('string');
+      expect(choice.label, choice.value).not.toBe('');
+      // The symptom itself, named: an object rendered into a template.
+      expect(String(choice.label)).not.toContain('[object');
+    }
+  });
+
+  it('names the dimension this whole thread was about', () => {
+    expect(DIMENSION_CHOICES).toContainEqual({ value: 'ref_type', label: 'Referrer type' });
+    expect(DIMENSION_CHOICES).toContainEqual({ value: 'ref_domain', label: 'Referrer' });
   });
 });
