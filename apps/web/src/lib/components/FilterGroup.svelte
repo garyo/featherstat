@@ -4,6 +4,7 @@ import {
   type Dimension,
   DimensionSchema,
   type SegmentInfo,
+  variesWithinSession,
 } from '@featherstat/shared';
 import { ROW_OPS } from '../filter-builder.ts';
 import type { DraftGroup, DraftPath } from '../filter-tree.ts';
@@ -53,6 +54,12 @@ const root = $derived(path.length === 0);
 /** Whether `dimLabel` can name it — a half-typed dim has no label yet. */
 function knownDim(dim: string): boolean {
   return DimensionSchema.safeParse(dim).success;
+}
+
+/** Whether the whole-visit choice would change this condition's meaning. */
+function scopeMatters(dim: string): boolean {
+  const parsed = DimensionSchema.safeParse(dim);
+  return parsed.success && variesWithinSession(parsed.data);
 }
 
 function samePath(a: DraftPath, b: DraftPath | undefined): boolean {
@@ -164,18 +171,28 @@ const leafEdit = (patch: Omit<Extract<EditIntent, { type: 'set-leaf' }>, 'type'>
         <!-- One cluster: these three travel together, so a narrow row can never
              leave the × stranded on a line of its own. -->
         <span class="cond-tail">
-          <label class="scope" title="Match any hit in the session, not just this one">
-            <input
-              type="checkbox"
-              checked={child.scope === 'session'}
-              onchange={(e) =>
-                onedit(
-                  childPath,
-                  leafEdit({ session: (e.currentTarget as HTMLInputElement).checked }),
-                )}
-            />
-            session
-          </label>
+          <!-- Offered only where it means something. For a dimension the
+               sessions table carries (country, browser, referrer…) the visit
+               has one value, so both scopes ask the same question and the box
+               would be an invitation to wonder what it does. Still shown when
+               already ticked, so a scope set elsewhere can be seen and undone. -->
+          {#if scopeMatters(child.row.dim) || child.scope === 'session'}
+            <label
+              class="scope"
+              title="Keeps every hit of a visit that had at least one match — “visits that added to cart”, not “the add-to-cart click”."
+            >
+              <input
+                type="checkbox"
+                checked={child.scope === 'session'}
+                onchange={(e) =>
+                  onedit(
+                    childPath,
+                    leafEdit({ session: (e.currentTarget as HTMLInputElement).checked }),
+                  )}
+              />
+              whole visit
+            </label>
+          {/if}
           <button
             class="btn subtle"
             type="button"

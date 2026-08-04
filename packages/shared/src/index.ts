@@ -6,6 +6,7 @@ import {
   type Dimension,
   DimensionSchema,
   FiltersSchema,
+  isPropDimension,
   PROP_KEY_PATTERN,
   SegmentFilterNodeSchema,
 } from './filters.ts';
@@ -260,6 +261,20 @@ export const EVENT_ONLY_DIMENSIONS = [
   'event_name',
   'local_hour',
 ] as const satisfies readonly Dimension[];
+
+/**
+ * Whether `scope: 'session'` on this dimension asks a DIFFERENT question from
+ * the default hit scope — the only case where offering the choice is honest.
+ *
+ * Only the event-only dimensions can differ between hits of one visit (props
+ * with them, since a prop bag rides an event row). Everything the sessions
+ * table carries — country, browser, device, referrer, campaign — has one value
+ * for the whole visit, so "this hit matches" and "some hit of this visit
+ * matches" are the same statement and the scope is a no-op.
+ */
+export function variesWithinSession(dim: Dimension): boolean {
+  return isPropDimension(dim) || (EVENT_ONLY_DIMENSIONS as readonly Dimension[]).includes(dim);
+}
 
 /**
  * Dimensions only the sessions table carries — `EVENT_ONLY_DIMENSIONS`' mirror.

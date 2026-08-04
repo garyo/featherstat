@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
   AdminSiteCreateSchema,
+  BaseDimensionSchema,
   CollectHitSchema,
   DashboardSchema,
+  EVENT_ONLY_DIMENSIONS,
   HitSchema,
   MAX_QUERIES_PER_BATCH,
   NtfyUrlSchema,
   QueryRequestSchema,
+  SESSION_ONLY_DIMENSIONS,
+  variesWithinSession,
 } from './index.ts';
 
 describe('HitSchema', () => {
@@ -199,5 +203,36 @@ describe('NtfyUrlSchema', () => {
     expect(parse('https://ntfy.example.com?x=1')).toBe(false);
     expect(parse('https://ntfy.example.com/#frag')).toBe(false);
     expect(parse('https://ntfy.example.com/base/')).toBe(true);
+  });
+});
+
+describe('variesWithinSession', () => {
+  it('is true for exactly the dimensions the sessions table does not carry', () => {
+    // The rule the filter editor offers "whole visit" by: a dimension the
+    // session row holds has ONE value for the visit, so both scopes agree.
+    for (const dim of EVENT_ONLY_DIMENSIONS) expect(variesWithinSession(dim)).toBe(true);
+    for (const dim of SESSION_ONLY_DIMENSIONS) expect(variesWithinSession(dim)).toBe(false);
+    for (const dim of [
+      'country',
+      'browser',
+      'os',
+      'device_type',
+      'ref_domain',
+      'utm_campaign',
+    ] as const) {
+      expect(variesWithinSession(dim), dim).toBe(false);
+    }
+  });
+
+  it('counts a custom prop, which rides an event row', () => {
+    expect(variesWithinSession('prop:plan')).toBe(true);
+  });
+
+  it('stays exhaustive over the dimension enum', () => {
+    // Not an assertion about the split — an assertion that every dimension has
+    // an answer, so a new one cannot slip through undecided.
+    for (const dim of BaseDimensionSchema.options) {
+      expect(typeof variesWithinSession(dim), dim).toBe('boolean');
+    }
   });
 });

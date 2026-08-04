@@ -187,7 +187,17 @@ The filter row's chips are removals only; building an expression opens the
 editor (`lib/components/FilterEditor.svelte`, code-split, one mount in the shell
 for every view that carries chips, and mounted again by Settings' query objects).
 It says everything the grammar says: nested `all`/`any` groups, a NOT flag on any
-group, per-condition **session** scope, and a saved segment as a condition.
+group, per-condition **whole visit** scope, and a saved segment as a condition.
+
+- **"Whole visit" is offered only where it changes the answer.** `scope:
+  'session'` means "the visit containing this hit has ≥1 non-ping event
+  matching" — so filtering `event_action = add_to_cart` unticked keeps the click
+  and nothing else, while ticked keeps that visit's whole path through the site.
+  That distinction exists only for dimensions the sessions table does NOT carry
+  (`variesWithinSession` in `packages/shared`): for country, browser, device,
+  referrer or campaign the visit has one value and both scopes agree, so the box
+  is hidden rather than offered as a no-op. It reappears when already ticked, so
+  a scope set from text or a URL can always be seen and undone.
 
 - **It edits a draft, not the wire shape.** `lib/filter-tree.ts` holds a
   `DraftNode` tree — a group carries `negated` as a flag rather than a `not`
