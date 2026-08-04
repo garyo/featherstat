@@ -213,7 +213,9 @@ describe('mapVisit', () => {
       NY,
     );
     expect(session?.ref_type).toBe('referral');
-    expect(session?.ref_domain).toBe('blog.example.org');
+    // Canonicalized exactly as ingest would (docs/03 § Attribution).
+    expect(session?.ref_domain).toBe('example.org');
+    expect(session?.ref_domain_raw).toBe('www.blog.example.org');
   });
 
   it('classifies social referrers and passes unknown codes through verbatim', () => {
@@ -228,7 +230,8 @@ describe('mapVisit', () => {
       NY,
     );
     expect(session?.ref_type).toBe('social');
-    expect(session?.ref_domain).toBe('l.facebook.com');
+    expect(session?.ref_domain).toBe('facebook.com');
+    expect(session?.ref_domain_raw).toBe('l.facebook.com');
     expect(session?.browser).toBe('ZZ');
     expect(session?.os).toBe('QQ');
     expect(session?.device_type).toBe('other');

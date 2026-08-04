@@ -20,6 +20,7 @@
     "isbot": "^5.2.1",
     "mmdb-lib": "^3.0.2",
     "mysql2": "^3.23.2",
+    "tldts": "^7.4.10",
     "ua-parser-js": "^1"
   },
   "devDependencies": {

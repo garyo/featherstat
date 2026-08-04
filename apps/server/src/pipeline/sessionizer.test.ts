@@ -357,7 +357,8 @@ describe('attribution', () => {
     expect(session.ref_type).toBe('campaign');
     expect(session.utm_source).toBe('facebook');
     expect(session.utm_medium).toBe('social');
-    expect(session.ref_domain).toBe('l.facebook.com');
+    expect(session.ref_domain).toBe('facebook.com');
+    expect(session.ref_domain_raw).toBe('l.facebook.com');
   });
 
   it('identity-only tracking ids strip from the path but attribute nothing', () => {
@@ -374,6 +375,7 @@ describe('attribution', () => {
     const www = run(s, T0, { referrer: 'https://www.example.com/other' });
     expect(www.session.ref_type).toBe('internal');
     expect(www.session.ref_domain).toBe('example.com');
+    expect(www.session.ref_domain_raw).toBe('www.example.com');
 
     const s2 = new Sessionizer();
     const sub = run(s2, T0, { referrer: 'https://blog.example.com/post' });
@@ -381,12 +383,16 @@ describe('attribution', () => {
   });
 
   it('classifies search and social hosts, matching subdomains of table entries', () => {
+    // ref_domain is the canonical domain (referrers.ts); the classification
+    // still has to survive the collapse, and news.google.com still has to stay
+    // its own row while reading as search.
     const cases: Array<[string, string, string]> = [
       ['https://www.google.com/', 'search', 'google.com'],
       ['https://www.google.co.uk/url?q=x', 'search', 'google.co.uk'],
+      ['https://news.google.com/read/x', 'search', 'news.google.com'],
       ['https://duckduckgo.com/', 'search', 'duckduckgo.com'],
-      ['https://t.co/xyz', 'social', 't.co'],
-      ['https://l.facebook.com/l.php?u=x', 'social', 'l.facebook.com'],
+      ['https://t.co/xyz', 'social', 'twitter.com'],
+      ['https://l.facebook.com/l.php?u=x', 'social', 'facebook.com'],
       ['https://news.ycombinator.com/item?id=1', 'social', 'news.ycombinator.com'],
     ];
     for (const [referrer, type, domain] of cases) {
@@ -399,11 +405,25 @@ describe('attribution', () => {
   it('falls back to referral for unknown hosts and direct for none', () => {
     const referral = run(new Sessionizer(), T0, { referrer: 'https://blog.partner.org/post' });
     expect(referral.session.ref_type).toBe('referral');
-    expect(referral.session.ref_domain).toBe('blog.partner.org');
+    expect(referral.session.ref_domain).toBe('partner.org');
+    expect(referral.session.ref_domain_raw).toBe('blog.partner.org');
 
     const direct = run(new Sessionizer(), T0, {});
     expect(direct.session.ref_type).toBe('direct');
     expect(direct.session.ref_domain).toBeNull();
+    expect(direct.session.ref_domain_raw).toBeNull();
+  });
+
+  it('keeps the received host only when canonicalization changed it', () => {
+    const collapsed = run(new Sessionizer(), T0, { referrer: 'https://go.bsky.app/abc' });
+    expect(collapsed.session.ref_domain).toBe('bsky.app');
+    expect(collapsed.session.ref_domain_raw).toBe('go.bsky.app');
+    // Denormalized onto the event row too, so a raw query never has to join.
+    expect(collapsed.event.ref_domain_raw).toBe('go.bsky.app');
+
+    const already = run(new Sessionizer(), T0, { referrer: 'https://bsky.app/profile/x' });
+    expect(already.session.ref_domain).toBe('bsky.app');
+    expect(already.session.ref_domain_raw).toBeNull();
   });
 
   it('is first-touch: later referrers never rewrite it, rows carry it denormalized', () => {

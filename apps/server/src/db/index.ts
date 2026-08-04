@@ -56,6 +56,8 @@ export interface EventRow {
   target_url?: string | null;
 
   ref_domain?: string | null;
+  /** The received referrer host, ONLY when canonicalization changed it (docs/03 § Attribution). */
+  ref_domain_raw?: string | null;
   ref_type?: string | null;
   utm_source?: string | null;
   utm_medium?: string | null;
@@ -104,6 +106,7 @@ export interface SessionRow {
   exit_path?: string | null;
 
   ref_domain?: string | null;
+  ref_domain_raw?: string | null;
   ref_type?: string | null;
   utm_source?: string | null;
   utm_medium?: string | null;
@@ -132,6 +135,7 @@ const EVENT_NULLS: NullFill<EventRow> = {
   title: null,
   target_url: null,
   ref_domain: null,
+  ref_domain_raw: null,
   ref_type: null,
   utm_source: null,
   utm_medium: null,
@@ -162,6 +166,7 @@ const SESSION_NULLS: NullFill<SessionRow> = {
   entry_path: null,
   exit_path: null,
   ref_domain: null,
+  ref_domain_raw: null,
   ref_type: null,
   utm_source: null,
   utm_medium: null,
@@ -395,7 +400,7 @@ export function deleteSiteAnnotations(db: Db, siteId: number): number {
 const SQL_INSERT_EVENT = `INSERT INTO events (
   site_id, ts, local_date, local_hour, type, visitor_id, session_id, seq,
   hostname, path, title, target_url,
-  ref_domain, ref_type, utm_source, utm_medium, utm_campaign,
+  ref_domain, ref_domain_raw, ref_type, utm_source, utm_medium, utm_campaign,
   utm_source_raw, utm_medium_raw, utm_campaign_raw,
   event_category, event_action, event_name, event_value,
   browser, browser_version, os, device_type, screen, lang,
@@ -403,7 +408,7 @@ const SQL_INSERT_EVENT = `INSERT INTO events (
 ) VALUES (
   @site_id, @ts, @local_date, @local_hour, @type, @visitor_id, @session_id, @seq,
   @hostname, @path, @title, @target_url,
-  @ref_domain, @ref_type, @utm_source, @utm_medium, @utm_campaign,
+  @ref_domain, @ref_domain_raw, @ref_type, @utm_source, @utm_medium, @utm_campaign,
   @utm_source_raw, @utm_medium_raw, @utm_campaign_raw,
   @event_category, @event_action, @event_name, @event_value,
   @browser, @browser_version, @os, @device_type, @screen, @lang,
@@ -414,13 +419,13 @@ const SQL_INSERT_EVENT = `INSERT INTO events (
 const SQL_UPSERT_SESSION = `INSERT INTO sessions (
   id, site_id, visitor_id, started_at, last_seen_at, local_date,
   entry_path, exit_path, pageviews, events, engaged_ms,
-  ref_domain, ref_type, utm_source, utm_medium, utm_campaign,
+  ref_domain, ref_domain_raw, ref_type, utm_source, utm_medium, utm_campaign,
   utm_source_raw, utm_medium_raw, utm_campaign_raw,
   browser, os, device_type, country, region, city
 ) VALUES (
   @id, @site_id, @visitor_id, @started_at, @last_seen_at, @local_date,
   @entry_path, @exit_path, @pageviews, @events, @engaged_ms,
-  @ref_domain, @ref_type, @utm_source, @utm_medium, @utm_campaign,
+  @ref_domain, @ref_domain_raw, @ref_type, @utm_source, @utm_medium, @utm_campaign,
   @utm_source_raw, @utm_medium_raw, @utm_campaign_raw,
   @browser, @os, @device_type, @country, @region, @city
 )

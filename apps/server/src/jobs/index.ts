@@ -12,6 +12,7 @@ import {
 } from './geoip-refresh.ts';
 import { runPropScrubs } from './prop-scrub.ts';
 import { runReconcile } from './reconcile.ts';
+import { runReferrerBackfill } from './referrer-backfill.ts';
 import { runRetention } from './retention.ts';
 import { type Job, type Scheduler, type SchedulerOptions, startScheduler } from './scheduler.ts';
 import { runSitePurges } from './site-purge.ts';
@@ -41,6 +42,11 @@ export { DIGEST_LAST_RUN_KEY, type DigestResult, digestLastRunAt, runDigest } fr
 export { DEFAULT_MMDB_PATH, type Fetcher, refreshGeoipDatabase } from './geoip-refresh.ts';
 export { type PropScrubResult, requestPropScrub, runPropScrubs } from './prop-scrub.ts';
 export { type ReconcileResult, runReconcile } from './reconcile.ts';
+export {
+  type ReferrerBackfillResult,
+  requestReferrerBackfill,
+  runReferrerBackfill,
+} from './referrer-backfill.ts';
 export { RETENTION_DAYS_KEY, retentionDays, runRetention } from './retention.ts';
 export type { Job, Scheduler, SchedulerOptions } from './scheduler.ts';
 export { requestSitePurge, runSitePurges, type SitePurgeResult } from './site-purge.ts';
@@ -152,6 +158,20 @@ export function startJobs(db: Db, options: JobsOptions = {}): Scheduler {
       const { completed, rows } = await runCampaignBackfill(db);
       if (completed && rows > 0) {
         console.log(`campaign-backfill: renormalized utm values on ${rows} row(s)`);
+      }
+    },
+  });
+
+  // Enqueued by migration 101, not by a route: canonicalizing stored referrers
+  // is a one-time upgrade, and this entry is what drains it (the scheduler runs
+  // a never-run job immediately) and what resumes a watermark a crash left.
+  jobs.push({
+    name: 'referrer-backfill',
+    everyMs: DAY_MS,
+    run: async () => {
+      const { completed, rows } = await runReferrerBackfill(db);
+      if (completed && rows > 0) {
+        console.log(`referrer-backfill: canonicalized ref_domain on ${rows} row(s)`);
       }
     },
   });

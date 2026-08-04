@@ -19,6 +19,7 @@ import { plainNormalizer, type UtmNormalizer } from './campaigns.ts';
 import type { DeviceInfo } from './enrich.ts';
 import type { GeoResult } from './geo.ts';
 import { cleanPageUrl, clickIdSource, synthesizedCampaign } from './page-url.ts';
+import { type ReferrerAttribution, referrerAttribution } from './referrers.ts';
 
 export interface SessionizerInput {
   site: Site;
@@ -150,6 +151,7 @@ export class Sessionizer {
       title: hit.title ?? null,
       target_url: hit.targetUrl ?? null,
       ref_domain: row.ref_domain,
+      ref_domain_raw: row.ref_domain_raw ?? null,
       ref_type: row.ref_type,
       utm_source: row.utm_source,
       utm_medium: row.utm_medium,
@@ -347,6 +349,8 @@ function pageParts(raw: string | undefined): PageParts {
 
 interface Attribution {
   ref_domain: string | null;
+  /** As received, ONLY when canonicalization changed it (docs/03 § Attribution). */
+  ref_domain_raw: string | null;
   ref_type: 'direct' | 'search' | 'social' | 'referral' | 'campaign' | 'internal';
   utm_source: string | null;
   utm_medium: string | null;
@@ -356,6 +360,8 @@ interface Attribution {
   utm_medium_raw: string | null;
   utm_campaign_raw: string | null;
 }
+
+type CampaignColumns = Omit<Attribution, 'ref_domain' | 'ref_domain_raw' | 'ref_type'>;
 
 const NO_CAMPAIGN = {
   utm_source: null,
@@ -367,9 +373,9 @@ const NO_CAMPAIGN = {
 };
 
 function classify(hit: Hit, page: PageParts, site: Site, normalizeUtm: UtmNormalizer): Attribution {
-  const host = referrerHost(hit.referrer);
+  const ref = referrerAttribution(hit.referrer, site.domains);
   const campaign = campaignParams(page.url, site.id, normalizeUtm);
-  if (campaign !== null) return { ref_domain: host, ref_type: 'campaign', ...campaign };
+  if (campaign !== null) return { ...refDomain(ref), ref_type: 'campaign', ...campaign };
   // No campaign params, but a click id names its platform: synthesize
   // source/medium the way Matomo/GA treat gclid (docs/03 § Attribution). The
   // click id outranks a referrer too — it is the more specific signal (fbclid
@@ -377,15 +383,20 @@ function classify(hit: Hit, page: PageParts, site: Site, normalizeUtm: UtmNormal
   const clicked = page.url === null ? undefined : clickIdSource(page.url.searchParams);
   if (clicked !== undefined) {
     return {
-      ref_domain: host,
+      ...refDomain(ref),
       ref_type: 'campaign',
       ...synthesizedCampaign(clicked, site.id, normalizeUtm),
     };
   }
-  if (host === null) return { ref_domain: null, ref_type: 'direct', ...NO_CAMPAIGN };
-  if (isInternal(host, site.domains))
-    return { ref_domain: host, ref_type: 'internal', ...NO_CAMPAIGN };
-  return { ref_domain: host, ref_type: knownReferrerType(host) ?? 'referral', ...NO_CAMPAIGN };
+  if (ref.ref_type === undefined) {
+    return { ref_domain: null, ref_domain_raw: null, ref_type: 'direct', ...NO_CAMPAIGN };
+  }
+  return { ...refDomain(ref), ref_type: ref.ref_type, ...NO_CAMPAIGN };
+}
+
+/** The referrer columns alone: a campaign still records where the click came from. */
+function refDomain(ref: ReferrerAttribution): Pick<Attribution, 'ref_domain' | 'ref_domain_raw'> {
+  return { ref_domain: ref.ref_domain, ref_domain_raw: ref.ref_domain_raw };
 }
 
 /** utm_* / mtm_* / pk_* families all accepted, stored under the utm_ columns (docs/03). */
@@ -395,7 +406,7 @@ function campaignParams(
   url: URL | null,
   siteId: number,
   normalizeUtm: UtmNormalizer,
-): Omit<Attribution, 'ref_domain' | 'ref_type'> | null {
+): CampaignColumns | null {
   if (url === null) return null;
   const get = (field: string): string | null => {
     for (const family of CAMPAIGN_FAMILIES) {
@@ -422,94 +433,4 @@ function campaignParams(
     utm_medium_raw: m.raw ?? null,
     utm_campaign_raw: c.raw ?? null,
   };
-}
-
-function referrerHost(referrer: string | undefined): string | null {
-  if (!referrer) return null;
-  try {
-    return stripWww(new URL(referrer).hostname.toLowerCase());
-  } catch {
-    return null;
-  }
-}
-
-function stripWww(host: string): string {
-  return host.startsWith('www.') ? host.slice(4) : host;
-}
-
-function isInternal(host: string, domains: readonly string[]): boolean {
-  return domains.some((entry) => {
-    const domain = stripWww(entry.toLowerCase());
-    return host === domain || host.endsWith(`.${domain}`);
-  });
-}
-
-/** Small built-in search/social table (docs/03): the long tail is not worth a database. */
-const KNOWN_REFERRERS: Record<string, 'search' | 'social'> = {
-  // search
-  'google.com': 'search',
-  'google.co.uk': 'search',
-  'google.de': 'search',
-  'google.fr': 'search',
-  'google.es': 'search',
-  'google.it': 'search',
-  'google.nl': 'search',
-  'google.ca': 'search',
-  'google.com.au': 'search',
-  'google.com.br': 'search',
-  'google.co.in': 'search',
-  'google.co.jp': 'search',
-  'bing.com': 'search',
-  'duckduckgo.com': 'search',
-  'yahoo.com': 'search',
-  'baidu.com': 'search',
-  'yandex.com': 'search',
-  'yandex.ru': 'search',
-  'ecosia.org': 'search',
-  'qwant.com': 'search',
-  'brave.com': 'search',
-  'startpage.com': 'search',
-  'kagi.com': 'search',
-  'ask.com': 'search',
-  'aol.com': 'search',
-  'naver.com': 'search',
-  'seznam.cz': 'search',
-  // social
-  'facebook.com': 'social',
-  'fb.com': 'social',
-  'twitter.com': 'social',
-  'x.com': 'social',
-  't.co': 'social',
-  'instagram.com': 'social',
-  'threads.net': 'social',
-  'linkedin.com': 'social',
-  'lnkd.in': 'social',
-  'reddit.com': 'social',
-  'pinterest.com': 'social',
-  'tiktok.com': 'social',
-  'youtube.com': 'social',
-  'youtu.be': 'social',
-  'news.ycombinator.com': 'social',
-  'mastodon.social': 'social',
-  'bsky.app': 'social',
-  'discord.com': 'social',
-  'discord.gg': 'social',
-  't.me': 'social',
-  'telegram.org': 'social',
-  'whatsapp.com': 'social',
-  'snapchat.com': 'social',
-  'tumblr.com': 'social',
-  'vk.com': 'social',
-  'weibo.com': 'social',
-};
-
-/** Walks host suffixes so `l.facebook.com` matches the `facebook.com` entry. */
-function knownReferrerType(host: string): 'search' | 'social' | undefined {
-  for (let h = host; ; ) {
-    const type = KNOWN_REFERRERS[h];
-    if (type !== undefined) return type;
-    const dot = h.indexOf('.');
-    if (dot === -1) return undefined;
-    h = h.slice(dot + 1);
-  }
 }

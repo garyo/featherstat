@@ -10,6 +10,7 @@ import {
   migrate,
   openDb,
   replaceCampaignAliases,
+  settingKeysWithPrefix,
   V1_IMPORT_SUBCOMMAND,
   withWriteTransaction,
 } from '../../db/index.ts';
@@ -301,7 +302,9 @@ describe('importV1', () => {
     expect(count(target, 'sites')).toBe(0);
     expect(count(target, 'events')).toBe(0);
     expect(count(target, 'sessions')).toBe(0);
-    expect(count(target, 'settings')).toBe(0); // no watermarks either
+    // No watermarks either — counting the importer's own keys, since migrating
+    // a fresh target already leaves settings rows of its own behind.
+    expect(settingKeysWithPrefix(target, 'import:v1:')).toEqual([]);
     target.close();
     source.close();
   });

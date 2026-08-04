@@ -67,7 +67,7 @@ One row per stored hit — pageviews, custom events, outlinks, downloads, and
 | `visitor_id` | 8 bytes, rotates at 00:00 UTC (docs/03 § Visitor identity) — never sum distincts across days |
 | `session_id` · `seq` | visit id and this row's 1-based position in it |
 | `hostname` · `path` · `title` | the page; `target_url` the outlink/download destination |
-| `ref_domain` · `ref_type` | referrer, classified (`'direct'\|'search'\|'social'\|'referral'\|'campaign'\|'internal'`) |
+| `ref_domain` · `ref_type` | referrer, canonicalized to eTLD+1 and classified (`'direct'\|'search'\|'social'\|'referral'\|'campaign'\|'internal'`); `ref_domain_raw` holds the received host ONLY when canonicalization changed it (docs/03 § Attribution) |
 | `utm_source/medium/campaign` | normalized (docs/03 § Campaigns); `*_raw` twins hold the pre-normalization value ONLY when it differed — near-always NULL |
 | `event_category/action/name/value` | the custom-event payload |
 | `browser` · `browser_version` · `os` · `device_type` · `screen` · `lang` | UA-parsed at ingest |

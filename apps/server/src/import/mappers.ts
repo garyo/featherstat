@@ -1,6 +1,7 @@
 import { type CampaignField, localClock } from '@featherstat/shared';
 import type { EventRow, NewSite, SessionRow } from '../db/index.ts';
 import { type NormalizedUtm, plainNormalizer } from '../pipeline/campaigns.ts';
+import { canonicalReferrerDomain } from '../pipeline/referrers.ts';
 
 /**
  * Pure row mappers for the Matomo importer (docs/06): plain Matomo 5 row
@@ -317,6 +318,7 @@ function attribution(
 ): Pick<
   SessionRow,
   | 'ref_domain'
+  | 'ref_domain_raw'
   | 'ref_type'
   | 'utm_source'
   | 'utm_medium'
@@ -329,12 +331,15 @@ function attribution(
     row.referer_type === null || row.referer_type === undefined
       ? null
       : (REFERRER_TYPES[row.referer_type] ?? null);
-  let domain = hostnameOf(row.referer_url ?? '');
-  if (domain !== null) domain = stripWww(domain.toLowerCase());
+  // The shared canonicalization (docs/03 § Attribution): imported rows land in
+  // the same shape ingest writes, so the Referrers report never splits a source
+  // by where its rows came from.
+  let host = hostnameOf(row.referer_url ?? '')?.toLowerCase() ?? null;
   // For plain website referrers Matomo stores the domain as the referrer name.
-  if (domain === null && type === 'referral' && row.referer_name) {
-    domain = stripWww(row.referer_name.toLowerCase());
+  if (host === null && type === 'referral' && row.referer_name) {
+    host = row.referer_name.toLowerCase();
   }
+  const domain = host === null ? null : canonicalReferrerDomain(host);
   // The shared ingest normalizer (docs/03 § Campaigns), alias-free: an import
   // targets a fresh file whose alias table is empty; later alias edits reach
   // these rows through the ordinary backfill.
@@ -346,6 +351,7 @@ function attribution(
   );
   return {
     ref_domain: domain,
+    ref_domain_raw: domain === host ? null : host,
     ref_type: type,
     utm_source: source.normalized,
     utm_medium: medium.normalized,
@@ -396,10 +402,6 @@ function hostnameOf(url: string): string | null {
   } catch {
     return null;
   }
-}
-
-function stripWww(host: string): string {
-  return host.startsWith('www.') ? host.slice(4) : host;
 }
 
 function actionPath(

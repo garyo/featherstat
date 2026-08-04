@@ -35,6 +35,7 @@ CREATE TABLE events (
 
   -- attribution (set on the session's first event, denormalized onto each row)
   ref_domain  TEXT, ref_type TEXT,        -- 'direct'|'search'|'social'|'referral'|'campaign'|'internal'
+  ref_domain_raw TEXT,                    -- received host, ONLY when canonicalization changed it
   utm_source  TEXT, utm_medium TEXT, utm_campaign TEXT,
   -- as received, ONLY when normalization changed it (§ Campaigns) — near-always NULL
   utm_source_raw TEXT, utm_medium_raw TEXT, utm_campaign_raw TEXT,
@@ -84,7 +85,7 @@ CREATE TABLE sessions (
   events        INTEGER NOT NULL DEFAULT 0,
   engaged_ms    INTEGER NOT NULL DEFAULT 0,
   -- first-touch attribution + device + geo, copied from the first event
-  ref_domain TEXT, ref_type TEXT,
+  ref_domain TEXT, ref_type TEXT, ref_domain_raw TEXT,
   utm_source TEXT, utm_medium TEXT, utm_campaign TEXT,
   utm_source_raw TEXT, utm_medium_raw TEXT, utm_campaign_raw TEXT,  -- first-touch, like the columns above
   browser TEXT, os TEXT, device_type TEXT,
@@ -395,6 +396,55 @@ Priority order, evaluated once per session on its first hit:
 4. Referrer matches a small built-in search/social table (~50 entries — the
    long tail is not worth a database) → `search` / `social`.
 5. Any other referrer → `referral`; none → `direct`.
+
+### Referrer canonicalization
+
+`ref_domain` stores the **canonical** domain, not the received hostname
+(`pipeline/referrers.ts`, shared with the importer). Without it `go.bsky.app`
+and `bsky.app` are two rows in the Referrers report, and the reader has to add
+them up in their head.
+
+1. **Collapse to eTLD+1**: the registrable domain under the Public Suffix
+   List, via `tldts` (MIT, bundles the list). One rule fixes `go.bsky.app`,
+   `m.facebook.com`, `ca.search.yahoo.com` and `old./out.reddit.com`, and it
+   subsumes stripping `www.`. ICANN suffixes only — with the PSL's *private*
+   section on, hosts like `vercel.app` are themselves suffixes and would
+   canonicalize to nothing.
+2. **Keep-distinct exemptions**: hosts where the subdomain is a genuinely
+   different source — `news.google.com` is not Google Search,
+   `news.ycombinator.com` is not Y Combinator. A short list, each entry
+   earning its place.
+3. **Aliases**: distinct registrable domains that mean one source, which
+   eTLD+1 cannot reach — `t.co` → `twitter.com`, `fb.me` → `facebook.com`,
+   `youtu.be` → `youtube.com` — plus the reverse-DNS package ids an
+   `android-app://` referrer arrives as (`com.slack` → `slack.com`,
+   `com.google.android.gm` → `gmail.com`, where eTLD+1 would answer
+   `android.gm`). Two dozen entries, hand-written: MIT forbids taking
+   Matomo's lists (GPL-3) or Plausible's (AGPL); Snowplow's `referer-parser`
+   (Apache-2.0) is compatible and was inspiration only.
+4. **Preserve the original**: the received host lands in `ref_domain_raw`
+   **only when it differs** from what was stored.
+
+Classification (steps 4–5 above) reads the canonical domain, so an alias
+reaches its search/social entry and a keep-distinct host still finds its
+parent's (`news.google.com` stays its own row and still reads as `search`).
+Own-domain matching reads the **received** host instead: a site registered as
+`docs.example.com` must recognize its own pages, whose eTLD+1 is not the
+registered domain.
+
+**Canonicalization rewrites history.** Migration 101 adds `ref_domain_raw`
+and enqueues `jobs/referrer-backfill.ts` — the campaign-backfill shape:
+a settings watermark per table, 5 000-row write transactions sharing the lock
+with ingest, resumed at boot after a crash. Each row is re-derived from
+**`COALESCE(ref_domain_raw, ref_domain)`** through the same function ingest
+runs, which is what makes it idempotent under any sequence of runs or edits to
+the tables above. `ref_type` follows the new host on rows carrying a
+host-derived type (`search` / `social` / `referral`), so an alias that reaches
+a search/social entry reclassifies its history too; `campaign` and `internal`
+rows keep their type, because those come from the landing URL and the site's
+own domains and neither is on the row. A completed backfill that changed any
+row **rebuilds all rollups** (`ref_domain` and `ref_type` are both rolled
+dimensions) and **bumps the data epoch** so every pre-rewrite ETag expires.
 
 ## Campaigns
 

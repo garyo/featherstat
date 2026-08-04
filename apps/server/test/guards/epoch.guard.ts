@@ -54,6 +54,7 @@ const EPOCH_BUMP = 'bumpDataEpoch(';
 /** The known rewrite entry points. A new one is added HERE, with its bump. */
 export const REWRITERS = [
   'campaign-backfill.ts',
+  'referrer-backfill.ts',
   'prop-scrub.ts',
   'site-purge.ts',
   'reconcile.ts',
