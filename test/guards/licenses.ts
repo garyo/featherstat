@@ -64,6 +64,9 @@ const BUNDLED_DEV_DEPENDENCIES: readonly string[] = ['svelte'];
  */
 const BUILD_ONLY_DEV_DEPENDENCIES: readonly string[] = [
   '@biomejs/biome',
+  // Drives a browser against the built app in `test/e2e`; Apache-2.0, and none
+  // of it is bundled — the SPA never imports it.
+  '@playwright/test',
   '@sveltejs/vite-plugin-svelte',
   '@types/better-sqlite3',
   '@types/node',

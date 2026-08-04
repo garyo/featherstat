@@ -11,3 +11,7 @@ data/
 .env
 .env.*
 docs/*.html
+
+# Playwright (test/e2e)
+test-results/
+playwright-report/

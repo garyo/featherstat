@@ -21,6 +21,8 @@ bun install
 bun run ci           # every gate: check, build, test, bench — green before every push
 bun run check        # biome lint+format check, then tsc — green before every commit
 bun run test         # vitest, all packages
+bun run e2e          # Playwright over the built app (test/e2e); NOT in `ci`
+bun run e2e:install  # once per clone: playwright install chromium
 bun run bench        # replay perf budget (runs Node, see below)
 bun run fix          # biome auto-fix
 bun run --cwd apps/server seed  # seed data/dev.db (90 days × 6 sites, deterministic)
@@ -165,3 +167,13 @@ advisory.
 The gates run themselves if you enable the hooks once per clone:
 `git config core.hooksPath .githooks` (pre-commit → `check`, pre-push → `ci`).
 `.github/workflows/ci.yml` runs the same `bun run ci` on push and PR.
+
+**`bun run e2e` is deliberately outside all of that** (`test/e2e`, ~25 s): run it
+after touching anything the browser renders, and wire it into CI when there is
+one. It is out of `ci` so the pre-push gate stays fast, which is what keeps it
+being run at all. It exists because `ci` was green through every UI defect of
+the v2 bake — nothing type-checks how a template stringifies a value, so the
+gap was never unit coverage but that **nothing opened the app**. Its
+`nonsense.spec.ts` sweep — no screen may render `[object Object]`, `undefined`,
+`NaN` or `null` — is the cheapest guard here and the one that pays: it catches a
+whole class on screens nobody wrote an assertion for.
