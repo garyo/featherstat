@@ -1,6 +1,7 @@
 import {
   allSitesTemplate,
   type Filter,
+  type FilterNode,
   MAX_QUERIES_PER_BATCH,
   overviewTemplate,
   type QueryResponse,
@@ -248,6 +249,36 @@ describe('withoutBlockedMetrics', () => {
       'avg_engagement',
       'bounce_rate',
     ]);
+  });
+
+  it('reaches the leaves of an expression, not just a bare chip', () => {
+    // A view chip may be a whole tree now. The event-level dim buried in the
+    // `any` still blocks the session metrics — reading `.dim` off the node
+    // (which a group has not got) silently blocked nothing at all.
+    const grouped: FilterNode[] = [
+      {
+        any: [
+          { dim: 'path', op: 'eq', value: '/x' },
+          { dim: 'path', op: 'eq', value: '/y' },
+        ],
+      },
+    ];
+    const trimmed = withoutBlockedMetrics(queries, grouped);
+    const kpis = trimmed.find((q) => q.id === 'kpis');
+    if (kpis === undefined || 'kind' in kpis) throw new Error('metric query expected');
+    expect(kpis.metrics).toEqual(['visitors', 'pageviews', 'visits']);
+  });
+
+  it('lets a session-scoped leaf inside a tree block nothing, as the compiler reads it', () => {
+    const scoped: FilterNode[] = [
+      { not: { dim: 'path', op: 'eq', value: '/x', scope: 'session' } },
+    ];
+    const trimmed = withoutBlockedMetrics(queries, scoped);
+    const kpis = trimmed.find((q) => q.id === 'kpis');
+    if (kpis === undefined || 'kind' in kpis) throw new Error('metric query expected');
+    const unfiltered = queries.find((q) => q.id === 'kpis');
+    if (unfiltered === undefined || 'kind' in unfiltered) throw new Error('metric query expected');
+    expect(kpis.metrics).toEqual(unfiltered.metrics);
   });
 
   it('treats a prop:<key> filter as event-level, exactly as the compiler does', () => {

@@ -1,8 +1,8 @@
 <script lang="ts">
 import { BaseDimensionSchema, type WidgetSpec } from '@featherstat/shared';
+import Modal from '../lib/components/Modal.svelte';
 import { DIM_LABELS } from '../lib/filters.ts';
 import { type SiteSort, siteSortOf } from '../widgets/site-stats.ts';
-import Modal from './Modal.svelte';
 
 /**
  * Per-widget options (docs/05 edit mode). Every change commits to the draft

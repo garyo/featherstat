@@ -1,8 +1,8 @@
 <script lang="ts">
 import type { AdminClient } from '../lib/admin.ts';
+import Modal from '../lib/components/Modal.svelte';
 import type { LibraryEntry } from '../lib/dashboards.ts';
 import type { DashRef, SiteScope } from '../lib/state.ts';
-import Modal from './Modal.svelte';
 
 /**
  * The dashboard library's management panel (docs/05 § The dashboard library):

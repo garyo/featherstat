@@ -7,7 +7,6 @@ import {
   DimensionSchema,
   FiltersSchema,
   PROP_KEY_PATTERN,
-  type SegmentFilterNode,
   SegmentFilterNodeSchema,
 } from './filters.ts';
 import { GoalMetricRefSchema } from './goals.ts';
@@ -830,12 +829,13 @@ export const SegmentCreateSchema = z.object({
 export type SegmentCreate = z.infer<typeof SegmentCreateSchema>;
 
 /** `GET /api/segments` row — everything a client needs to offer the segment. */
-export interface SegmentInfo {
-  id: number;
-  name: string;
-  filter: SegmentFilterNode;
-  updatedAt: number;
-}
+export const SegmentInfoSchema = z.object({
+  id: z.number().int().positive(),
+  name: z.string(),
+  filter: SegmentFilterNodeSchema,
+  updatedAt: z.number(),
+});
+export type SegmentInfo = z.infer<typeof SegmentInfoSchema>;
 
 // ---------------------------------------------------------------------------
 // Annotations (docs/04 § 3, § 5) — operator notes pinned to a moment, listed

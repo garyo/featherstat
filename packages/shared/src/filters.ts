@@ -156,6 +156,8 @@ export type FilterNode =
 /** A leaf is depth 1; each wrapper adds one. Four is a lot of nesting already. */
 export const MAX_FILTER_DEPTH = 4;
 export const MAX_FILTER_LEAVES = 32;
+/** How many top-level nodes the implicit AND may hold. */
+export const MAX_FILTER_NODES = 16;
 
 export const SegmentFilterNodeSchema: z.ZodType<SegmentFilterNode> = z.lazy(() =>
   z.union([
@@ -176,10 +178,11 @@ export const FilterNodeSchema: z.ZodType<FilterNode> = z.lazy(() =>
   ]),
 );
 
-function nodeDepth(node: FilterNode): number {
-  if ('all' in node) return 1 + Math.max(...node.all.map(nodeDepth));
-  if ('any' in node) return 1 + Math.max(...node.any.map(nodeDepth));
-  if ('not' in node) return 1 + nodeDepth(node.not);
+/** A leaf is depth 1; each `all`/`any`/`not` wrapper adds one. */
+export function filterDepth(node: FilterNode): number {
+  if ('all' in node) return 1 + Math.max(...node.all.map(filterDepth));
+  if ('any' in node) return 1 + Math.max(...node.any.map(filterDepth));
+  if ('not' in node) return 1 + filterDepth(node.not);
   return 1;
 }
 
@@ -213,11 +216,11 @@ export function filterDims(node: FilterNode): Set<Dimension> {
  */
 export const FiltersSchema = z
   .array(FilterNodeSchema)
-  .max(16)
+  .max(MAX_FILTER_NODES)
   .superRefine((nodes, ctx) => {
     let leaves = 0;
     for (const node of nodes) {
-      if (nodeDepth(node) > MAX_FILTER_DEPTH) {
+      if (filterDepth(node) > MAX_FILTER_DEPTH) {
         ctx.addIssue({
           code: 'custom',
           message: `a filter tree nests at most ${MAX_FILTER_DEPTH} levels`,

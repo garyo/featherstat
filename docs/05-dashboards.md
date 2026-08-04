@@ -38,7 +38,7 @@ so eleven admin surfaces stay eleven small panels instead of one wall:
 | --- | --- |
 | **Sites & tracking** | Sites CRUD, the tracking snippet, password change. |
 | **Access** | API tokens and viewers — the two read-only principals (04 § 5). Both mints show their secret (the bearer token, the `/invite/…` magic link) exactly once, with a copy button and a "you will not see this again" line; the lists that follow show only names, scopes and dates. |
-| **Query objects** | Segments, derived metrics, goals — the stored vocabularies queries reference as `{segment: id}`, `d:<name>`, `goal:<id>:…`. Segments and goals share a filter editor: rows of dim/op/value that AND together, with an "Edit as JSON" mode for the full grammar (any/not nesting, session scope). The row mode round-trips only trees it can represent — anything richer opens in JSON, never silently flattened. |
+| **Query objects** | Segments, derived metrics, goals — the stored vocabularies queries reference as `{segment: id}`, `d:<name>`, `goal:<id>:…`. Segments and goals share the filter editor of § The filter editor: rows of dim/op/value that AND together, an "Edit as JSON" mode, and **Build visually…**, which opens the same expression editor the dashboard filter row does. The row mode round-trips only trees it can represent — anything richer opens in JSON, never silently flattened. A stored filter carries no segment ref (04 § 3), so no segment picker is offered here. |
 | **Campaigns** | The registry (`campaign_status` reads it at query time), the alias lists (per-site and install-wide site 0; saving is a full-list replace and warns that history is rewritten), and a client-only UTM link builder that suggests registered campaigns and flags values ingest would normalize (via the shared `canonicalUtmValue`). |
 | **Notifications** | The ntfy endpoint + per-hit rules, and the alert rules evaluated hourly — together because both deliver through the same endpoint. |
 | **Data** | Prop governance (key stats, clamp counters, and a two-step delete that says it scrubs history), annotations, storage diagnostics. |
@@ -180,6 +180,37 @@ a `scope:'session'` referrer list.
 - Per-site only (like Journeys): entering at All-sites coerces to the
   last-visited site. Back is `history.back()` — a drill pushes history. The
   filter icon on a drillable row keeps click-to-filter reachable.
+
+### The filter editor
+
+The filter row's chips are removals only; building an expression opens the
+editor (`lib/components/FilterEditor.svelte`, code-split, one mount in the shell
+for every view that carries chips, and mounted again by Settings' query objects).
+It says everything the grammar says: nested `all`/`any` groups, a NOT flag on any
+group, per-condition **session** scope, and a saved segment as a condition.
+
+- **It edits a draft, not the wire shape.** `lib/filter-tree.ts` holds a
+  `DraftNode` tree — a group carries `negated` as a flag rather than a `not`
+  wrapper, every node carries an `id` so editing one condition cannot steal
+  focus from another, and a half-typed condition is legal. `nodesOf` is the one
+  place a draft becomes `FilterNode[]`; it refuses (naming the path) rather than
+  dropping. Removing a group's last condition removes the group; a group opened
+  with "+ group" and left empty is unfinished work and says so.
+- **The caps are the editor's, not the server's** (`MAX_FILTER_DEPTH`,
+  `MAX_FILTER_LEAVES`, `MAX_FILTER_NODES` in `packages/shared`): a tree the UI
+  offered to build must never come back as a 400.
+- **The plain-English reading** under the editor is `chipLabel` over the whole
+  expression as one node — labelling each top-level node separately and joining
+  on "and" loses the parentheses that make `a and (b or c)` unambiguous.
+- **Naming an expression stores it as a segment**, and the URL can then carry
+  `f=segment:<id>`. Offered to everyone and refused by the server for a
+  principal who may not write one, exactly as the ⚙ Settings tab already is.
+
+**The `f` param** takes one top-level node per entry, in three spellings:
+`dim:op:value` (unchanged, so every link written before the editor still
+parses), `segment:<id>`, and `~<base64url JSON>` for anything the flat spelling
+cannot say — a group, or a leaf naming `scope`. Everyday filters stay legible in
+a shared URL; only the expressions that need it go opaque.
 
 ### Pivots & per-widget filters
 

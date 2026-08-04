@@ -1,7 +1,7 @@
 <script lang="ts">
 import { isQueryError, type WidgetSpec, widgetQueries } from '@featherstat/shared';
+import Modal from '../lib/components/Modal.svelte';
 import type { WidgetData } from '../widgets/types.ts';
-import Modal from './Modal.svelte';
 
 /**
  * "Show query" (docs/05 § Widgets): the JSON slice this widget contributed to

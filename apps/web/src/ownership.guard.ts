@@ -37,6 +37,19 @@ export interface Rendering {
 
 export const RENDERINGS: readonly Rendering[] = [
   {
+    what: 'a filter condition row',
+    marks: ['class="cond-row"'],
+    owners: ['lib/components/FilterGroup.svelte'],
+    instead:
+      'render <FilterEditor>, which renders <FilterGroup> — a second dim/op/value row is a second filter grammar',
+  },
+  {
+    what: 'the modal overlay',
+    marks: ['class="modal"', 'class="back"'],
+    owners: ['lib/components/Modal.svelte'],
+    instead: 'render <Modal> and pass it children',
+  },
+  {
     what: 'a live-feed row',
     marks: ['class="feed-row"'],
     owners: ['widgets/FeedRows.svelte'],

@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { Filter } from '@featherstat/shared';
+import type { FilterNode } from '@featherstat/shared';
 import { chipLabel } from '../filters.ts';
 import {
   type CompareChoice,
@@ -19,12 +19,16 @@ interface Props {
    * scope is never hidden, not removable because leaving IS removing them. */
   locked?: readonly string[];
   /** Active dimension filters, as removable chips (docs/05). */
-  filters?: readonly Filter[];
+  filters?: readonly FilterNode[];
+  /** Names for the segment refs among them, so a chip reads as its segment. */
+  segmentNames?: ReadonlyMap<number, string>;
   /** Muted trailing line — the resolved window and compare mode. */
   note?: string;
   onselect: (range: ViewRange) => void;
   oncompare?: (cmp: CompareChoice) => void;
   onremovefilter?: (index: number) => void;
+  /** Opens the expression editor; omitted leaves the row chips-only. */
+  oneditfilters?: () => void;
   /** Present after a failed batch: re-runs it even though the view state didn't change. */
   onretry?: () => void;
 }
@@ -34,10 +38,12 @@ let {
   cmp,
   locked = [],
   filters = [],
+  segmentNames,
   note,
   onselect,
   oncompare,
   onremovefilter,
+  oneditfilters,
   onretry,
 }: Props = $props();
 
@@ -161,7 +167,7 @@ const customCmp = $derived(cmp !== undefined && typeof cmp !== 'string');
     </span>
   {/each}
   {#each filters as filter, i (i)}
-    {@const label = chipLabel(filter)}
+    {@const label = chipLabel(filter, segmentNames)}
     <button
       class="fchip"
       type="button"
@@ -172,6 +178,11 @@ const customCmp = $derived(cmp !== undefined && typeof cmp !== 'string');
       {label}<span class="x" aria-hidden="true">×</span>
     </button>
   {/each}
+  {#if oneditfilters !== undefined}
+    <button class="preset" type="button" onclick={oneditfilters}>
+      {filters.length === 0 ? '+ Filter' : 'Edit filter'}
+    </button>
+  {/if}
   {#if note !== undefined}<span class="compare-note">{note}</span>{/if}
   {#if onretry !== undefined}<button class="retry" type="button" onclick={onretry}>Retry</button>{/if}
 </div>

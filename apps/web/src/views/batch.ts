@@ -2,7 +2,7 @@ import {
   type Dashboard,
   EVENT_ONLY_DIMENSIONS,
   EVENT_ONLY_METRICS,
-  type Filter,
+  type FilterNode,
   filterLeaves,
   isPropDimension,
   type Query,
@@ -65,11 +65,15 @@ const EVENT_METRICS = new Set<string>(EVENT_ONLY_METRICS);
  */
 export function withoutBlockedMetrics(
   queries: readonly Query[],
-  filters: readonly Filter[],
+  filters: readonly FilterNode[],
 ): Query[] {
+  // A view chip may now be a whole expression, so reach its leaves the same way
+  // the per-query filters below are reached — a `not`/`any` group hides
+  // event-only dimensions that block session metrics just as a bare leaf does.
   const viewDims = filters
-    .filter((filter) => filter.scope !== 'session')
-    .map((filter) => filter.dim);
+    .flatMap(filterLeaves)
+    .filter((leaf) => leaf.scope !== 'session')
+    .map((leaf) => leaf.dim);
   return queries.map((query) => {
     if ('kind' in query) return query;
     const dims = [...viewDims];

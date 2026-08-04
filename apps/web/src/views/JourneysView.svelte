@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { Filter, QueryRequest } from '@featherstat/shared';
+import type { FilterNode, QueryRequest } from '@featherstat/shared';
 import type { QueryClient } from '../lib/api.ts';
 import FilterRow from '../lib/components/FilterRow.svelte';
 import { createRevalidator, type LiveStream } from '../lib/live.ts';
@@ -27,9 +27,12 @@ interface Props {
   /** The shell's clock; the site's own rollover is part of this view's state. */
   now?: number;
   range: ViewRange;
-  filters: Filter[];
+  filters: FilterNode[];
+  segmentNames?: ReadonlyMap<number, string>;
   onselectrange: (range: ViewRange) => void;
-  onfilters: (filters: Filter[]) => void;
+  onfilters: (filters: FilterNode[]) => void;
+  /** Opens the shared expression editor (docs/05 § Filters). */
+  oneditfilters?: () => void;
 }
 
 let {
@@ -39,8 +42,10 @@ let {
   timezone,
   range,
   filters,
+  segmentNames,
   onselectrange,
   onfilters,
+  oneditfilters,
   now = Date.now(),
 }: Props = $props();
 
@@ -145,6 +150,8 @@ const note = $derived.by(() => {
   <FilterRow
     {range}
     {filters}
+  {segmentNames}
+  {oneditfilters}
     {note}
     onselect={onselectrange}
     onremovefilter={removeFilter}

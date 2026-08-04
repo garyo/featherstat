@@ -8,9 +8,9 @@ import {
   VizTypeSchema,
   type WidgetSpec,
 } from '@featherstat/shared';
+import Modal from '../lib/components/Modal.svelte';
 import { METRIC_LABELS } from '../widgets/format.ts';
 import { REGISTRY } from '../widgets/registry.ts';
-import Modal from './Modal.svelte';
 import { buildWidget } from './model.ts';
 
 /**

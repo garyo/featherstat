@@ -1,14 +1,16 @@
 <script lang="ts">
 import type { Snippet } from 'svelte';
 
-/** The editor's one overlay grammar: backdrop click, ×, or Escape closes. */
+/** The app's one overlay grammar: backdrop click, ×, or Escape closes. */
 interface Props {
   title: string;
+  /** `wide` for panels with rows of controls — a confirm width wraps them. */
+  size?: 'default' | 'wide';
   onclose: () => void;
   children: Snippet;
 }
 
-let { title, onclose, children }: Props = $props();
+let { title, size = 'default', onclose, children }: Props = $props();
 
 function onkeydown(event: KeyboardEvent): void {
   if (event.key === 'Escape') onclose();
@@ -19,7 +21,7 @@ function onkeydown(event: KeyboardEvent): void {
 
 <div class="modal">
   <button class="back" type="button" aria-label="Close" onclick={onclose}></button>
-  <div class="panel" role="dialog" aria-modal="true" aria-label={title}>
+  <div class="panel" class:wide={size === 'wide'} role="dialog" aria-modal="true" aria-label={title}>
     <div class="head">
       <h2>{title}</h2>
       <button class="icon-btn" type="button" aria-label="Close" onclick={onclose}>×</button>
@@ -45,6 +47,10 @@ function onkeydown(event: KeyboardEvent): void {
     border: 0;
     background: color-mix(in srgb, var(--ink) 32%, transparent);
     cursor: default;
+  }
+
+  .panel.wide {
+    width: min(780px, 100%);
   }
 
   .panel {

@@ -1,8 +1,17 @@
 <script lang="ts">
-import type { DerivedMetricInfo, GoalInfo, SegmentInfo, SiteInfo } from '@featherstat/shared';
+import {
+  type DerivedMetricInfo,
+  type FilterNode,
+  filterSegmentRefs,
+  type GoalInfo,
+  type SegmentFilterNode,
+  type SegmentInfo,
+  type SiteInfo,
+} from '@featherstat/shared';
 import type { AdminClient } from '../../lib/admin.ts';
 import { type PanelFailure, panelFailure } from '../../lib/admin-failure.ts';
 import { adminObjects } from '../../lib/admin-objects.ts';
+import FilterEditor from '../../lib/components/FilterEditor.svelte';
 import {
   describeFilter,
   emptyRow,
@@ -47,6 +56,76 @@ const freshFilter = (): FilterDraft => ({
   advanced: false,
   error: undefined,
 });
+
+/**
+ * The visual expression editor (`lib/components/FilterEditor.svelte`) over one
+ * of these drafts — the same component the dashboard filter row opens, so
+ * any/not/session are buildable here rather than only typeable as JSON.
+ *
+ * It reads and writes the draft through the JSON mode, which is already the
+ * draft's full-grammar representation: no third spelling of a filter, and the
+ * rows mode still round-trips whatever it can represent.
+ */
+let visualOpen = $state<'segment' | 'goal' | undefined>(undefined);
+let visualNodes = $state<FilterNode[]>([]);
+
+function openVisual(which: 'segment' | 'goal'): void {
+  const draft = which === 'segment' ? seg : goal;
+  draft.error = undefined;
+  visualNodes = nodesOfDraft(draft, which);
+  visualOpen = which;
+}
+
+/** The draft as wire nodes, from whichever mode is showing; junk opens empty. */
+function nodesOfDraft(draft: FilterDraft, which: 'segment' | 'goal'): FilterNode[] {
+  if (!draft.advanced) {
+    const leaves = leavesOf(draft.rows);
+    return 'error' in leaves ? [] : leaves.leaves;
+  }
+  if (which === 'goal') {
+    const parsed = parseFilterListJson(draft.json);
+    return 'error' in parsed ? [] : parsed.nodes;
+  }
+  const parsed = parseFilterJson(draft.json);
+  return 'error' in parsed ? [] : [parsed.node];
+}
+
+/** Applying writes back as JSON — the mode that can hold anything it built. */
+function applyVisual(built: FilterNode[]): void {
+  const which = visualOpen;
+  if (which === undefined) return;
+  const draft = which === 'segment' ? seg : goal;
+  const nodes = storable(built);
+  if (nodes === undefined) {
+    draft.error = 'a stored filter cannot reference a segment';
+    visualOpen = undefined;
+    return;
+  }
+  const [first, ...rest] = nodes;
+  const value: SegmentFilterNode | SegmentFilterNode[] =
+    which === 'goal' ? nodes : rest.length === 0 && first !== undefined ? first : { all: nodes };
+  draft.json = JSON.stringify(value, null, 2);
+  draft.advanced = true;
+  draft.error = undefined;
+  // Back to rows when they can hold it — the simpler editor stays the default.
+  const rows = Array.isArray(value) ? rowsOfNodes(value) : rowsOf(value);
+  if (rows !== undefined && rows.length > 0) {
+    draft.rows = rows;
+    draft.advanced = false;
+  }
+  visualOpen = undefined;
+}
+
+/**
+ * Segments and goals store the grammar WITHOUT segment refs (docs/04 § 3), and
+ * that is what makes cycles impossible by construction. The editor is mounted
+ * here with no segment picker, so this should never fire — checked rather than
+ * asserted, because a cast would make it a silent 400 from the server instead.
+ */
+function storable(nodes: readonly FilterNode[]): SegmentFilterNode[] | undefined {
+  if (nodes.some((node) => filterSegmentRefs(node).length > 0)) return undefined;
+  return nodes as SegmentFilterNode[];
+}
 
 // ---------- segments ----------
 let segments = $state<SegmentInfo[] | undefined>(undefined);
@@ -389,6 +468,9 @@ async function deleteGoal(id: number): Promise<void> {
           error={seg.error}
           ontoggle={toggleSegmentEditor}
         />
+        <button class="btn subtle" type="button" onclick={() => openVisual('segment')}>
+          Build visually…
+        </button>
         <PanelError failure={segError} />
         <div class="row">
           <button class="btn primary" type="submit" disabled={segBusy || segName.trim() === ''}>
@@ -510,6 +592,9 @@ async function deleteGoal(id: number): Promise<void> {
           error={goal.error}
           ontoggle={toggleGoalEditor}
         />
+        <button class="btn subtle" type="button" onclick={() => openVisual('goal')}>
+          Build visually…
+        </button>
         <div class="grow">
           <label class="field">
             Value per conversion
@@ -543,6 +628,17 @@ async function deleteGoal(id: number): Promise<void> {
     {/if}
   {/if}
 </div>
+
+<!-- One mount for both panels. No `segments` prop: a stored segment may not
+     reference a segment, so the picker has nothing to offer here (docs/04 § 3). -->
+{#if visualOpen !== undefined}
+  <FilterEditor
+    title={visualOpen === 'segment' ? 'Segment filter' : 'Goal filter'}
+    filters={visualNodes}
+    onapply={applyVisual}
+    onclose={() => (visualOpen = undefined)}
+  />
+{/if}
 
 <style>
   .prow {

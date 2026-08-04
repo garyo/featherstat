@@ -1,6 +1,13 @@
 <script lang="ts">
-import type { Filter, RealtimeEngagement, RealtimeHit } from '@featherstat/shared';
+import {
+  type FilterNode,
+  filterSegmentRefs,
+  type RealtimeEngagement,
+  type RealtimeHit,
+  type SegmentFilterNode,
+} from '@featherstat/shared';
 import type { AdminClient } from '../lib/admin.ts';
+import { adminObjects } from '../lib/admin-objects.ts';
 import { createQueryClient } from '../lib/api.ts';
 import type { AuthState } from '../lib/auth.svelte.ts';
 import { loadChunk, onChunkFailure } from '../lib/chunks.ts';
@@ -10,6 +17,7 @@ import { createDashboardStore } from '../lib/dashboards.svelte.ts';
 import { confirmDashboardSwitch, createEditorMode } from '../lib/editor-mode.svelte.ts';
 import { createLiveStream } from '../lib/live.ts';
 import { pushFeed, seedFeed } from '../lib/realtime.ts';
+import { createSegmentDirectory } from '../lib/segments.svelte.ts';
 import { createSiteDirectory } from '../lib/sites.svelte.ts';
 import { createViewState } from '../lib/state.svelte.ts';
 import {
@@ -59,6 +67,8 @@ const guardedFetch: typeof fetch = async (input, init) => {
 const client = createQueryClient({ fetch: guardedFetch });
 const live = createLiveStream();
 const directory = createSiteDirectory(guardedFetch);
+/** Saved segments, for the filter editor's picker and for naming a segment chip. */
+const segmentDir = createSegmentDirectory(guardedFetch);
 /**
  * ONE dashboard store, owned here rather than by the dashboard views: the
  * header's library switcher and the view under it must read the same list and
@@ -189,6 +199,52 @@ $effect(() => {
   }
 });
 
+// The filter expression editor (docs/05 § Filters) — one mount for every view
+// that carries chips, code-split because a session that never filters never
+// pays for it.
+let FilterEditor = $state<
+  typeof import('../lib/components/FilterEditor.svelte').default | undefined
+>(undefined);
+let filtersOpen = $state(false);
+async function openFilters(): Promise<void> {
+  FilterEditor ??= (await loadChunk(() => import('../lib/components/FilterEditor.svelte')))
+    ?.default;
+  if (FilterEditor !== undefined) filtersOpen = true;
+}
+
+/**
+ * Naming an expression stores it as a segment. Offered to everyone and refused
+ * by the server for a principal who may not write one — the same posture the ⚙
+ * Settings tab already takes, rather than a second source of truth for the role.
+ */
+async function saveSegment(
+  name: string,
+  filters: readonly FilterNode[],
+): Promise<string | undefined> {
+  const first = filters[0];
+  if (first === undefined) return 'nothing to save';
+  try {
+    await adminObjects(admin).createSegment({
+      name,
+      // A stored segment holds ONE tree and may not reference a segment
+      // (docs/04 § 3); the request's implicit AND becomes an explicit one.
+      filter: segmentFilterOf(filters.length === 1 ? first : { all: [...filters] }),
+    });
+    await segmentDir.reload();
+    return undefined;
+  } catch (error) {
+    return error instanceof Error ? error.message : 'could not save the segment';
+  }
+}
+
+/** Refuses a segment ref rather than storing a tree the server would reject. */
+function segmentFilterOf(node: FilterNode): SegmentFilterNode {
+  if (filterSegmentRefs(node).length > 0) {
+    throw new Error('a saved segment cannot reference another segment');
+  }
+  return node as SegmentFilterNode;
+}
+
 // Which site the switcher points at: the one being viewed, or the last one
 // visited while the overview is up — including after a back/forward move.
 let siteTab = $state(typeof view.current.site === 'number' ? view.current.site : FIRST_SITE);
@@ -237,7 +293,7 @@ const selectDash = (dash: DashRef | undefined): void =>
   view.update(resolveNav(view.current, { dash }, siteTab));
 /** The wordmark: every axis back to its default, which serializes to a bare `/`. */
 const selectHome = (): void => view.update(DEFAULT_VIEW_STATE);
-const setFilters = (filters: Filter[]): void => view.update({ filters });
+const setFilters = (filters: FilterNode[]): void => view.update({ filters });
 const setPivots = (pivots: PivotChoice[]): void => view.update({ pivots });
 /** A drill is a history push — back returns to the dashboard that was left. */
 const openDetail = (detail: DetailRef): void =>
@@ -302,8 +358,10 @@ const app = $derived<AppEnv>({
       range={view.current.range}
       {now}
       filters={view.current.filters}
+      segmentNames={segmentDir.names}
       onselectrange={selectRange}
       onfilters={setFilters}
+      oneditfilters={() => void openFilters()}
     />
   {:else if current === 'detail'}
     {@const detailSite = typeof site === 'number' ? site : siteTab}
@@ -318,9 +376,11 @@ const app = $derived<AppEnv>({
         range={view.current.range}
         cmp={view.current.cmp}
         filters={view.current.filters}
+        segmentNames={segmentDir.names}
         onselectrange={selectRange}
         onselectcmp={selectCompare}
         onfilters={setFilters}
+        oneditfilters={() => void openFilters()}
         onopendetail={openDetail}
       />
     {/if}
@@ -351,11 +411,13 @@ const app = $derived<AppEnv>({
       range={view.current.range}
       cmp={view.current.cmp}
       filters={view.current.filters}
+      segmentNames={segmentDir.names}
       pivots={view.current.pivots}
       onselectrange={selectRange}
       onselectcmp={selectCompare}
       onselectdash={selectDash}
       onfilters={setFilters}
+      oneditfilters={() => void openFilters()}
       onpivots={setPivots}
       onopendetail={openDetail}
     />
@@ -372,6 +434,19 @@ const app = $derived<AppEnv>({
         if (guardEdit()) selectDash(ref);
       }}
       onclose={() => (managing = false)}
+    />
+  {/if}
+
+  {#if filtersOpen && FilterEditor !== undefined}
+    <FilterEditor
+      filters={view.current.filters}
+      segments={segmentDir.segments}
+      onsavesegment={saveSegment}
+      onapply={(filters) => {
+        setFilters(filters);
+        filtersOpen = false;
+      }}
+      onclose={() => (filtersOpen = false)}
     />
   {/if}
 

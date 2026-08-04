@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { Filter, Query, QueryRequest } from '@featherstat/shared';
+import type { Filter, FilterNode, Query, QueryRequest } from '@featherstat/shared';
 import type { AdminClient } from '../lib/admin.ts';
 import type { QueryClient } from '../lib/api.ts';
 import { loadChunk } from '../lib/chunks.ts';
@@ -50,7 +50,8 @@ interface Props {
   timezone: string | undefined;
   range: ViewRange;
   cmp: CompareChoice;
-  filters: Filter[];
+  filters: FilterNode[];
+  segmentNames?: ReadonlyMap<number, string>;
   /** Per-widget breakdown overrides from the URL (docs/05 § Pivots). */
   pivots: PivotChoice[];
   onselectrange: (range: ViewRange) => void;
@@ -58,7 +59,9 @@ interface Props {
   /** Saving while a TEMPLATE is up clones it — the URL then points at the clone. */
   onselectdash: (dash: DashRef) => void;
   /** Chips changed (row clicked, chip removed): one URL update, one re-batch. */
-  onfilters: (filters: Filter[]) => void;
+  onfilters: (filters: FilterNode[]) => void;
+  /** Opens the shared expression editor (docs/05 § Filters). */
+  oneditfilters?: () => void;
   onpivots: (pivots: PivotChoice[]) => void;
   /** Opens an entity's detail view (a history push — back returns here). */
   onopendetail: (detail: DetailRef) => void;
@@ -76,11 +79,13 @@ let {
   range,
   cmp,
   filters,
+  segmentNames,
   pivots,
   onselectrange,
   onselectcmp,
   onselectdash,
   onfilters,
+  oneditfilters,
   onpivots,
   onopendetail,
 }: Props = $props();
@@ -239,6 +244,8 @@ const note = $derived.by(() => {
       {range}
       {cmp}
       {filters}
+  {segmentNames}
+  {oneditfilters}
       {note}
       onselect={onselectrange}
       oncompare={onselectcmp}

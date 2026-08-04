@@ -59,7 +59,7 @@ async function showQuery(spec: WidgetSpec): Promise<void> {
 function scopeNote(spec: WidgetSpec): string | undefined {
   const filters = spec.query?.filters;
   if (filters === undefined) return undefined;
-  const labels = filters.flatMap(filterLeaves).map(chipLabel);
+  const labels = filters.flatMap(filterLeaves).map((leaf) => chipLabel(leaf));
   return labels.length === 0 ? undefined : labels.join(' · ');
 }
 </script>

@@ -4,7 +4,7 @@ import {
   type Compare,
   type DetailDimension,
   elapsedThrough,
-  type Filter,
+  type FilterNode,
   isDetailDimension,
   type QueryRequest,
   type Range,
@@ -68,7 +68,7 @@ export interface ViewState {
   view: ViewName;
   /** The entity on screen when `view` is `detail`; undefined everywhere else. */
   detail: DetailRef | undefined;
-  filters: Filter[];
+  filters: FilterNode[];
   /** Transient per-widget breakdown overrides; they name widgets of `dash`. */
   pivots: PivotChoice[];
 }

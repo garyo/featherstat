@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { Filter, Query, QueryRequest } from '@featherstat/shared';
+import type { Filter, FilterNode, Query, QueryRequest } from '@featherstat/shared';
 import { DETAIL_TEMPLATES } from '@featherstat/shared/detail-templates';
 import type { QueryClient } from '../lib/api.ts';
 import FilterRow from '../lib/components/FilterRow.svelte';
@@ -43,10 +43,13 @@ interface Props {
   detail: DetailRef;
   range: ViewRange;
   cmp: CompareChoice;
-  filters: Filter[];
+  filters: FilterNode[];
+  segmentNames?: ReadonlyMap<number, string>;
   onselectrange: (range: ViewRange) => void;
   onselectcmp: (cmp: CompareChoice) => void;
-  onfilters: (filters: Filter[]) => void;
+  onfilters: (filters: FilterNode[]) => void;
+  /** Opens the shared expression editor (docs/05 § Filters). */
+  oneditfilters?: () => void;
   /** Drill sideways (an "After this page" row → that page's own detail view). */
   onopendetail: (detail: DetailRef) => void;
 }
@@ -61,9 +64,11 @@ let {
   range,
   cmp,
   filters,
+  segmentNames,
   onselectrange,
   onselectcmp,
   onfilters,
+  oneditfilters,
   onopendetail,
 }: Props = $props();
 
@@ -135,6 +140,8 @@ const note = $derived.by(() => {
   {cmp}
   locked={[`${dimLabel(detail.dim)}: ${detail.value}`]}
   {filters}
+  {segmentNames}
+  {oneditfilters}
   {note}
   onselect={onselectrange}
   oncompare={onselectcmp}
