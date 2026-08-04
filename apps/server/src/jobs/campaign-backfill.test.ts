@@ -6,6 +6,7 @@ import {
   getSetting,
   insertEvents,
   replaceCampaignAliases,
+  setSetting,
   stmt,
   upsertSessions,
   withWriteTransaction,
@@ -141,6 +142,37 @@ describe('campaign backfill', () => {
     seed(db, { source: 'email' });
     const result = await runCampaignBackfill(db);
     expect(result).toEqual({ completed: false, rows: 0 });
+    db.close();
+  });
+});
+
+describe('the epoch survives a crash mid-rewrite', () => {
+  /**
+   * Invariant 10's failure mode: a run rewrites rows and dies before its
+   * epilogue, and the run that resumes it finds nothing left to change. Gating
+   * the bump on rows changed *this run* would skip it, leaving every ETag cut
+   * before the rewrite answering 304 over moved history forever.
+   */
+  it('bumps even when the resuming run changes nothing itself', async () => {
+    const db = openTestDb();
+    withWriteTransaction(db, () =>
+      replaceCampaignAliases(db, 0, [{ field: 'source', alias: 'tw', canonical: 'twitter' }]),
+    );
+    seed(db, { source: 'tw' });
+    withWriteTransaction(db, () => requestCampaignBackfill(db));
+    await runCampaignBackfill(db); // the rewrite that lands, and settles
+    const settled = dataVersion(db);
+
+    // The crash: rows already rewritten, the epilogue never reached.
+    withWriteTransaction(db, () => {
+      requestCampaignBackfill(db);
+      setSetting(db, 'campaign_backfill:dirty', '1');
+    });
+
+    const result = await runCampaignBackfill(db);
+    expect(result.rows).toBe(0);
+    expect(dataVersion(db)).toBeGreaterThan(settled);
+    expect(getSetting(db, 'campaign_backfill:dirty')).toBeUndefined();
     db.close();
   });
 });

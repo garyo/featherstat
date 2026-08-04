@@ -81,9 +81,13 @@ list to actually hold in your head.
 - **10 · Every history rewrite bumps `data_epoch`.** `dataVersion` is
   `epoch·2⁴⁰ + MAX(events.id)`, so an in-place rewrite that skips the bump
   leaves every pre-rewrite ETag answering 304 forever. Current rewriters:
-  campaign backfill (including its post-backfill rollup rebuild), prop scrub,
-  site purge, and reconcile's drift repair (bump conditional on having
-  repaired — a clean nightly run costs the caches nothing).
+  campaign backfill, referrer backfill (both including their post-backfill
+  rollup rebuild), prop scrub, site purge, and reconcile's drift repair (bump
+  conditional on having repaired — a clean nightly run costs the caches
+  nothing). **"Having repaired" is durable, not per-run**: both backfills set a
+  `:dirty` setting in the same transaction as the row they change and clear it
+  only after the bump, because a run that crashes mid-rewrite and resumes into
+  a remainder needing no change would otherwise skip the bump it owed.
   `apps/server/test/guards/epoch.guard.ts` scans the job sources and objects
   to a rewriter without the bump — or a new job that rewrites events/sessions
   or rebuilds rollup days unregistered; the meta-guard proves the scan binds.

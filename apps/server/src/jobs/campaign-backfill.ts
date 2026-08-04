@@ -32,6 +32,17 @@ import { rebuildAllRollups } from '../rollup/rebuild.ts';
  */
 
 const WATERMARK_PREFIX = 'campaign_backfill:';
+/**
+ * Set in the SAME transaction as the first row this backfill changes, and
+ * cleared only once the rollups are rebuilt and the epoch is bumped.
+ *
+ * Gating that epilogue on rows changed *this run* loses it across a crash: a
+ * run rewrites rows and dies, the resumed run finishes a remainder that happens
+ * to need no change, and history has moved with no bump — every pre-rewrite
+ * ETag answers 304 forever, which is the exact failure invariant 10 exists to
+ * prevent. A durable flag survives the crash instead.
+ */
+const DIRTY_SETTING = 'campaign_backfill:dirty';
 const TABLES = ['events', 'sessions'] as const;
 type BackfillTable = (typeof TABLES)[number];
 
@@ -160,6 +171,9 @@ async function drain(db: Db, batchSize: number): Promise<CampaignBackfillResult>
           if (changed) {
             update.run(...next, row.rid);
             result.rows += 1;
+            // Atomic with the rewrite it describes: whatever this transaction
+            // commits, it commits together.
+            setSetting(db, DIRTY_SETTING, '1');
           }
         }
         setSetting(db, setting, String(rows[rows.length - 1]?.rid ?? since));
@@ -170,10 +184,16 @@ async function drain(db: Db, batchSize: number): Promise<CampaignBackfillResult>
   }
 
   // Everything drained: the utm marginals in the rollups may now disagree with
-  // raw, and cached ETags describe rewritten history. Repair, then expire.
-  if (result.rows > 0) {
+  // raw, and cached ETags describe rewritten history. Repair, then expire —
+  // reading the durable flag, not this run's tally (see DIRTY_SETTING).
+  // Crashing between the rebuild and the bump leaves the flag set, so the next
+  // run simply does both again; neither is destructive to repeat.
+  if (getSetting(db, DIRTY_SETTING) !== undefined) {
     await rebuildAllRollups(db);
-    withWriteTransaction(db, () => bumpDataEpoch(db));
+    withWriteTransaction(db, () => {
+      bumpDataEpoch(db);
+      deleteSetting(db, DIRTY_SETTING);
+    });
   }
   result.completed = true;
   return result;

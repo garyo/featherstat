@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { getDomain } from 'tldts';
 
 /**
@@ -40,6 +41,8 @@ const KEEP_DISTINCT: ReadonlySet<string> = new Set([
   // ycombinator.com would silently reclassify Hacker News as a plain referral.
   'news.ycombinator.com',
   // Assistant referrals are their own acquisition channel, not the vendor site.
+  // Only the ones whose registrable domain belongs to something else need to be
+  // here: `claude.ai` and `chatgpt.com` are already their own.
   'chat.openai.com',
   'copilot.microsoft.com',
 ]);
@@ -190,6 +193,20 @@ const KNOWN_REFERRERS: Record<string, 'search' | 'social'> = {
   'aol.com': 'search',
   'naver.com': 'search',
   'seznam.cz': 'search',
+  // Assistants, as a form of search: someone asked a question and arrived at an
+  // answer, which is what the channel means. They are NOT their own `ref_type`
+  // — that enum is stored on every row and read by the rollups, so a new member
+  // is a migration; `ref_domain` already separates them from Google. Gemini and
+  // Copilot reach this table through KEEP_DISTINCT, which is what keeps them
+  // distinct rows while `knownReferrerType`'s suffix walk still classifies them.
+  'chatgpt.com': 'search',
+  'chat.openai.com': 'search',
+  'claude.ai': 'search',
+  'perplexity.ai': 'search',
+  'copilot.microsoft.com': 'search',
+  'gemini.google.com': 'search',
+  'you.com': 'search',
+  'phind.com': 'search',
   // social
   'facebook.com': 'social',
   'fb.com': 'social',
@@ -231,4 +248,29 @@ function knownReferrerType(host: string): 'search' | 'social' | undefined {
     if (dot === -1) return undefined;
     h = h.slice(dot + 1);
   }
+}
+
+/**
+ * A fingerprint of the three tables above — everything that decides a canonical
+ * domain or its type.
+ *
+ * These tables are code, so there is no alias-edit endpoint to re-arm the
+ * backfill the way `campaign_aliases` has. Instead the job compares this to the
+ * value it last completed with and re-arms itself when they differ, which makes
+ * editing a table all it takes to relabel history — the property the campaign
+ * aliases already have, and the one that makes these tables safe to grow.
+ */
+export function referrerTablesFingerprint(): string {
+  const parts = [
+    [...KEEP_DISTINCT].sort().join(','),
+    [...ALIASES]
+      .map(([from, to]) => `${from}>${to}`)
+      .sort()
+      .join(','),
+    Object.entries(KNOWN_REFERRERS)
+      .map(([host, type]) => `${host}=${type}`)
+      .sort()
+      .join(','),
+  ];
+  return createHash('sha256').update(parts.join('|')).digest('hex').slice(0, 16);
 }

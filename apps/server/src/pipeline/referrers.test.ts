@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { canonicalReferrerDomain, referrerAttribution } from './referrers.ts';
+import {
+  canonicalReferrerDomain,
+  referrerAttribution,
+  referrerTablesFingerprint,
+  referrerTypeOf,
+} from './referrers.ts';
 
 /**
  * Referrer canonicalization (docs/03 § Attribution). The report this exists to
@@ -126,5 +131,43 @@ describe('referrerAttribution', () => {
       ref_domain_raw: 'blog.partner.org',
       ref_type: 'referral',
     });
+  });
+});
+
+describe('assistants', () => {
+  /**
+   * An assistant referral is someone who asked a question and arrived at an
+   * answer — the same shape as a search visit, which is the channel it reads
+   * as. Not its own `ref_type`: that enum is stored on every row and read by
+   * the rollups, so adding a member is a migration, and `ref_domain` already
+   * tells them apart from Google.
+   */
+  it('classifies the assistants as search', () => {
+    for (const host of [
+      'chatgpt.com',
+      'chat.openai.com',
+      'claude.ai',
+      'perplexity.ai',
+      'copilot.microsoft.com',
+      'gemini.google.com',
+    ]) {
+      expect(referrerTypeOf(canonicalReferrerDomain(host)), host).toBe('search');
+    }
+  });
+
+  it('keeps the ones that share a domain with something else distinct', () => {
+    // Collapsing these would file Gemini under Search and Copilot under nothing.
+    expect(canonicalReferrerDomain('gemini.google.com')).toBe('gemini.google.com');
+    expect(canonicalReferrerDomain('copilot.microsoft.com')).toBe('copilot.microsoft.com');
+    // …while the ones that own their registrable domain need no exemption.
+    expect(canonicalReferrerDomain('claude.ai')).toBe('claude.ai');
+    expect(canonicalReferrerDomain('chatgpt.com')).toBe('chatgpt.com');
+  });
+
+  it('gives the fingerprint a distinct value per table content', () => {
+    // The re-arm depends on this changing when a table does; a constant would
+    // silently stop history ever being relabelled again.
+    expect(referrerTablesFingerprint()).toMatch(/^[0-9a-f]{16}$/);
+    expect(referrerTablesFingerprint()).toBe(referrerTablesFingerprint());
   });
 });

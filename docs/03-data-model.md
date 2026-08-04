@@ -432,6 +432,22 @@ Own-domain matching reads the **received** host instead: a site registered as
 `docs.example.com` must recognize its own pages, whose eTLD+1 is not the
 registered domain.
 
+**Assistants classify as `search`.** ChatGPT, Claude, Perplexity, Copilot and
+Gemini are people who asked a question and arrived at an answer, which is what
+the search channel means; `ref_domain` still tells them apart from Google. They
+are deliberately NOT a new `ref_type` — that enum is stored on every row and
+read by the rollups, so a new member is a migration and a rewrite, for a
+distinction the domain already carries.
+
+**Editing the tables relabels history, with no migration.** The three tables
+are code, so there is no alias-edit endpoint to re-arm the backfill the way
+`campaign_aliases` has. Instead the job fingerprints them
+(`referrerTablesFingerprint`) and compares it to the value its last *completed*
+run recorded; a difference re-arms both watermarks at the next boot. Adding a
+host is therefore a one-line change that repairs the past as well as the
+future — the property the campaign aliases already have, and the one that makes
+these tables safe to grow.
+
 **Canonicalization rewrites history.** Migration 101 adds `ref_domain_raw`
 and enqueues `jobs/referrer-backfill.ts` — the campaign-backfill shape:
 a settings watermark per table, 5 000-row write transactions sharing the lock

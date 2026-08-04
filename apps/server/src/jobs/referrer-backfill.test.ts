@@ -5,6 +5,7 @@ import {
   dataVersion,
   getSetting,
   insertEvents,
+  setSetting,
   stmt,
   upsertSessions,
   withWriteTransaction,
@@ -154,6 +155,66 @@ describe('referrer backfill', () => {
     seed(db, { domain: 'bsky.app' }); // already canonical
     await runReferrerBackfill(db); // drains the migration's enqueue
     expect(await runReferrerBackfill(db)).toEqual({ completed: false, rows: 0 });
+    db.close();
+  });
+});
+
+describe('the epoch survives a crash mid-rewrite', () => {
+  /**
+   * Invariant 10's failure mode, reproduced: a run rewrites rows and dies before
+   * its epilogue, and the run that resumes it finds nothing left to change.
+   * Gating the bump on rows changed *this run* would skip it, and every ETag
+   * cut before the rewrite would answer 304 over moved history forever.
+   */
+  it('bumps even when the resuming run changes nothing itself', async () => {
+    const db = openTestDb();
+    seed(db, { domain: 'go.bsky.app' });
+    await runReferrerBackfill(db);
+    const settled = dataVersion(db);
+
+    // The crash: rows already rewritten, the epilogue never reached. Re-arm the
+    // watermarks and restore the dirty flag the dead run had committed.
+    withWriteTransaction(db, () => {
+      requestReferrerBackfill(db);
+      setSetting(db, 'referrer_backfill:dirty', '1');
+    });
+
+    const result = await runReferrerBackfill(db);
+    expect(result.rows).toBe(0); // nothing left to do — the rewrite already landed
+    expect(dataVersion(db)).toBeGreaterThan(settled); // …and the epoch still moved
+    expect(getSetting(db, 'referrer_backfill:dirty')).toBeUndefined(); // flag cleared
+    db.close();
+  });
+
+  it('leaves the epoch alone when nothing was ever rewritten', async () => {
+    const db = openTestDb();
+    seed(db, { domain: 'bsky.app' }); // already canonical
+    const before = dataVersion(db);
+    const result = await runReferrerBackfill(db);
+    expect(result.rows).toBe(0);
+    expect(dataVersion(db)).toBe(before);
+    db.close();
+  });
+});
+
+describe('re-arming when the built-in tables change', () => {
+  it('runs itself again after the fingerprint moves, without a migration', async () => {
+    const db = openTestDb();
+    seed(db, { domain: 'bsky.app' });
+    await runReferrerBackfill(db);
+    const stamped = getSetting(db, 'referrer_backfill:tables');
+    expect(stamped).toBeDefined();
+
+    // A second run with the same tables must NOT re-scan.
+    withWriteTransaction(db, () => setSetting(db, 'referrer_backfill:dirty', '1'));
+    await runReferrerBackfill(db);
+    expect(getSetting(db, 'referrer_backfill:tables')).toBe(stamped);
+
+    // Editing a table (simulated by an older stamp) re-arms both watermarks.
+    withWriteTransaction(db, () => setSetting(db, 'referrer_backfill:tables', 'stale'));
+    const result = await runReferrerBackfill(db);
+    expect(result.completed).toBe(true);
+    expect(getSetting(db, 'referrer_backfill:tables')).toBe(stamped);
     db.close();
   });
 });
