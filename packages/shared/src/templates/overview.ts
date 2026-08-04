@@ -65,7 +65,16 @@ export const overviewTemplate: DashboardTemplate = {
           title: 'Referrers',
           w: 6,
           h: 2,
-          query: { id: 'refs', metrics: ['visitors'], dim: 'ref_domain', limit: 8 },
+          // Own-domain navigation is recorded with a `ref_domain` like any other
+          // (docs/03 § Attribution keeps the host on the internal branch too), so
+          // without this a busy subdomain of your own outranks every real source.
+          query: {
+            id: 'refs',
+            metrics: ['visitors'],
+            dim: 'ref_domain',
+            filters: [{ dim: 'ref_type', op: 'neq', value: 'internal' }],
+            limit: 8,
+          },
           options: { nullLabel: 'Direct' },
         },
         {

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { buildUtmUrl, emptyUtmDraft, normalizationWarnings, type UtmDraft } from './utm-builder.ts';
+import {
+  buildUtmUrl,
+  emptyUtmDraft,
+  missingUtmFields,
+  normalizationWarnings,
+  type UtmDraft,
+} from './utm-builder.ts';
 
 const draft = (over: Partial<UtmDraft>): UtmDraft => ({ ...emptyUtmDraft(), ...over });
 
@@ -45,5 +51,26 @@ describe('normalizationWarnings', () => {
     expect(
       normalizationWarnings(draft({ campaign: 'launch', source: 'hn', medium: 'social' })),
     ).toEqual([]);
+  });
+});
+
+describe('missingUtmFields', () => {
+  it('names what is still needed, in the order the form asks for it', () => {
+    expect(missingUtmFields(draft({}))).toEqual(['domain', 'campaign', 'source']);
+    expect(missingUtmFields(draft({ domain: 'blog.example.com' }))).toEqual(['campaign', 'source']);
+    expect(missingUtmFields(draft({ domain: 'blog.example.com', campaign: 'launch' }))).toEqual([
+      'source',
+    ]);
+  });
+
+  it('is empty exactly when a URL can be built — the two never disagree', () => {
+    const complete = draft({ domain: 'blog.example.com', campaign: 'launch', source: 'bluesky' });
+    expect(missingUtmFields(complete)).toEqual([]);
+    expect(buildUtmUrl(complete)).toBeDefined();
+    // Medium is optional, so dropping it must not reopen the gap.
+    expect(missingUtmFields({ ...complete, medium: '' })).toEqual([]);
+    // Whitespace is not a value.
+    expect(missingUtmFields({ ...complete, source: '   ' })).toEqual(['source']);
+    expect(buildUtmUrl({ ...complete, source: '   ' })).toBeUndefined();
   });
 });

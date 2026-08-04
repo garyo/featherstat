@@ -6,6 +6,7 @@ import { adminObjects } from '../../lib/admin-objects.ts';
 import {
   buildUtmUrl,
   emptyUtmDraft,
+  missingUtmFields,
   normalizationWarnings,
   type UtmDraft,
 } from '../../lib/utm-builder.ts';
@@ -160,6 +161,13 @@ async function saveAliases(event: SubmitEvent): Promise<void> {
 let utm = $state<UtmDraft>(emptyUtmDraft());
 const utmUrl = $derived(buildUtmUrl(utm));
 const utmWarnings = $derived(normalizationWarnings(utm));
+const utmMissing = $derived(missingUtmFields(utm));
+/** "domain, campaign and source" — an Oxford-less list, not `join(' and ')`. */
+const utmMissingText = $derived(
+  utmMissing.length < 2
+    ? (utmMissing[0] ?? '')
+    : `${utmMissing.slice(0, -1).join(', ')} and ${utmMissing.at(-1)}`,
+);
 let utmCopied = $state(false);
 
 async function copyUtm(): Promise<void> {
@@ -376,20 +384,22 @@ async function copyUtm(): Promise<void> {
         The {warning.field} will be stored as '{warning.stored}' — consider typing it that way.
       </p>
     {/each}
-    {#if utmUrl !== undefined}
-      {#if campaigns !== undefined && !campaigns.some((c) => c.name === utm.campaign.trim().toLowerCase())}
-        <p class="widget-note">
-          This campaign is not in the registry above — its traffic will read as
-          <code>unregistered</code>.
-        </p>
-      {/if}
-      <pre class="utm-url"><code>{utmUrl}</code></pre>
-      <div class="row">
-        <button class="btn" type="button" onclick={() => void copyUtm()}>
-          {utmCopied ? 'Copied ✓' : 'Copy link'}
-        </button>
-      </div>
+    {#if utmUrl !== undefined && campaigns !== undefined && !campaigns.some((c) => c.name === utm.campaign.trim().toLowerCase())}
+      <p class="widget-note">
+        This campaign is not in the registry above — its traffic will read as
+        <code>unregistered</code>. That is a label, not a loss: the tag is recorded either way.
+      </p>
     {/if}
+    <!-- Always on screen. Empty, it says what it is waiting for; there is no
+         state where the builder simply is not there. -->
+    <pre class="utm-url" class:waiting={utmUrl === undefined}><code
+        >{utmUrl ?? `Add the ${utmMissingText} to build the link.`}</code
+      ></pre>
+    <div class="row">
+      <button class="btn" type="button" disabled={utmUrl === undefined} onclick={() => void copyUtm()}>
+        {utmCopied ? 'Copied ✓' : 'Copy link'}
+      </button>
+    </div>
   </div>
 </div>
 
@@ -481,5 +491,11 @@ async function copyUtm(): Promise<void> {
     overflow-x: auto;
     font-size: 11.5px;
     margin: 0;
+  }
+
+  .utm-url.waiting {
+    border-style: dashed;
+    color: var(--ink-2);
+    font-style: italic;
   }
 </style>

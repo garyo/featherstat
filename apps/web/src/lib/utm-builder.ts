@@ -48,6 +48,22 @@ export function buildUtmUrl(draft: UtmDraft): string | undefined {
   return base.toString();
 }
 
+/** The fields `buildUtmUrl` needs before it can answer, in the order shown. */
+const REQUIRED = [
+  ['domain', 'domain'],
+  ['campaign', 'campaign'],
+  ['source', 'source'],
+] as const satisfies readonly (readonly [keyof UtmDraft, string])[];
+
+/**
+ * What is still missing, in words. The builder used to render nothing at all
+ * until all three were in — no output box, no prompt, so the link looked like a
+ * feature that did not work. Absence needs a reason on screen.
+ */
+export function missingUtmFields(draft: UtmDraft): string[] {
+  return REQUIRED.filter(([field]) => draft[field].trim() === '').map(([, label]) => label);
+}
+
 export interface UtmWarning {
   field: 'campaign' | 'source' | 'medium';
   /** What ingest will actually store for the typed value. */

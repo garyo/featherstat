@@ -37,7 +37,14 @@ export const acquisitionTemplate: DashboardTemplate = {
           title: 'Referrers',
           w: 6,
           h: 2,
-          query: { id: 'refs', metrics: ['visitors'], dim: 'ref_domain', limit: 10 },
+          // Internal navigation carries a `ref_domain` too; see overview.ts.
+          query: {
+            id: 'refs',
+            metrics: ['visitors'],
+            dim: 'ref_domain',
+            filters: [{ dim: 'ref_type', op: 'neq', value: 'internal' }],
+            limit: 10,
+          },
           options: { nullLabel: 'Direct' },
         },
         {
