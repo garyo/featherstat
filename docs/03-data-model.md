@@ -556,7 +556,16 @@ is the answer for a dynamic residential address: names are re-resolved on a time
 hot path only ever compares bytes against that set — ingest never resolves DNS.
 A failed lookup keeps the last known addresses rather than falling open, because
 a DNS blip must not quietly re-admit the traffic the operator asked to drop; the
-error rides the settings view instead.
+error rides the settings view instead. Each lookup is bounded
+(`RESOLVE_TIMEOUT_MS`): a resolver that cannot reach the server it was told to
+ask does not fail fast, it hangs, and the admin write awaits this refresh.
+
+**The resolver that matters is the server's, not yours.** A name that resolves
+perfectly from a laptop can be unresolvable from the container — the reference
+deployment hit exactly this, with a Tailscale split-DNS route sending
+`home.example.com` to a home router the server cannot reach, while every
+sibling name in the same zone answered in milliseconds. The settings view
+reports what the server got, which is the only view that decides anything.
 
 Addresses normalize to the 16-byte IPv6 form (an IPv4 address becomes its
 IPv4-mapped equivalent), so one comparison serves both families and a v4 rule

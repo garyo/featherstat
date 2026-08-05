@@ -265,15 +265,37 @@ export const dnsResolver: Resolver = async (hostname) => {
   return addresses;
 };
 
+/**
+ * How long one hostname gets before it is called a failure.
+ *
+ * A resolver that cannot reach the server it was told to ask does not answer
+ * quickly — it retries until its own timeout, which is unbounded as far as we
+ * are concerned. The admin write awaits this refresh to give immediate feedback,
+ * so an unbounded lookup is an unbounded "Saving…". Real DNS answers in
+ * milliseconds; anything near this is already broken, and saying so beats
+ * hanging.
+ */
+export const RESOLVE_TIMEOUT_MS = 3_000;
+
+function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const limit = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`lookup timed out after ${ms} ms`)), ms);
+    timer.unref?.();
+  });
+  return Promise.race([work, limit]).finally(() => clearTimeout(timer));
+}
+
 /** Resolves every hostname rule once, recording successes and failures alike. */
 export async function refreshResolutions(
   matcher: ExclusionMatcher,
   resolver: Resolver = dnsResolver,
+  timeoutMs = RESOLVE_TIMEOUT_MS,
 ): Promise<void> {
   await Promise.all(
     matcher.hostnames().map(async (hostname) => {
       try {
-        matcher.setResolved(hostname, await resolver(hostname));
+        matcher.setResolved(hostname, await withTimeout(resolver(hostname), timeoutMs));
       } catch (error) {
         matcher.setResolved(hostname, [], error instanceof Error ? error.message : String(error));
       }
@@ -335,13 +357,22 @@ export interface ExclusionRefresh {
  */
 export function startExclusionRefresh(
   matcher: ExclusionMatcher,
-  options: { intervalMs?: number; resolver?: Resolver; onError?: (error: unknown) => void } = {},
+  options: {
+    intervalMs?: number;
+    resolver?: Resolver;
+    timeoutMs?: number;
+    onError?: (error: unknown) => void;
+  } = {},
 ): ExclusionRefresh {
-  const { intervalMs = EXCLUSION_REFRESH_MS, resolver = dnsResolver } = options;
+  const {
+    intervalMs = EXCLUSION_REFRESH_MS,
+    resolver = dnsResolver,
+    timeoutMs = RESOLVE_TIMEOUT_MS,
+  } = options;
   const onError = options.onError ?? ((error) => console.error('exclusion refresh failed:', error));
   const refresh = async (): Promise<void> => {
     try {
-      await refreshResolutions(matcher, resolver);
+      await refreshResolutions(matcher, resolver, timeoutMs);
     } catch (error) {
       onError(error);
     }

@@ -162,6 +162,27 @@ describe('ExclusionMatcher', () => {
     expect(resolution?.addresses).toEqual(['192.0.2.9']);
   });
 
+  it('gives up on a resolver that never answers, and says so', async () => {
+    // The live case this exists for: a Tailscale split-DNS route pointed the
+    // name at a nameserver the server cannot reach, so the lookup did not fail
+    // — it hung, and the admin save hung with it.
+    const matcher = new ExclusionMatcher();
+    matcher.setRules([rule('unreachable.example.com')]);
+    const started = Date.now();
+    await refreshResolutions(matcher, () => new Promise<string[]>(() => {}), 20);
+
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(matcher.resolutions()[0]?.error).toBe('lookup timed out after 20 ms');
+  });
+
+  it('keeps the last known addresses when a lookup times out', async () => {
+    const matcher = new ExclusionMatcher();
+    matcher.setRules([rule('home.example.com')]);
+    await refreshResolutions(matcher, async () => ['192.0.2.9']);
+    await refreshResolutions(matcher, () => new Promise<string[]>(() => {}), 20);
+    expect(matcher.matches('192.0.2.9')).toBe(true);
+  });
+
   it('follows a dynamic address from one lookup to the next', async () => {
     const matcher = new ExclusionMatcher();
     matcher.setRules([rule('home.example.com')]);
