@@ -3,6 +3,7 @@ import {
   type Db,
   type EventRow,
   incrementBotDrops,
+  incrementExcludedDrops,
   insertEvents,
   type SessionRow,
   stmt,
@@ -21,22 +22,35 @@ export interface FlushSummary {
   events: number;
   sessions: number;
   botDrops: number;
+  /** Hits refused because the client address matched an exclusion rule (docs/03 § Exclusions). */
+  excludedDrops: number;
   /** Sites whose event data changed — feeds the SSE per-site version ticks (docs/02). */
   siteIds: number[];
 }
 
 export type FlushHook = (summary: FlushSummary) => void;
 
-interface BotDropEntry {
+interface DropEntry {
   siteId: number;
   localDate: string;
   count: number;
 }
 
+function countDrop(drops: Map<string, DropEntry>, siteId: number, localDate: string): void {
+  const key = `${siteId}|${localDate}`;
+  const entry = drops.get(key);
+  if (entry !== undefined) entry.count += 1;
+  else drops.set(key, { siteId, localDate, count: 1 });
+}
+
+function totalDrops(drops: readonly DropEntry[]): number {
+  return drops.reduce((total, drop) => total + drop.count, 0);
+}
+
 /**
  * The single writer (docs/02): everything the pipeline produces queues here and
  * lands in ONE transaction per interval — events insert + sessions upsert +
- * bot-drop counters. A hard crash loses at most one interval of hits.
+ * the drop counters. A hard crash loses at most one interval of hits.
  */
 export class WriteBatcher {
   private events: EventRow[] = [];
@@ -45,7 +59,8 @@ export class WriteBatcher {
    * session, so whatever state that row holds at flush time is what lands.
    */
   private readonly sessions = new Set<SessionRow>();
-  private readonly botDrops = new Map<string, BotDropEntry>();
+  private readonly botDrops = new Map<string, DropEntry>();
+  private readonly excludedDrops = new Map<string, DropEntry>();
   private readonly hooks: FlushHook[] = [];
   private timer: NodeJS.Timeout | undefined;
   /**
@@ -104,10 +119,11 @@ export class WriteBatcher {
   }
 
   addBotDrop(siteId: number, localDate: string): void {
-    const key = `${siteId}|${localDate}`;
-    const entry = this.botDrops.get(key);
-    if (entry !== undefined) entry.count += 1;
-    else this.botDrops.set(key, { siteId, localDate, count: 1 });
+    countDrop(this.botDrops, siteId, localDate);
+  }
+
+  addExcludedDrop(siteId: number, localDate: string): void {
+    countDrop(this.excludedDrops, siteId, localDate);
   }
 
   onFlush(hook: FlushHook): void {
@@ -119,6 +135,7 @@ export class WriteBatcher {
       this.events.length +
       this.sessions.size +
       this.botDrops.size +
+      this.excludedDrops.size +
       // A prop drop can queue with no event beside it (an orphan heartbeat's
       // bag); counting it here is what gets that flush scheduled at all.
       (this.props?.pendingCount ?? 0)
@@ -130,6 +147,7 @@ export class WriteBatcher {
     const events = this.events;
     const sessions = [...this.sessions];
     const botDrops = [...this.botDrops.values()];
+    const excludedDrops = [...this.excludedDrops.values()];
 
     const deltas: SessionDelta[] = sessions.map((row) => ({
       row,
@@ -148,6 +166,9 @@ export class WriteBatcher {
         upsertSessions(this.db, sessions);
         for (const drop of botDrops) {
           incrementBotDrops(this.db, drop.siteId, drop.localDate, drop.count);
+        }
+        for (const drop of excludedDrops) {
+          incrementExcludedDrops(this.db, drop.siteId, drop.localDate, drop.count);
         }
         applyRollups(this.db, sinceEventId, events, deltas);
         this.props?.apply(this.db);
@@ -169,6 +190,7 @@ export class WriteBatcher {
     this.events = [];
     this.sessions.clear();
     this.botDrops.clear();
+    this.excludedDrops.clear();
 
     const siteIds = new Set<number>();
     for (const event of events) siteIds.add(event.site_id);
@@ -176,7 +198,8 @@ export class WriteBatcher {
     const summary: FlushSummary = {
       events: events.length,
       sessions: sessions.length,
-      botDrops: botDrops.reduce((total, drop) => total + drop.count, 0),
+      botDrops: totalDrops(botDrops),
+      excludedDrops: totalDrops(excludedDrops),
       siteIds: [...siteIds],
     };
     for (const hook of this.hooks) hook(summary);

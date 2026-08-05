@@ -70,6 +70,7 @@ describe('migrate', () => {
       'dashboards',
       'derived_metrics',
       'events',
+      'excluded_drops',
       'goals',
       'magic_links',
       'prop_drops',

@@ -810,6 +810,22 @@ totals), formatted by the same `summarizeChanges` the MCP tool uses; its last
 run persists in the `digest_last_run` settings row so a restart mid-week stays
 quiet. Both jobs skip themselves entirely while ntfy is unconfigured.
 
+**Traffic exclusion** (`GET`/`PUT /api/admin/exclusions`, docs/03 § Exclusions):
+one settings row (`exclusion_rules`, ≤ 64 rules), a full-list replace like the
+other admin settings, and a row that will not validate excludes NOTHING — the
+failure that matters here is the opposite of alerts', since dropping real
+traffic on a malformed rule loses data that cannot be recovered. A rule is
+`{ value, note }` where `value` is an IP, a CIDR prefix, or a hostname; the
+enum-free validation is structural (a prefix or a colon means an address, else
+all-numeric labels do, else a hostname). The `PUT` writes the row, replaces the
+live matcher's rules in the same request — a rule that only bit after a restart
+would be a trap — and re-resolves hostnames before answering, so the response's
+`resolutions[]` says what each name currently resolves to, when, and the error
+if the lookup failed. A failed lookup is reported, never fatal: the rule keeps
+matching its last known addresses. `GET /api/admin/diagnostics` carries
+`excludedDrops` beside `botDrops`, same per-site/per-day shape and 7-day window,
+so a rule quietly eating real traffic is visible as itself.
+
 Read-only
 dashboard access via `GET /share/:token`: the server re-validates the stored
 layout and assembles the SAME batch the in-app view would run (widget queries

@@ -3,6 +3,7 @@ import { type Db, type EventRow, getSite } from '../db/index.ts';
 import { type FlushHook, WriteBatcher } from './batcher.ts';
 import { AliasCache } from './campaigns.ts';
 import { isBotUserAgent, parseUserAgent, preferredLanguage } from './enrich.ts';
+import { ExclusionMatcher, readExclusionRules } from './exclusions.ts';
 import { type GeoProvider, NullProvider } from './geo.ts';
 import { Identity } from './identity.ts';
 import { PropRegistry } from './props.ts';
@@ -31,12 +32,16 @@ export interface Pipeline {
   props: PropRegistry;
   /** The live campaign-alias cache — the admin alias routes invalidate through it. */
   campaignAliases: AliasCache;
+  /** The live exclusion set — the admin route replaces its rules, the refresh job resolves its hostnames. */
+  exclusions: ExclusionMatcher;
 }
 
 /**
- * validate → bot filter → UA parse → GeoIP → sessionize → batch (docs/02).
- * The raw IP is consumed by the visitor hash and the geo lookup, then
- * discarded — never persisted, never logged (CLAUDE.md invariant 3).
+ * validate → exclusions → bot filter → UA parse → GeoIP → sessionize → batch
+ * (docs/02). The raw IP is consumed by the exclusion check, the visitor hash and
+ * the geo lookup, then discarded — never persisted, never logged (CLAUDE.md
+ * invariant 3). The exclusion rules are the operator's own addresses, which is
+ * configuration; no visitor address is stored by any of it.
  */
 export function createPipeline(db: Db, options: PipelineOptions = {}): Pipeline {
   const geo = options.geo ?? new NullProvider();
@@ -48,6 +53,10 @@ export function createPipeline(db: Db, options: PipelineOptions = {}): Pipeline 
   // next flush would book a revived visit as a brand-new one (docs/03 § Rollups).
   const lookup = priorSessionLookup(db);
   const campaignAliases = new AliasCache(db);
+  // Literal rules bite immediately; hostname rules match once the refresh timer
+  // main.ts starts has resolved them for the first time.
+  const exclusions = new ExclusionMatcher();
+  exclusions.setRules(readExclusionRules(db));
   const sessionizer = new Sessionizer((siteId, visitorId, notBefore) => {
     const prior = lookup(siteId, visitorId, notBefore);
     if (prior !== undefined) batcher.seedSnapshot(prior.row);
@@ -61,14 +70,22 @@ export function createPipeline(db: Db, options: PipelineOptions = {}): Pipeline 
   const hitHooks: HitHook[] = [];
 
   const sink: HitSink = (hits, ctx) => {
-    // `device` is null exactly when the UA is a bot; both are once-per-request work.
-    const device = isBotUserAgent(ctx.userAgent) ? null : parseUserAgent(ctx.userAgent);
+    // Exclusion runs before the bot check: it is one byte scan over a short list
+    // and refusing here skips the UA parse and the geo lookup outright. A hit
+    // that is both excluded and a crawler counts only as excluded — the
+    // operator's own browser is the more useful thing to have been told.
+    // `device` is null exactly when the hit is refused; all of this is
+    // once-per-request work.
+    const excluded = exclusions.matches(ctx.ip);
+    const device = excluded || isBotUserAgent(ctx.userAgent) ? null : parseUserAgent(ctx.userAgent);
     const geoResult = device === null ? null : geo.lookup(ctx.ip);
     for (const hit of hits) {
       const site = getSite(db, hit.siteId);
       if (site === undefined) continue; // unknown site id → dropped, never 4xx (docs/04)
       if (device === null) {
-        batcher.addBotDrop(site.id, localClock(site.timezone, ctx.receivedAt).date);
+        const localDate = localClock(site.timezone, ctx.receivedAt).date;
+        if (excluded) batcher.addExcludedDrop(site.id, localDate);
+        else batcher.addBotDrop(site.id, localDate);
         continue;
       }
       // Bag admission runs only when a bag exists — the hot path pays nothing
@@ -113,5 +130,6 @@ export function createPipeline(db: Db, options: PipelineOptions = {}): Pipeline 
     onFlush: (hook) => batcher.onFlush(hook),
     props,
     campaignAliases,
+    exclusions,
   };
 }

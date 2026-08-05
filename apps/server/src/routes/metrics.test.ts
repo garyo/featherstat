@@ -3,7 +3,7 @@ import { event, openTestDb } from '../../test/rows.ts';
 import { insertEvents, withWriteTransaction } from '../db/index.ts';
 import { createMetricsRoutes, METRICS_CONTENT_TYPE, Metrics } from './metrics.ts';
 
-const flush = { events: 3, sessions: 1, botDrops: 2, siteIds: [1] };
+const flush = { events: 3, sessions: 1, botDrops: 2, excludedDrops: 0, siteIds: [1] };
 
 describe('Metrics registry', () => {
   it('accumulates ingest counters from flush summaries', () => {

@@ -82,8 +82,13 @@ export const CHUNK_MAX_GZIP: Readonly<Record<string, number>> = {
    * vite's preload helper and every entry-shared module into preloaded
    * siblings, which costs first-load bytes the entry budget does not have.
    * Admin-only, loaded on entering Settings — never on the dashboard path.
+   *
+   * Raised 20_480 → 22_528 on 2026-08-05 for the traffic-exclusion panel
+   * (docs/03 § Exclusions). Same reasoning, and the headroom is deliberate:
+   * the previous number left nine bytes, which buys a byte-shaving argument
+   * on every future admin feature rather than a design one.
    */
-  SettingsView: 20_480,
+  SettingsView: 22_528,
   /** The entity detail views + their shared templates — loaded on first drill. */
   DetailView: 4_096,
   /** The per-widget filter rows — lazy inside WidgetSettings. */

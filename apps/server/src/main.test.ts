@@ -98,6 +98,9 @@ describe('the built entrypoint serves the SECURED app', () => {
   it('mounts dashboards and notifications gated, share links public but unguessable', async () => {
     expect((await fetch(`${BASE}/api/admin/dashboards`)).status).toBe(401);
     expect((await fetch(`${BASE}/api/admin/ntfy`)).status).toBe(401);
+    // Exclusion rules are the operator's own addresses — gated like the rest,
+    // and mounted at all only because main.ts hands the route the live matcher.
+    expect((await fetch(`${BASE}/api/admin/exclusions`)).status).toBe(401);
     // Public prefix, but a token nobody minted resolves to nothing.
     const share = await fetch(`${BASE}/share/${'a'.repeat(43)}`);
     expect(share.status).toBe(404);

@@ -538,32 +538,48 @@ export function deleteSetting(db: Db, key: string): void {
   stmt(db, SQL_DELETE_SETTING).run(key);
 }
 
-const SQL_INCREMENT_BOT_DROPS = `INSERT INTO bot_drops (site_id, local_date, count) VALUES (?, ?, ?)
-ON CONFLICT (site_id, local_date) DO UPDATE SET count = count + excluded.count`;
-const SQL_GET_BOT_DROPS = 'SELECT count FROM bot_drops WHERE site_id = ? AND local_date = ?';
-
-export function incrementBotDrops(db: Db, siteId: number, localDate: string, count = 1): void {
-  assertWritable(db);
-  stmt(db, SQL_INCREMENT_BOT_DROPS).run(siteId, localDate, count);
-}
-
-export function getBotDrops(db: Db, siteId: number, localDate: string): number {
-  return stmt<{ count: number }>(db, SQL_GET_BOT_DROPS).get(siteId, localDate)?.count ?? 0;
-}
-
-export interface BotDropRow {
+export interface DropCountRow {
   site_id: number;
   local_date: string;
   count: number;
 }
 
-const SQL_LIST_BOT_DROPS =
-  'SELECT site_id, local_date, count FROM bot_drops WHERE local_date >= ? ORDER BY local_date DESC, site_id';
-
-/** Diagnostics (docs/04 § 5): per-site bot-drop counters since a local date (inclusive). */
-export function listBotDrops(db: Db, sinceLocalDate: string): BotDropRow[] {
-  return stmt<BotDropRow>(db, SQL_LIST_BOT_DROPS).all(sinceLocalDate) as BotDropRow[];
+/**
+ * The per-site/per-day drop counters share a shape: a hit refused at the door is
+ * counted, never stored. `bot_drops` and `excluded_drops` are separate tables so
+ * a reader can tell "a crawler" from "the operator" without a discriminator
+ * column, but the three accessors are identical, so they are built once.
+ */
+function dropCounters(table: string) {
+  const incrementSql = `INSERT INTO ${table} (site_id, local_date, count) VALUES (?, ?, ?)
+ON CONFLICT (site_id, local_date) DO UPDATE SET count = count + excluded.count`;
+  const getSql = `SELECT count FROM ${table} WHERE site_id = ? AND local_date = ?`;
+  const listSql = `SELECT site_id, local_date, count FROM ${table} WHERE local_date >= ? ORDER BY local_date DESC, site_id`;
+  return {
+    increment(db: Db, siteId: number, localDate: string, count = 1): void {
+      assertWritable(db);
+      stmt(db, incrementSql).run(siteId, localDate, count);
+    },
+    get(db: Db, siteId: number, localDate: string): number {
+      return stmt<{ count: number }>(db, getSql).get(siteId, localDate)?.count ?? 0;
+    },
+    /** Diagnostics (docs/04 § 5): per-site counters since a local date (inclusive). */
+    list(db: Db, sinceLocalDate: string): DropCountRow[] {
+      return stmt<DropCountRow>(db, listSql).all(sinceLocalDate) as DropCountRow[];
+    },
+  };
 }
+
+const botDropCounters = dropCounters('bot_drops');
+const excludedDropCounters = dropCounters('excluded_drops');
+
+export const incrementBotDrops = botDropCounters.increment;
+export const getBotDrops = botDropCounters.get;
+export const listBotDrops = botDropCounters.list;
+
+export const incrementExcludedDrops = excludedDropCounters.increment;
+export const getExcludedDrops = excludedDropCounters.get;
+export const listExcludedDrops = excludedDropCounters.list;
 
 // ---------------------------------------------------------------------------
 // Props governance (docs/03 § Props) — admin reads + the delete the scrub rides.

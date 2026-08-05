@@ -5,6 +5,8 @@ import type {
   AdminSiteCreate,
   AdminSitePatch,
   Dashboard,
+  ExclusionRule,
+  ExclusionState,
   NtfySettingsInput,
   NtfySettingsView,
   SiteInfo,
@@ -64,6 +66,10 @@ export interface AdminClient {
   /** Tombstones the site and starts the purge of all its data — irreversible. */
   deleteSite(id: number): Promise<void>;
   diagnostics(): Promise<AdminDiagnostics>;
+  /** Traffic-exclusion rules plus what the resolver has made of any hostnames. */
+  exclusions(): Promise<ExclusionState>;
+  /** Full-list replace; the response carries the freshly resolved hostnames. */
+  saveExclusions(rules: readonly ExclusionRule[]): Promise<ExclusionState>;
   listDashboards(): Promise<DashboardInfo[]>;
   getDashboard(id: number): Promise<DashboardDetail>;
   /** `template` records which shipped template this layout was cloned from. */
@@ -161,6 +167,8 @@ export function createAdminClient(options: AdminClientOptions = {}): AdminClient
       await call(`/api/admin/sites/${id}`, { method: 'DELETE' });
     },
     diagnostics: () => call('/api/admin/diagnostics'),
+    exclusions: () => call('/api/admin/exclusions'),
+    saveExclusions: (rules) => call('/api/admin/exclusions', { method: 'PUT', body: { rules } }),
     listDashboards: () => call('/api/admin/dashboards'),
     getDashboard: (id) => call(`/api/admin/dashboards/${id}`),
     createDashboard: (layout, template) =>

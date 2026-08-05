@@ -543,6 +543,37 @@ Dropped at the door (`isbot` on the UA), counted per site per day in a
 `settings`-adjacent counter surfaced in diagnostics. Storing bot traffic just
 to filter it from every query is Matomo-brain; we decline.
 
+## Exclusions
+
+The operator's own browsing is the loudest noise on a low-traffic site — on this
+project's own deployment, the operator's city was the largest single city on four
+of six sites. So a configured address is refused the same way a crawler is:
+dropped at the door, counted per site per day in `excluded_drops`, never stored.
+
+A rule is a literal address, a CIDR prefix, or a **hostname**. The hostname form
+is the answer for a dynamic residential address: names are re-resolved on a timer
+(`pipeline/exclusions.ts`, five minutes) into an in-memory address set, and the
+hot path only ever compares bytes against that set — ingest never resolves DNS.
+A failed lookup keeps the last known addresses rather than falling open, because
+a DNS blip must not quietly re-admit the traffic the operator asked to drop; the
+error rides the settings view instead.
+
+Addresses normalize to the 16-byte IPv6 form (an IPv4 address becomes its
+IPv4-mapped equivalent), so one comparison serves both families and a v4 rule
+still matches the `::ffff:a.b.c.d` a dual-stack socket reports.
+
+The check runs **before** the bot filter — it is cheaper than a UA parse and
+skips the geo lookup outright — so a hit that is both excluded and a crawler
+counts as excluded, which is the more useful thing to have been told.
+
+**This does not touch invariant 3.** The rules are the operator's own addresses,
+typed by hand: configuration, not observation. No visitor address is stored by
+any of it, and the raw IP is still consumed in memory and discarded.
+
+Exclusion applies to hits as they arrive. History already recorded stays — a
+retroactive removal is a purge, and per invariant 10 would owe a `data_epoch`
+bump like every other history rewrite.
+
 ## Rollups
 
 Pre-aggregated tables maintained **in the same write transaction as the ingest

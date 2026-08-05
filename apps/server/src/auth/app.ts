@@ -115,6 +115,8 @@ export interface SecuredAppOptions extends AppOptions {
   webDir?: string;
   /** Notifier knobs (clock, fetch, cooldown); the feature itself is turned on by its settings rows. */
   ntfy?: NtfyNotifierOptions;
+  /** Re-resolves hostname exclusion rules after an admin write; main.ts owns the timer. */
+  refreshExclusions?: () => Promise<void>;
 }
 
 export interface SecuredApp {
@@ -185,6 +187,8 @@ export function createSecuredApp(options: SecuredAppOptions = {}): SecuredApp {
       createAdminRoutes(db, createdAuth, {
         propRegistry: pipeline?.props,
         campaignAliases: pipeline?.campaignAliases,
+        exclusions: pipeline?.exclusions,
+        refreshExclusions: options.refreshExclusions,
       }),
     );
     app.route('/', createDashboardRoutes(db, createdAuth));

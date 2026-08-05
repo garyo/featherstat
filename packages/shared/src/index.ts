@@ -724,6 +724,12 @@ export interface AdminDiagnostics {
   eventCount: number;
   /** Per site and site-local date, most recent first (last 7 days). */
   botDrops: AdminBotDrops[];
+  /**
+   * Hits an exclusion rule refused, same shape and window. Reported apart from
+   * bot drops so a rule that is quietly eating real traffic is visible as
+   * itself rather than hidden in the crawler count (docs/03 § Exclusions).
+   */
+  excludedDrops: AdminBotDrops[];
 }
 
 /**
@@ -1148,6 +1154,7 @@ export * from './alias.ts';
 export * from './campaigns.ts';
 export * from './csv.ts';
 export * from './derived.ts';
+export * from './exclusions.ts';
 export * from './filters.ts';
 export * from './goals.ts';
 export * from './layout.ts';

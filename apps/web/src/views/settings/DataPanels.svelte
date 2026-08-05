@@ -3,12 +3,14 @@ import type {
   AdminDiagnostics,
   AdminPropsResponse,
   AnnotationInfo,
+  ExclusionRule,
+  ExclusionState,
   SiteInfo,
 } from '@featherstat/shared';
 import type { AdminClient } from '../../lib/admin.ts';
 import { type PanelFailure, panelFailure } from '../../lib/admin-failure.ts';
 import { adminObjects } from '../../lib/admin-objects.ts';
-import { botDropTotals, formatBytes, localInputToMs, msToLocalInput } from '../../lib/settings.ts';
+import { dropTotals, formatBytes, localInputToMs, msToLocalInput } from '../../lib/settings.ts';
 import { exactNumber } from '../../widgets/format.ts';
 import PanelError from './PanelError.svelte';
 
@@ -25,6 +27,8 @@ interface Props {
 let { admin, sites }: Props = $props();
 // svelte-ignore state_referenced_locally
 const api = adminObjects(admin);
+const totalOf = (rows: Array<[number, number]>): number =>
+  rows.reduce((sum, [, count]) => sum + count, 0);
 const nameOf = (id: number): string => sites?.find((s) => s.id === id)?.name ?? `Site ${id}`;
 
 // ---------- props governance ----------
@@ -199,7 +203,47 @@ $effect(() => {
     });
 });
 
-const botTotals = $derived(diagnostics === undefined ? [] : botDropTotals(diagnostics.botDrops));
+const botTotals = $derived(diagnostics === undefined ? [] : dropTotals(diagnostics.botDrops));
+const excludedTotals = $derived(
+  diagnostics === undefined ? [] : dropTotals(diagnostics.excludedDrops),
+);
+
+// ---------- traffic exclusion ----------
+let exclusions = $state<ExclusionState | undefined>(undefined);
+let xFailed = $state(false);
+let xError = $state<PanelFailure | undefined>(undefined);
+let xBusy = $state(false);
+/** The rows being edited — the panel is a form over a full-list replace. */
+let xDraft = $state<ExclusionRule[]>([]);
+
+$effect(() => {
+  void admin
+    .exclusions()
+    .then((state) => {
+      exclusions = state;
+      xDraft = state.rules.map((rule) => ({ ...rule }));
+    })
+    .catch(() => {
+      xFailed = true;
+    });
+});
+
+const resolutionOf = (value: string) => exclusions?.resolutions.find((r) => r.value === value);
+
+async function saveExclusions(): Promise<void> {
+  xError = undefined;
+  xBusy = true;
+  try {
+    // Blank rows are how a row is deleted, so they are dropped rather than sent.
+    const rules = xDraft.filter((rule) => rule.value.trim() !== '');
+    exclusions = await admin.saveExclusions(rules);
+    xDraft = exclusions.rules.map((rule) => ({ ...rule }));
+  } catch (failure) {
+    xError = panelFailure(failure, 'Saving failed — try again.');
+  } finally {
+    xBusy = false;
+  }
+}
 </script>
 
 <div class="card c6">
@@ -378,19 +422,87 @@ const botTotals = $derived(diagnostics === undefined ? [] : botDropTotals(diagno
       <div><dt>Stored events</dt><dd>{exactNumber(diagnostics.eventCount)}</dd></div>
       <div>
         <dt>Bot hits dropped · 7 days</dt>
-        <dd>{exactNumber(botTotals.reduce((sum, [, count]) => sum + count, 0))}</dd>
+        <dd>{exactNumber(totalOf(botTotals))}</dd>
+      </div>
+      <div>
+        <dt>Excluded hits · 7 days</dt>
+        <dd>{exactNumber(totalOf(excludedTotals))}</dd>
       </div>
     </dl>
     {#if botTotals.length > 0}
-      <div class="bot-list">
-        {#each botTotals as [siteId, count] (siteId)}
-          <div class="bot-row">
-            <span class="name">{nameOf(siteId)}</span>
-            <span class="num">{exactNumber(count)}</span>
-          </div>
-        {/each}
-      </div>
+      <p class="widget-note">Bot drops by site</p>
+      {@render dropList(botTotals)}
     {/if}
+    {#if excludedTotals.length > 0}
+      <p class="widget-note">Excluded by site</p>
+      {@render dropList(excludedTotals)}
+    {/if}
+  {/if}
+</div>
+
+{#snippet dropList(rows: Array<[number, number]>)}
+  <div class="bot-list">
+    {#each rows as [siteId, count] (siteId)}
+      <div class="bot-row">
+        <span class="name">{nameOf(siteId)}</span>
+        <span class="num">{exactNumber(count)}</span>
+      </div>
+    {/each}
+  </div>
+{/snippet}
+
+<div class="card c6">
+  <h2>Excluded traffic</h2>
+  <p class="widget-note">
+    Hits from these addresses are dropped at ingest and counted, never stored. Enter an IP, a
+    range like <code>198.51.100.0/24</code>, or a hostname — hostnames re-resolve every few
+    minutes, so they suit a dynamic address.
+  </p>
+  {#if xFailed}
+    <p class="widget-note">Rules unavailable.</p>
+  {:else if exclusions === undefined}
+    <p class="widget-note">Loading…</p>
+  {:else}
+    <PanelError failure={xError} />
+    {#each xDraft as rule, i (i)}
+      {@const resolution = resolutionOf(rule.value)}
+      <div class="xrow">
+        <input class="xvalue" placeholder="IP, range, or hostname" bind:value={rule.value} />
+        <input class="xnote" placeholder="note" bind:value={rule.note} />
+        <button
+          class="btn subtle danger"
+          type="button"
+          onclick={() => (xDraft = xDraft.filter((_, at) => at !== i))}
+        >
+          Remove
+        </button>
+      </div>
+      {#if resolution !== undefined}
+        <p class="xres" class:bad={resolution.error !== null}>
+          {#if resolution.error !== null}
+            Lookup failed: {resolution.error}{resolution.addresses.length > 0
+              ? ` — still matching ${resolution.addresses.join(', ')}`
+              : ' — matching nothing'}
+          {:else if resolution.addresses.length > 0}
+            Resolves to {resolution.addresses.join(', ')}
+          {:else}
+            Not resolved yet.
+          {/if}
+        </p>
+      {/if}
+    {/each}
+    <div class="xrow">
+      <button
+        class="btn subtle"
+        type="button"
+        onclick={() => (xDraft = [...xDraft, { value: '', note: '' }])}
+      >
+        Add
+      </button>
+      <button class="btn" type="button" disabled={xBusy} onclick={() => void saveExclusions()}>
+        {xBusy ? 'Saving…' : 'Save'}
+      </button>
+    </div>
   {/if}
 </div>
 
@@ -479,6 +591,33 @@ const botTotals = $derived(diagnostics === undefined ? [] : botDropTotals(diagno
     margin: 0;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
+  }
+
+  .xrow {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 4px 0;
+  }
+
+  .xvalue,
+  .xnote {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .xvalue {
+    flex-grow: 2;
+  }
+
+  .xres {
+    margin: 0 0 6px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  .xres.bad {
+    color: var(--bad);
   }
 
   .bot-list {

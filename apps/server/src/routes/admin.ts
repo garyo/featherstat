@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import {
+  type AdminBotDrops,
   AdminChangePasswordSchema,
   type AdminDataSettings,
   AdminDataSettingsSchema,
@@ -14,6 +15,8 @@ import {
   type ApiTokenInfo,
   type ApiTokenMinted,
   DAY_MS,
+  ExclusionSettingsSchema,
+  type ExclusionState,
   PROP_KEY_PATTERN,
   type SiteInfo,
 } from '@featherstat/shared';
@@ -29,6 +32,7 @@ import {
   countEvents,
   createSite,
   type Db,
+  type DropCountRow,
   databaseSizeBytes,
   deleteAdminSessionsExcept,
   deleteDashboard,
@@ -41,6 +45,7 @@ import {
   listApiTokens,
   listBotDrops,
   listDashboards,
+  listExcludedDrops,
   listPropDrops,
   listPropKeys,
   revokeApiToken,
@@ -61,6 +66,8 @@ import { requestPropScrub, runPropScrubs } from '../jobs/prop-scrub.ts';
 import { RETENTION_DAYS_KEY, retentionDays } from '../jobs/retention.ts';
 import { requestSitePurge, runSitePurges } from '../jobs/site-purge.ts';
 import type { AliasCache } from '../pipeline/campaigns.ts';
+import type { ExclusionMatcher } from '../pipeline/exclusions.ts';
+import { readExclusionRules, writeExclusionRules } from '../pipeline/exclusions.ts';
 import type { PropRegistry } from '../pipeline/props.ts';
 import { clientIp } from './track.ts';
 
@@ -88,6 +95,11 @@ export interface AdminRouteOptions {
   propRegistry?: PropRegistry;
   /** The live pipeline's campaign-alias cache — a site delete drops its rows. */
   campaignAliases?: AliasCache;
+  /** The live exclusion set — a rule write must take effect without a restart.
+   * Absent (a query-only server, tests), the settings row alone moves. */
+  exclusions?: ExclusionMatcher;
+  /** Re-resolves hostname rules after a write, so a new name bites immediately. */
+  refreshExclusions?: () => Promise<void>;
 }
 
 export function createAdminRoutes(
@@ -325,23 +337,55 @@ export function createAdminRoutes(
     return c.json({ ok: true });
   });
 
+  // --- Traffic exclusion (docs/03 § Exclusions) ------------------------------
+
+  app.get('/api/admin/exclusions', (c) => {
+    const state: ExclusionState = {
+      rules: [...(options.exclusions?.current() ?? readExclusionRules(db))],
+      resolutions: options.exclusions?.resolutions() ?? [],
+    };
+    return c.json(state);
+  });
+
+  app.put('/api/admin/exclusions', async (c) => {
+    const body = await parseBody(c, ExclusionSettingsSchema);
+    if (body.ok === false) return body.response;
+    const { rules } = body.data;
+    withWriteTransaction(db, () => writeExclusionRules(db, rules));
+    // The row is the record; the live matcher is what ingest actually consults,
+    // so it moves in the same request or the rule would not bite until restart.
+    options.exclusions?.setRules(rules);
+    // Resolve now rather than waiting out the refresh interval: an operator who
+    // just typed their hostname expects it to be excluded, not excluded in five
+    // minutes. A failure here is reported through the resolution, not the status.
+    await options.refreshExclusions?.();
+    const state: ExclusionState = {
+      rules,
+      resolutions: options.exclusions?.resolutions() ?? [],
+    };
+    return c.json(state);
+  });
+
   app.get('/api/admin/diagnostics', (c) => {
     // UTC approximation of the per-site local dates — fine for a health panel.
     const since = new Date(auth.now() - (BOT_DROP_DAYS - 1) * DAY_MS).toISOString().slice(0, 10);
     const diagnostics: AdminDiagnostics = {
       dbSizeBytes: databaseSizeBytes(db),
       eventCount: countEvents(db),
-      botDrops: listBotDrops(db, since).map((row) => ({
-        siteId: row.site_id,
-        localDate: row.local_date,
-        count: row.count,
-      })),
+      botDrops: listBotDrops(db, since).map(toDropCounts),
+      excludedDrops: listExcludedDrops(db, since).map(toDropCounts),
     };
     return c.json(diagnostics);
   });
 
   return app;
 }
+
+const toDropCounts = (row: DropCountRow): AdminBotDrops => ({
+  siteId: row.site_id,
+  localDate: row.local_date,
+  count: row.count,
+});
 
 type Parsed<T> = { ok: true; data: T } | { ok: false; response: Response };
 

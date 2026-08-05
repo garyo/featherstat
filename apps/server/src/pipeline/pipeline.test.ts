@@ -8,7 +8,14 @@ import {
 } from '@featherstat/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DESKTOP_UA, GOOGLEBOT_UA, resultOf, T0 } from '../../test/rows.ts';
-import { createSite, type Db, getBotDrops, openDb, withWriteTransaction } from '../db/index.ts';
+import {
+  createSite,
+  type Db,
+  getBotDrops,
+  getExcludedDrops,
+  openDb,
+  withWriteTransaction,
+} from '../db/index.ts';
 import { executeQueryRequest } from '../query/executor.ts';
 import type { GeoProvider } from './geo.ts';
 import type { Pipeline } from './index.ts';
@@ -89,6 +96,33 @@ describe('createPipeline', () => {
     vi.advanceTimersByTime(BATCH_INTERVAL_MS);
     expect(db.prepare('SELECT COUNT(*) FROM events').pluck().get()).toBe(0);
     expect(getBotDrops(db, 1, '2026-07-27')).toBe(2);
+  });
+
+  it('drops excluded traffic before storage and counts it separately from bots', () => {
+    pipeline.exclusions.setRules([{ value: '203.0.113.0/24', note: 'home' }]);
+    pipeline.sink([hit()], ctx()); // 203.0.113.5 — inside the rule
+    pipeline.sink([hit()], ctx({ ip: '198.51.100.7' })); // outside it
+    vi.advanceTimersByTime(BATCH_INTERVAL_MS);
+
+    expect(db.prepare('SELECT COUNT(*) FROM events').pluck().get()).toBe(1);
+    expect(getExcludedDrops(db, 1, '2026-07-27')).toBe(1);
+    // The counters must not bleed: an excluded hit is not a bot drop.
+    expect(getBotDrops(db, 1, '2026-07-27')).toBe(0);
+  });
+
+  it('counts an excluded crawler as excluded, not as a bot', () => {
+    pipeline.exclusions.setRules([{ value: '203.0.113.5', note: '' }]);
+    pipeline.sink([hit()], ctx({ userAgent: GOOGLEBOT_UA }));
+    vi.advanceTimersByTime(BATCH_INTERVAL_MS);
+    expect(getExcludedDrops(db, 1, '2026-07-27')).toBe(1);
+    expect(getBotDrops(db, 1, '2026-07-27')).toBe(0);
+  });
+
+  it('stores everything while no exclusion rule is configured', () => {
+    pipeline.sink([hit()], ctx());
+    vi.advanceTimersByTime(BATCH_INTERVAL_MS);
+    expect(db.prepare('SELECT COUNT(*) FROM events').pluck().get()).toBe(1);
+    expect(getExcludedDrops(db, 1, '2026-07-27')).toBe(0);
   });
 
   it('drops hits for unknown sites', () => {

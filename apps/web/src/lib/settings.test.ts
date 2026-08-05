@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  botDropTotals,
+  dropTotals,
   formatBytes,
   localInputToMs,
   msToLocalInput,
@@ -52,10 +52,10 @@ describe('parseDomains', () => {
   });
 });
 
-describe('botDropTotals', () => {
+describe('dropTotals', () => {
   it('sums per site, largest first', () => {
     expect(
-      botDropTotals([
+      dropTotals([
         { siteId: 1, localDate: '2026-07-27', count: 2 },
         { siteId: 2, localDate: '2026-07-27', count: 9 },
         { siteId: 1, localDate: '2026-07-26', count: 3 },
@@ -67,7 +67,7 @@ describe('botDropTotals', () => {
   });
 
   it('is empty for no drops', () => {
-    expect(botDropTotals([])).toEqual([]);
+    expect(dropTotals([])).toEqual([]);
   });
 });
 

@@ -1,4 +1,9 @@
-import { AdminPropsResponseSchema, type SiteInfo } from '@featherstat/shared';
+import {
+  type AdminDiagnostics,
+  AdminPropsResponseSchema,
+  type ExclusionState,
+  type SiteInfo,
+} from '@featherstat/shared';
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { event, openTestDb, T0 } from '../../test/rows.ts';
@@ -9,6 +14,7 @@ import {
   getSetting,
   getSite,
   incrementBotDrops,
+  incrementExcludedDrops,
   insertEvents,
   insertShareToken,
   listPropKeys,
@@ -19,6 +25,7 @@ import {
 import { readAlertRules, writeAlertRules } from '../jobs/alerts.ts';
 import { runPropScrubs } from '../jobs/prop-scrub.ts';
 import { runSitePurges } from '../jobs/site-purge.ts';
+import { ExclusionMatcher, type Resolver, refreshResolutions } from '../pipeline/exclusions.ts';
 import { PropRegistry } from '../pipeline/props.ts';
 import { createAdminRoutes } from './admin.ts';
 
@@ -410,5 +417,107 @@ describe('data settings (docs/02 § Background jobs)', () => {
       backupKeep: 7,
     });
     expect(res.status).toBe(400);
+  });
+});
+
+describe('traffic exclusion (docs/03 § Exclusions)', () => {
+  let exclusions: ExclusionMatcher;
+  let resolver: Resolver;
+
+  beforeEach(() => {
+    exclusions = new ExclusionMatcher(() => clock);
+    resolver = async () => ['192.0.2.9'];
+    app = new Hono<AuthEnv>().route(
+      '/',
+      createAdminRoutes(db, auth, {
+        exclusions,
+        refreshExclusions: () => refreshResolutions(exclusions, (host) => resolver(host)),
+      }),
+    );
+  });
+
+  it('starts empty — nothing configured excludes nothing', async () => {
+    const { cookie } = await login();
+    const res = await app.request('/api/admin/exclusions', { headers: { cookie } });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ rules: [], resolutions: [] });
+    expect(exclusions.empty).toBe(true);
+  });
+
+  it('stores rules and makes them bite the live matcher without a restart', async () => {
+    const session = await login();
+    const res = await mutate(session, 'PUT', '/api/admin/exclusions', {
+      rules: [{ value: '198.51.100.0/24', note: 'office' }],
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      rules: [{ value: '198.51.100.0/24', note: 'office' }],
+      resolutions: [],
+    });
+    // The settings row is the record; the matcher is what ingest consults.
+    expect(getSetting(db, 'exclusion_rules')).toBe(
+      JSON.stringify({ rules: [{ value: '198.51.100.0/24', note: 'office' }] }),
+    );
+    expect(exclusions.matches('198.51.100.7')).toBe(true);
+    expect(exclusions.matches('203.0.113.7')).toBe(false);
+  });
+
+  it('resolves a hostname rule during the write, not five minutes later', async () => {
+    const session = await login();
+    const res = await mutate(session, 'PUT', '/api/admin/exclusions', {
+      rules: [{ value: 'home.example.com', note: 'dynamic IP' }],
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      rules: [{ value: 'home.example.com', note: 'dynamic IP' }],
+      resolutions: [
+        { value: 'home.example.com', addresses: ['192.0.2.9'], resolvedAt: clock, error: null },
+      ],
+    });
+    expect(exclusions.matches('192.0.2.9')).toBe(true);
+  });
+
+  it('reports a failed lookup rather than failing the write', async () => {
+    const session = await login();
+    resolver = async () => {
+      throw new Error('ENOTFOUND');
+    };
+    const res = await mutate(session, 'PUT', '/api/admin/exclusions', {
+      rules: [{ value: 'missing.example.com', note: '' }],
+    });
+    expect(res.status).toBe(200);
+    const state = (await res.json()) as ExclusionState;
+    expect(state.resolutions[0]?.error).toBe('ENOTFOUND');
+  });
+
+  it('replaces the whole list, so removing a rule stops the exclusion', async () => {
+    const session = await login();
+    await mutate(session, 'PUT', '/api/admin/exclusions', {
+      rules: [{ value: '198.51.100.1', note: '' }],
+    });
+    await mutate(session, 'PUT', '/api/admin/exclusions', { rules: [] });
+    expect(exclusions.matches('198.51.100.1')).toBe(false);
+    expect(exclusions.empty).toBe(true);
+  });
+
+  it('400s a value that is neither an address nor a hostname', async () => {
+    const session = await login();
+    const res = await mutate(session, 'PUT', '/api/admin/exclusions', {
+      rules: [{ value: 'not a host', note: '' }],
+    });
+    expect(res.status).toBe(400);
+    expect(exclusions.empty).toBe(true);
+  });
+
+  it('reports excluded drops apart from bot drops in diagnostics', async () => {
+    const { cookie } = await login();
+    withWriteTransaction(db, () => {
+      incrementBotDrops(db, 1, '2026-07-27', 3);
+      incrementExcludedDrops(db, 1, '2026-07-27', 5);
+    });
+    const res = await app.request('/api/admin/diagnostics', { headers: { cookie } });
+    const diagnostics = (await res.json()) as AdminDiagnostics;
+    expect(diagnostics.botDrops).toEqual([{ siteId: 1, localDate: '2026-07-27', count: 3 }]);
+    expect(diagnostics.excludedDrops).toEqual([{ siteId: 1, localDate: '2026-07-27', count: 5 }]);
   });
 });

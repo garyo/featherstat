@@ -17,7 +17,7 @@ flowchart LR
 
   subgraph Server["analytics server (one Node process)"]
     IN["Ingest<br/>/matomo.php · /api/collect"]
-    PIPE["Pipeline<br/>validate → bot filter →<br/>UA parse → GeoIP →<br/>sessionize"]
+    PIPE["Pipeline<br/>validate → exclusions → bot filter →<br/>UA parse → GeoIP →<br/>sessionize"]
     Q["Write batcher<br/>(200 ms transactions)"]
     DB[("SQLite<br/>WAL")]
     QE["Query engine<br/>/api/query (batched)"]
@@ -54,14 +54,18 @@ caps, unknown parameters ignored. Full parameter mapping in
 ### Enrichment pipeline (pure functions, in-process)
 
 1. **Validate** — known site id, sane URL, clamp field lengths.
-2. **Bot filter** — `isbot(ua)` → drop, increment a per-site counter
+2. **Exclusions** — the client address against the configured rules (docs/03
+   § Exclusions) → drop, increment a per-site counter. Literal addresses and
+   CIDR prefixes match directly; hostname rules match an address set a timer
+   keeps resolved, so nothing here does DNS work per hit.
+3. **Bot filter** — `isbot(ua)` → drop, increment a per-site counter
    (visible in a diagnostics view; bots are counted, never stored).
-3. **UA parse** — browser, browser version, OS, device type. Cached by UA
+4. **UA parse** — browser, browser version, OS, device type. Cached by UA
    string (LRU) since the same UA repeats constantly.
-4. **GeoIP** — country/region/city + city centroid lat/lon from the local
+5. **GeoIP** — country/region/city + city centroid lat/lon from the local
    `.mmdb`, read via a pure-JS mmdb reader. The raw IP is used here and then
    discarded — it never touches disk.
-5. **Sessionize** — daily-rotating visitor hash → find-or-create session
+6. **Sessionize** — daily-rotating visitor hash → find-or-create session
    (30 min idle timeout), update engagement. Details in
    [03-data-model.md](03-data-model.md).
 

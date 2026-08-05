@@ -112,7 +112,8 @@ implementation:
   time; their shape serves the planner, not you. Query raw rows instead.
 - **Props governance** (`prop_keys`, `prop_values`, `prop_drops`) and the
   campaign registry/alias tables — ingest bookkeeping.
-- **`bot_drops`** — diagnostics counters.
+- **`bot_drops`** and **`excluded_drops`** — diagnostics counters (hits refused
+  as crawler traffic, and hits refused by an exclusion rule).
 
 ## The change promise
 

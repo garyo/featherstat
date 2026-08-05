@@ -3,6 +3,7 @@ import { createSecuredApp } from './auth/app.ts';
 import { openDb } from './db/index.ts';
 import { DEFAULT_MMDB_PATH, startJobs } from './jobs/index.ts';
 import { readNtfySettings } from './notify/index.ts';
+import { startExclusionRefresh } from './pipeline/exclusions.ts';
 import { MmdbProvider } from './pipeline/geo.ts';
 import { createPipeline } from './pipeline/index.ts';
 import { teeSinkFromEnv } from './pipeline/tee.ts';
@@ -37,6 +38,10 @@ const hub = createRealtimeHub(db);
 pipeline.onHit((event) => hub.record(event));
 pipeline.onFlush((summary) => hub.recordFlush(summary));
 
+// Hostname exclusion rules are resolved here, on a timer, and never on the hot
+// path: ingest only reads the address set this keeps current (docs/03 § Exclusions).
+const exclusionRefresh = startExclusionRefresh(pipeline.exclusions);
+
 // Tee mode (docs/06): during the bake, every hit is also forwarded to the live Matomo.
 const tee = teeSinkFromEnv(pipeline.sink);
 if (tee !== undefined) console.log(`forwarding hits to ${process.env.MATOMO_FORWARD_URL}`);
@@ -55,6 +60,7 @@ const { app, metrics, ntfy } = createSecuredApp({
       ? undefined
       : (request, now, allowedSites, derived, goals) =>
           pool.execute(request, now, allowedSites, derived, goals),
+  refreshExclusions: exclusionRefresh.refresh,
 });
 
 const jobs = startJobs(db, {
@@ -81,6 +87,7 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   process.once(signal, () => {
     server.close();
     jobs.stop();
+    exclusionRefresh.stop();
     void (pool?.close() ?? Promise.resolve()).finally(() => {
       pipeline.shutdown(); // final flush — queued beacons land before exit
       db.close();

@@ -55,8 +55,8 @@ export function localInputToMs(value: string): number | undefined {
   return Number.isNaN(ms) ? undefined : ms;
 }
 
-/** Per-site totals over the diagnostics window, largest first. */
-export function botDropTotals(drops: readonly AdminBotDrops[]): Array<[number, number]> {
+/** Per-site totals over the diagnostics window, largest first — bot drops or excluded ones. */
+export function dropTotals(drops: readonly AdminBotDrops[]): Array<[number, number]> {
   const totals = new Map<number, number>();
   for (const drop of drops) totals.set(drop.siteId, (totals.get(drop.siteId) ?? 0) + drop.count);
   return [...totals.entries()].sort((a, b) => b[1] - a[1]);

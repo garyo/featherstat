@@ -30,15 +30,17 @@ class DurationSummary {
 export class Metrics {
   private hits = 0;
   private botDrops = 0;
+  private excludedDrops = 0;
   private sseClients = 0;
   private rollupRepairs = 0;
   readonly flush = new DurationSummary();
   readonly query = new DurationSummary();
 
-  /** Feed from `pipeline.onFlush` — the stored-hit and bot-drop counters. */
+  /** Feed from `pipeline.onFlush` — the stored-hit and drop counters. */
   recordFlush(summary: FlushSummary): void {
     this.hits += summary.events;
     this.botDrops += summary.botDrops;
+    this.excludedDrops += summary.excludedDrops;
   }
 
   /** Feed from the nightly reconcile job: nonzero means a delta-logic bug fired. */
@@ -62,6 +64,11 @@ export class Metrics {
         'analytics_ingest_bot_drops_total',
         'Hits dropped as bot traffic since process start.',
         this.botDrops,
+      ),
+      ...counter(
+        'analytics_ingest_excluded_drops_total',
+        'Hits dropped by an exclusion rule since process start.',
+        this.excludedDrops,
       ),
       ...summary('analytics_flush_duration_ms', 'Write-batch flush transaction time.', this.flush),
       ...summary('analytics_query_duration_ms', 'POST /api/query handling time.', this.query),
