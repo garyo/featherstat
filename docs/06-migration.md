@@ -402,9 +402,12 @@ metric *means* has to be logged here or the comparison silently drifts.
 3. Cut over: **no top-up import** — see "History was dropped" below. Disable
    tee and stop the Matomo + MariaDB containers (compose entries commented,
    data kept — same reversible pattern used when Umami was retired).
+   **Done 2026-08-05** (docs/09 § the 11:50 entry): swap fell from 1006 MB to
+   178 MB, which was the point.
 4. After a quiet month: `mysqldump` archived off-host, containers removed,
    `matomo.example.com` router alias retired, MariaDB's ~190 MB of swap
-   reclaimed.
+   reclaimed. **Still pending** — the containers are stopped-not-removed and
+   `./matomo` still holds 222 MB of database and 246 MB of html.
 
 ## Post-cutover deltas to expect
 
