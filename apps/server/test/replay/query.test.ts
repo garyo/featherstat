@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../../src/db/index.ts';
 import { executeQueryRequest } from '../../src/query/executor.ts';
 import { resultOf } from '../rows.ts';
+import { itWhereCalibrated } from './calibrated.ts';
 import { generateCorpus, type PlaceTotals } from './generate.ts';
 import { openReplayDb } from './harness.ts';
 
@@ -172,7 +173,7 @@ describe('query engine on the replay corpus', () => {
     }
   });
 
-  it('answers the full example batch under the 50 ms budget (docs/02)', () => {
+  itWhereCalibrated('answers the full example batch under the 50 ms budget (docs/02)', () => {
     executeQueryRequest(db, EXAMPLE_BATCH, { now: corpus.endMs }); // warm statement cache
     let best = Number.POSITIVE_INFINITY;
     for (let run = 0; run < 3; run += 1) {

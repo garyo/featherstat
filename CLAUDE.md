@@ -166,7 +166,13 @@ advisory.
 
 The gates run themselves if you enable the hooks once per clone:
 `git config core.hooksPath .githooks` (pre-commit → `check`, pre-push → `ci`).
-`.github/workflows/ci.yml` runs the same `bun run ci` on push and PR.
+`.github/workflows/ci.yml` runs the same `bun run ci` on push and PR — **bar the
+perf gates**, which are calibrated to a dev machine and would measure a 1.2–1.5×
+slower runner instead of the code. `bun run bench` and the two assertions marked
+`itWhereCalibrated` skip under `$CI` (loudly, in the summary). The reasoning,
+and the cost, live in `apps/server/test/replay/calibrated.ts`. The consequence
+worth holding: **the pre-push hook is the only thing enforcing perf**, so a
+clone without it can land a regression.
 
 **`bun run e2e` is deliberately outside all of that** (`test/e2e`, ~25 s): run it
 after touching anything the browser renders, and wire it into CI when there is

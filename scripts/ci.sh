@@ -8,7 +8,9 @@
 #
 # Also the body of the pre-push hook (.githooks/pre-push) and of the GitHub
 # Actions workflow (.github/workflows/ci.yml), so all three agree by
-# construction.
+# construction — with one deliberate exception, marked below: under $CI the
+# hardware-calibrated perf gates sit out, because there they would measure the
+# runner instead of the code.
 
 set -uo pipefail
 
@@ -52,7 +54,24 @@ gate 'test' bun run test
 # Replay perf budget from docs/02, thresholds in apps/server/test/replay/
 # bench-thresholds.json. Runs under Node, not Bun: better-sqlite3 dies with a
 # NAPI fatal error under Bun 1.3.4.
-gate 'bench' bun run bench
+#
+# Local only, and not because it is slow. The thresholds were measured on a dev
+# machine with just enough headroom to ignore its own scheduler; a shared CI
+# runner is 1.2-1.5x slower, so there the budget reports the runner rather than
+# the code (mean flush 20 ms locally, 27.4 ms on ubuntu-latest, against 25).
+# Restating them for the slowest possible machine would forfeit what they catch,
+# and invariant 6 forbids loosening them anyway — so they stay strict and stay
+# where they were calibrated. Same call as `itWhereCalibrated`
+# (apps/server/test/replay/calibrated.ts), which sits out the same two in-test
+# wall-clock assertions. The skip is printed, never silent: a gate that vanishes
+# quietly is one nobody notices has stopped running.
+if [ -n "${CI:-}" ]; then
+  printf '\n%s━━ bench %s(skipped: hardware-calibrated, runs in the pre-push hook)%s\n' \
+    "$bold" "$dim" "$reset"
+  results+=("  ${dim}skip${reset}  bench ${dim}(hardware-calibrated)${reset}")
+else
+  gate 'bench' bun run bench
+fi
 
 printf '\n%s━━ summary%s\n' "$bold" "$reset"
 printf '%s\n' "${results[@]}"

@@ -121,7 +121,18 @@ The bundle budgets and the bench thresholds are **ratchets**: they tighten,
 never loosen. A breach means the thing grew or slowed, not that the number was
 wrong.
 
-Enable the hooks once per clone:
+**The perf gates are local.** Their thresholds were measured on a dev machine
+with just enough headroom to ignore its own scheduler, and a shared CI runner is
+1.2–1.5× slower — there the budget reports the runner, not the code. Widening
+the numbers to fit the slowest machine that might run them would forfeit exactly
+the blowup they catch, so `bun run bench` and the two wall-clock assertions
+marked `itWhereCalibrated` sit out under `$CI` (announced in the summary, never
+silently). The trade is stated where it lives, in
+`apps/server/test/replay/calibrated.ts`: a perf regression pushed without the
+hook installed reaches `main` unchallenged.
+
+Enable the hooks once per clone — on this project that is what runs the perf
+gates at all:
 
 ```bash
 git config core.hooksPath .githooks
@@ -129,8 +140,8 @@ git config core.hooksPath .githooks
 
 `pre-commit` runs the fast gates (`bun run check`, ~5 s); `pre-push` runs the
 whole of `bun run ci` (~25 s) — the same script
-[GitHub Actions](.github/workflows/ci.yml) runs. Either can be bypassed with
-`--no-verify` when you mean to.
+[GitHub Actions](.github/workflows/ci.yml) runs, bar those perf gates. Either
+can be bypassed with `--no-verify` when you mean to.
 
 ## Deploy (Docker)
 

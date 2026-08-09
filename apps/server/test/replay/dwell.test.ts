@@ -10,6 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../../src/db/index.ts';
 import { executeQueryRequest } from '../../src/query/executor.ts';
 import { resultOf } from '../rows.ts';
+import { itWhereCalibrated } from './calibrated.ts';
 import { BOT_AGENTS, type Corpus, generateCorpus, localStamp, oraclePath } from './generate.ts';
 import { openReplayDb } from './harness.ts';
 
@@ -296,7 +297,7 @@ describe('time on page on the replay corpus', () => {
     expect(resultOf(response, 'dwell').rows).toEqual([]);
   });
 
-  it('answers the busiest site under 100 ms', () => {
+  itWhereCalibrated('answers the busiest site under 100 ms', () => {
     const request = dwellBatch({ site: 2, ...FULL_RANGE }, 10);
     executeQueryRequest(db, request); // warm statement cache
     let best = Number.POSITIVE_INFINITY;
