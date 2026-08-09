@@ -7,7 +7,7 @@ import { type Db, getSetting, setSetting, withWriteTransaction } from '../db/ind
  * operator sets a directory in Settings → Data; then one dated copy per day,
  * pruned to the newest N.
  *
- * `VACUUM INTO` is the ONLY safe way to copy a live WAL database (docs/10) —
+ * `VACUUM INTO` is the ONLY safe way to copy a live WAL database (docs/09) —
  * it writes a compacted, consistent snapshot from one read transaction. It is
  * deliberately run OUTSIDE `withWriteTransaction`: it is a read-side statement
  * (it never touches the source file), SQLite refuses VACUUM inside any open

@@ -1,15 +1,14 @@
 # 01 — Context and requirements
 
 What exists today, what is actually used, what is measurably wrong with it, and
-what the replacement must therefore do. Everything in this document is from the
-live deployment (`analytics.example.com`) and the tracked sites' repos as of
-2026-07-27.
+what the replacement must therefore do. Everything in this document is measured
+from the live deployment and the tracked sites' repos as of 2026-07-27.
 
 ## The deployment being replaced
 
 - **Matomo 5** (`matomo:5-apache`) + **MariaDB**, docker-compose on a GCE
-  **e2-small** (2 shared-core vCPUs ≈ 0.5 vCPU sustained, 2 GB RAM) that also
-  runs Traefik, two static sites, ntfy, and other containers.
+  **e2-small** (2 shared-core vCPUs ≈ 0.5 vCPU sustained, 2 GB RAM) shared with
+  a reverse proxy and several other containers.
 - GeoIP: **DB-IP City Lite** `.mmdb`, monthly cron refresh, re-selected via UI.
 - Archiving: `core:archive` cron every 15 min (Matomo pre-aggregates reports).
 - The Matomo database is tiny — data volume has never been the problem.

@@ -29,7 +29,7 @@ dashboards — with none of the weight.
 1. **One process, one file.** Node + SQLite (WAL). No database server, no
    Redis, no cron container, no worker fleet. Backup = one nightly
    `VACUUM INTO` copy, built in (never `cp` a live WAL file — see
-   docs/10).
+   docs/09).
 2. **A dashboard is one query.** The client sends a single batched query
    request describing every widget; the server answers all of them from SQLite
    in one read transaction. Target: p95 < 50 ms server-side on an e2-small.
@@ -66,21 +66,16 @@ dashboards — with none of the weight.
 | [06-migration.md](docs/06-migration.md) | Importing Matomo history; cutover plan |
 | [07-roadmap.md](docs/07-roadmap.md) | Milestones M0–M3 with acceptance criteria |
 | [08-implementation-plan.md](docs/08-implementation-plan.md) | Build order: work packages WP0–WP14, working agreement, pre-start decisions |
-| [09-cutover-runbook.md](docs/09-cutover-runbook.md) | Host-specific deploy, import, tee-bake, and cutover steps |
+| [09-sqlite-contract.md](docs/09-sqlite-contract.md) | What a read-only reader of the SQLite file may rely on |
+| [10-installing.md](docs/10-installing.md) | Installing the tracker on a site — the operator's guide |
+| [adopter-review.md](docs/adopter-review.md) | An outside-in review: would someone else choose this? |
 | [mockups/dashboard.html](mockups/dashboard.html) | Self-contained rendered mockup of the dashboard UI |
-
-## Name
-
-**featherstat** — chosen 2026-07-28 (npm + featherstat.site/.com/.dev free at
-the time). Brand mark and favicon sources in `brand/`. The repo goes public on
-GitHub as `featherstat` when ready.
 
 ## Status
 
-v1 (milestones M0–M1) is complete and running in production. This branch is
-the **v2 line** — breaking changes allowed, reached from a v1 database with
-one offline command (`featherstat import v1 <path>`; stop v1 → import →
-start v2). What v2 adds:
+Running in production, six sites, since 2026-07-28. Milestones M0–M1 shipped
+as v1; **v2 is current** — reached from a v1 database with one offline command
+(`featherstat import v1 <path>`; stop v1 → import → start v2). What v2 added:
 
 - **Query engine**: a worker-thread read pool (slow queries never block
   ingest), rollup tables with honest exact distincts, a nested filter grammar
@@ -91,10 +86,12 @@ start v2). What v2 adds:
 - **Data out**: scoped read-only API tokens (Bearer, CORS-enabled), CSV
   export, magic-link read-only viewers, an MCP endpoint (`/mcp`) so an LLM can
   query the same closed vocabulary, and a documented read-only SQLite contract
-  (docs/10).
+  (docs/09).
 - **Operations**: dashboards as a library with shipped templates, site
   deletion (tombstone + chunked purge), retention that ages every table it
   should, and nightly `VACUUM INTO` backups configured from Settings → Data.
+
+The brand mark and favicon sources live in `brand/`.
 
 ## Development
 
@@ -164,8 +161,8 @@ Tracking endpoints and `/healthz` are public, everything else needs the session.
 | `ASSETS_DIR` / `WEB_DIR` | `/app/tracker` / `/app/web` | Built tracker bundles / SPA (preset in the image) |
 | `AUTH_DISABLED` | **never set** | Local-dev auth bypass; refused unless `NODE_ENV` is `development`/`test` |
 
-Compose + Traefik, matching the rest of the host (docs/02 § Security posture —
-TLS and the rate-limit backstop live in Traefik):
+Compose + Traefik (docs/02 § Security posture — TLS and the rate-limit
+backstop live in Traefik):
 
 ```yaml
 services:

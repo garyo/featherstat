@@ -127,15 +127,17 @@ toggle · site delete · share links · native ESM tracker · ntfy notifications
 - Docs 01–07 are living: when implementation contradicts a design doc, the
   doc gets amended in the same PR.
 
-## Decisions needed before WP0
+## Decisions taken before WP0
 
-1. **Name** — commit to wakescope (claim npm + domains), or start under the
-   placeholder and rename before the repo goes public?
-2. **Public from day one** — recommended above; veto if you'd rather bake
-   privately through M0.
-3. **Corpus source** — OK to pull scrubbed access-log lines from the GCE
-   host for fixtures? (IPs replaced, UA strings kept.)
-4. **Repo home** — `github.com/garyo/<name>`, or a fresh org for the project?
+1. **Name** — built under a placeholder and renamed once, to **featherstat**,
+   on 2026-07-28, before anything was published.
+2. **Public from day one** — vetoed. It baked privately through v1 and v2 and
+   went public afterwards, so the deployment could be tuned against live
+   traffic without an audience.
+3. **Corpus source** — yes: real access-log beacons, addresses replaced with
+   the documented test ranges and UA strings kept verbatim. That is the golden
+   corpus in `apps/server/test/fixtures/matomo/`, now ratcheted (invariant 6).
+4. **Repo home** — `github.com/garyo/featherstat`, no separate org.
 
 ## v2 epilogue (2026-08)
 

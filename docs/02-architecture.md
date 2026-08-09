@@ -136,7 +136,7 @@ site's version moves, and the ETag machinery makes a no-op revalidation free.
   Settings → Data names a directory; pruned to the newest N copies
   (`backup_keep`, default 7). `VACUUM INTO` writes a compacted, consistent
   snapshot from one read transaction — the only safe way to copy a live WAL
-  file (docs/10) — and runs outside the write transaction discipline because it
+  file (docs/09) — and runs outside the write transaction discipline because it
   makes no writes. better-sqlite3 is synchronous, so the copy blocks the
   process for its duration: fine at target scale, and `db.backup()` is the
   incremental upgrade path if it stops being fine. Litestream still works as an

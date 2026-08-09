@@ -12,6 +12,10 @@ data/
 .env.*
 docs/*.html
 
+# Operator notes for a specific deployment — hostnames, paths, deploy log.
+# Never tracked: this repo is public.
+docs/private/
+
 # Playwright (test/e2e)
 test-results/
 playwright-report/
