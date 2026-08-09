@@ -88,6 +88,24 @@ trackers assert the timeout case end to end. Events, outlinks, downloads and
 pings are untouched. A suppressed hit is never sent, so invariant 4 (beacons
 never bounce) is not in play: the collector refuses nothing.
 
+**A speculated page is not a visit (both trackers).** Speculation rules let a
+browser prerender a likely-next page: it fetches, parses and *runs* the
+document — tag included — before the visitor has clicked, and throws the whole
+thing away if they never do. Taken at face value that is a page view, and a
+visit, for a page nobody opened. The repeat guard above cannot reach it, because
+a prerendered document is its own realm holding its own tracker, so two of them
+are two first views rather than one announced twice. So the first page view
+waits for the arrival instead: `document.prerendering` says the document is only
+being speculated on, and `prerenderingchange` fires once, when the visitor
+actually comes. The native tracker defers its opening `page()`; the shim defers
+*taking over* `_paq.push`, which leaves the tag's commands accumulating in the
+plain array they were always pushed into and drains them, in order, on arrival —
+so the view carries the moment of arrival, not of speculation. A browser that
+does not prerender defines neither name and pays one property read.
+`packages/tracker/src/prerender.ts` owns the rule and both trackers assert it,
+including the case that matters most: a prerender torn down before activation
+sends nothing at all.
+
 **Leaving is a hit (both trackers).** Engagement accrues *between* hits — the
 sessionizer credits each arrival with the gap since the last one, clamped at
 `PING_CLAMP_MS` — so a session is only ever credited up to its **last** hit.

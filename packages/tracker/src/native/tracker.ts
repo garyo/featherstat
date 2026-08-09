@@ -1,6 +1,7 @@
 import type { HitType } from '@featherstat/shared';
 import { isExitPingWorthwhile } from '../exit.ts';
 import { classifyLink } from '../links.ts';
+import { whenActivated } from '../prerender.ts';
 import { isRepeatView } from '../repeat.ts';
 import { documentHeight, READ_THRESHOLD_PCT, scrollDepthPct } from '../scroll.ts';
 import { send } from '../send.ts';
@@ -207,6 +208,8 @@ export function init(config: TrackerConfig): () => void {
   if (config.autoLinks !== false) document.addEventListener('click', onClick, true);
   if (autoPageviews) window.addEventListener('popstate', onNavigate);
   const unhook = autoPageviews ? hookHistory(onNavigate) : undefined;
+  /** Drops a first page view still waiting on activation (prerender.ts). */
+  let unwait: (() => void) | undefined;
 
   const started: Runtime = {
     site: config.site,
@@ -227,11 +230,20 @@ export function init(config: TrackerConfig): () => void {
       document.removeEventListener('click', onClick, true);
       window.removeEventListener('popstate', onNavigate);
       unhook?.();
+      unwait?.();
     },
   };
   runtime = started;
 
-  if (autoPageviews) page();
+  // Not `page()` directly: a prerendered document reaches here before the visitor
+  // has decided to come, and the view it would announce is not one yet
+  // (prerender.ts). The identity check keeps a prerender that activates late from
+  // announcing its view onto whichever tracker has since replaced this one.
+  if (autoPageviews) {
+    unwait = whenActivated(() => {
+      if (runtime === started) page();
+    });
+  }
 
   // Scoped teardown: a stale handle never stops a tracker that replaced it.
   return () => {

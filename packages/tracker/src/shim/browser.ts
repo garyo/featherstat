@@ -1,5 +1,6 @@
 import { isExitPingWorthwhile } from '../exit.ts';
 import { classifyLink } from '../links.ts';
+import { whenActivated } from '../prerender.ts';
 import { send } from '../send.ts';
 import {
   type Effect,
@@ -137,14 +138,22 @@ export function startShim(): () => void {
 
   window._paq = window._paq ?? [];
   const queue = window._paq;
-  const queued = queue.splice(0, queue.length);
-  queue.push = (...commands: unknown[]): number => {
-    for (const command of commands) dispatch(command);
-    return 0;
-  };
-  for (const command of queued) dispatch(command);
+  // Taking over `push` is what starts the reporting, so a prerendered document
+  // simply does not take it over yet (prerender.ts): the tag's own commands pile
+  // up in the plain array they were always pushed into, and drain in order when
+  // the visitor arrives. `pageInfo()` is read at dispatch, so the view they drain
+  // into carries the moment of arrival rather than the moment of speculation.
+  const unwait = whenActivated(() => {
+    const queued = queue.splice(0, queue.length);
+    queue.push = (...commands: unknown[]): number => {
+      for (const command of commands) dispatch(command);
+      return 0;
+    };
+    for (const command of queued) dispatch(command);
+  });
 
   return () => {
+    unwait?.();
     if (heartbeat !== undefined) clearInterval(heartbeat);
     window.removeEventListener('focus', onFocus);
     window.removeEventListener('blur', onBlur);

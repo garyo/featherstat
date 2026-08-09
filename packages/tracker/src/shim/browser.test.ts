@@ -50,9 +50,21 @@ beforeEach(() => {
 afterEach(() => {
   stop?.();
   stop = undefined;
+  Reflect.deleteProperty(document, 'prerendering'); // as global as `visibilityState`
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
+
+/** happy-dom does not prerender; the flag `whenActivated` reads is set by hand. */
+function speculating(on: boolean): void {
+  Object.defineProperty(document, 'prerendering', { value: on, configurable: true });
+}
+
+/** The visitor follows the speculated link. */
+function arrive(): void {
+  speculating(false);
+  document.dispatchEvent(new Event('prerenderingchange'));
+}
 
 describe('_paq wiring', () => {
   it('drains the queue the tag left behind and sends the pageview', () => {
@@ -392,3 +404,45 @@ function hide(hidden: boolean): void {
     configurable: true,
   });
 }
+
+describe('prerendering (prerender.ts)', () => {
+  it('sends nothing for a tag that ran only because the page was speculated on', () => {
+    speculating(true);
+    queue(snippet());
+    stop = startShim();
+    expect(sent()).toEqual([]);
+  });
+
+  it('drains the tag in its original order when the visitor arrives', () => {
+    speculating(true);
+    queue(snippet());
+    stop = startShim();
+    arrive();
+    const [pageview] = sent();
+    expect(beacon.mock.calls[0]?.[0]).toBe(TRACKER_URL);
+    expect(pageview?.get('idsite')).toBe('2');
+    expect(pageview?.get('url')).toBe(location.href);
+  });
+
+  // The array is the tag's own; while speculating it keeps its native `push`, so
+  // commands land in it and are drained on arrival rather than lost.
+  it('keeps commands pushed during the speculation', () => {
+    speculating(true);
+    queue(snippet());
+    stop = startShim();
+    window._paq?.push(['trackEvent', 'globe', 'rotate']);
+    expect(sent()).toEqual([]);
+    arrive();
+    expect(sent().some((hit) => hit.get('e_a') === 'rotate')).toBe(true);
+  });
+
+  it('never sends for a prerender torn down before the visitor arrives', () => {
+    speculating(true);
+    queue(snippet());
+    stop = startShim();
+    stop();
+    stop = undefined;
+    arrive();
+    expect(sent()).toEqual([]);
+  });
+});

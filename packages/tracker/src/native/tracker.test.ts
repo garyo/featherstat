@@ -33,9 +33,21 @@ beforeEach(() => {
 afterEach(() => {
   stop?.();
   stop = undefined;
+  Reflect.deleteProperty(document, 'prerendering'); // as global as `visibilityState`
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
+
+/** happy-dom does not prerender; the flag `whenActivated` reads is set by hand. */
+function speculating(on: boolean): void {
+  Object.defineProperty(document, 'prerendering', { value: on, configurable: true });
+}
+
+/** The visitor follows the speculated link. */
+function arrive(): void {
+  speculating(false);
+  document.dispatchEvent(new Event('prerenderingchange'));
+}
 
 describe('pageviews', () => {
   it('records one on init, addressed to the configured site and endpoint', () => {
@@ -511,5 +523,55 @@ describe('hits follow the reported page, not the address bar', () => {
     start();
     vi.advanceTimersByTime(15_000);
     for (const hit of sent()) expect(hit.url).toBe(location.href);
+  });
+});
+
+describe('prerendering (prerender.ts)', () => {
+  it('announces nothing while the document is only being speculated on', () => {
+    speculating(true);
+    start();
+    expect(sent()).toEqual([]);
+  });
+
+  it('announces exactly one view when the visitor arrives', () => {
+    speculating(true);
+    start();
+    arrive();
+    expect(sent().filter((hit) => hit.type === 'pageview')).toHaveLength(1);
+  });
+
+  it('reports the arrival, not the speculation, as the view', () => {
+    speculating(true);
+    start();
+    arrive();
+    expect(sent()[0]?.url).toBe(location.href);
+  });
+
+  // A prerender the visitor never chose is discarded with the page view it never
+  // earned — the ghost visit this guard exists to prevent.
+  it('never announces a view for a prerender that is stopped first', () => {
+    speculating(true);
+    start();
+    stop?.();
+    stop = undefined;
+    arrive();
+    expect(sent()).toEqual([]);
+  });
+
+  it('leaves a tracker that replaced it alone when a stale prerender activates', () => {
+    speculating(true);
+    const stale = init({ site: 4, endpoint: ENDPOINT });
+    speculating(false);
+    start(); // a second tracker takes over before the first is ever activated
+    beacon.mockClear();
+    document.dispatchEvent(new Event('prerenderingchange'));
+
+    expect(sent()).toEqual([]);
+    stale();
+  });
+
+  it('still announces the view immediately where nothing prerenders', () => {
+    start();
+    expect(sent().filter((hit) => hit.type === 'pageview')).toHaveLength(1);
   });
 });
