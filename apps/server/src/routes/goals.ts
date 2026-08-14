@@ -10,11 +10,13 @@ import {
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { Auth, AuthEnv } from '../auth/auth.ts';
+import { canManageSite } from '../auth/principal.ts';
 import {
   createGoal,
   type Db,
   deleteGoal,
   type GoalRow,
+  getGoal,
   listGoals,
   updateGoal,
   withWriteTransaction,
@@ -43,17 +45,29 @@ export function createGoalRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
   app.use('/api/admin/*', auth.gate);
   app.use('/api/admin/*', auth.csrfGuard);
 
+  /** Out-of-scope site answers exactly like nonexistent — a probe learns nothing. */
+  const deniedSite = (c: Context, siteId: number): Response | undefined =>
+    canManageSite(c.get('principal'), siteId)
+      ? undefined
+      : c.json({ error: `unknown site ${siteId}` }, 404);
+
   const list = (c: Context): Response => {
     const siteId = Number(c.req.query('site'));
     if (!Number.isInteger(siteId) || siteId <= 0) return c.json({ error: 'invalid site id' }, 400);
     return c.json(listGoals(db, siteId).flatMap(toInfoOrNothing));
   };
   app.get('/api/goals', list);
-  app.get('/api/admin/goals', list);
+  app.get('/api/admin/goals', (c) => {
+    const siteId = Number(c.req.query('site'));
+    if (!Number.isInteger(siteId) || siteId <= 0) return c.json({ error: 'invalid site id' }, 400);
+    return deniedSite(c, siteId) ?? list(c);
+  });
 
   app.post('/api/admin/goals', async (c) => {
     const siteId = Number(c.req.query('site'));
     if (!Number.isInteger(siteId) || siteId <= 0) return c.json({ error: 'invalid site id' }, 400);
+    const denied = deniedSite(c, siteId);
+    if (denied !== undefined) return denied;
     const body = await parseGoalBody(c);
     if (body.ok === false) return body.response;
     const row = tryWrite(c, () =>
@@ -68,6 +82,10 @@ export function createGoalRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
   app.put('/api/admin/goals/:id', async (c) => {
     const id = parseDashboardId(c.req.param('id'));
     if (id === undefined) return c.json({ error: 'invalid goal id' }, 400);
+    const existing = getGoal(db, id);
+    if (existing === undefined || !canManageSite(c.get('principal'), existing.site_id)) {
+      return c.json({ error: `unknown goal ${id}` }, 404);
+    }
     const body = await parseGoalBody(c);
     if (body.ok === false) return body.response;
     const row = tryWrite(c, () =>
@@ -81,6 +99,10 @@ export function createGoalRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
   app.delete('/api/admin/goals/:id', (c) => {
     const id = parseDashboardId(c.req.param('id'));
     if (id === undefined) return c.json({ error: 'invalid goal id' }, 400);
+    const existing = getGoal(db, id);
+    if (existing === undefined || !canManageSite(c.get('principal'), existing.site_id)) {
+      return c.json({ error: `unknown goal ${id}` }, 404);
+    }
     const deleted = withWriteTransaction(db, () => deleteGoal(db, id));
     if (!deleted) return c.json({ error: `unknown goal ${id}` }, 404);
     return c.json({ ok: true });

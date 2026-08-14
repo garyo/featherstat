@@ -1086,6 +1086,12 @@ const SQL_UPDATE_ANNOTATION = `UPDATE annotations SET site_id = ?, ts = ?, text 
 WHERE id = ? RETURNING ${ANNOTATION_COLUMNS}`;
 const SQL_DELETE_ANNOTATION = 'DELETE FROM annotations WHERE id = ?';
 
+export function getAnnotation(db: Db, id: number): AnnotationRow | undefined {
+  return stmt<AnnotationRow>(db, `SELECT ${ANNOTATION_COLUMNS} FROM annotations WHERE id = ?`).get(
+    id,
+  );
+}
+
 /** All annotations, or one site's plus the install-wide (NULL-site) ones. */
 export function listAnnotations(db: Db, siteId?: number): AnnotationRow[] {
   if (siteId === undefined) {

@@ -8,7 +8,7 @@ import {
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { Auth, AuthEnv } from '../auth/auth.ts';
-import { parseSiteScope, serializeSiteScope } from '../auth/principal.ts';
+import { canGrantScope, parseSiteScope, serializeSiteScope } from '../auth/principal.ts';
 import { RateLimiter } from '../auth/ratelimit.ts';
 import {
   consumeMagicLink,
@@ -106,23 +106,47 @@ export function createViewerRoutes(
     return minted;
   };
 
-  app.get('/api/admin/viewers', (c) => c.json(listViewers(db).map(toViewerInfo)));
+  /** A user sees and revokes only viewers they invited; the admin sees all. */
+  const ownsMint = (c: Context, createdBy: number | null): boolean => {
+    const principal = c.get('principal');
+    return principal.kind !== 'user' || createdBy === principal.userId;
+  };
+
+  app.get('/api/admin/viewers', (c) =>
+    c.json(
+      listViewers(db)
+        .filter((viewer) => ownsMint(c, viewer.created_by_user_id))
+        .map(toViewerInfo),
+    ),
+  );
 
   app.post('/api/admin/viewers', async (c) => {
     const body = await parseBody(c);
     if (body.ok === false) return body.response;
+    const principal = c.get('principal');
+    if (!canGrantScope(principal, body.data.sites)) {
+      return c.json({ error: 'scope exceeds your sites' }, 400);
+    }
     const scope = serializeSiteScope(body.data.sites);
     const minted = withWriteTransaction(db, () => {
       pruneMagicLinks(db, auth.now()); // opportunistic sweep — no timer needed
       const existing = getViewerByEmail(db, body.data.email);
+      // Someone else's invitee cannot be re-scoped out from under them.
+      if (existing !== undefined && !ownsMint(c, existing.created_by_user_id)) return 'conflict';
       // Inviting an existing email is a re-invite: the scope updates and any
       // revocation clears — an explicit decision to restore access.
       const viewer =
         existing === undefined
-          ? insertViewer(db, { email: body.data.email, site_scope: scope, created_at: auth.now() })
+          ? insertViewer(db, {
+              email: body.data.email,
+              site_scope: scope,
+              created_at: auth.now(),
+              created_by_user_id: principal.kind === 'user' ? principal.userId : null,
+            })
           : (reinviteViewer(db, existing.id, scope) ?? existing);
       return mintLink(viewer);
     });
+    if (minted === 'conflict') return c.json({ error: 'email already invited' }, 409);
     return c.json(minted, 201);
   });
 
@@ -132,6 +156,8 @@ export function createViewerRoutes(
     const minted = withWriteTransaction(db, () => {
       const viewer = getViewer(db, id);
       if (viewer === undefined || viewer.revoked_at !== null) return undefined;
+      // Someone else's mint answers exactly like a nonexistent one.
+      if (!ownsMint(c, viewer.created_by_user_id)) return undefined;
       return mintLink(viewer);
     });
     if (minted === undefined) return c.json({ error: `no live viewer ${id}` }, 404);
@@ -144,6 +170,8 @@ export function createViewerRoutes(
     // Viewer and links revoke together; live sessions die at the gate, which
     // re-reads the viewer row on every request (auth.ts, principal.test.ts).
     const revoked = withWriteTransaction(db, () => {
+      const viewer = getViewer(db, id);
+      if (viewer === undefined || !ownsMint(c, viewer.created_by_user_id)) return false;
       const gone = revokeViewer(db, id, auth.now());
       if (gone) expireViewerMagicLinks(db, id, auth.now());
       return gone;

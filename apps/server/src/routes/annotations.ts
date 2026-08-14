@@ -6,12 +6,14 @@ import {
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { Auth, AuthEnv } from '../auth/auth.ts';
+import { canManageSite } from '../auth/principal.ts';
 import {
   type AnnotationRow,
   bumpAnnotationsVersion,
   createAnnotation,
   type Db,
   deleteAnnotation,
+  getAnnotation,
   getSite,
   listAnnotations,
   updateAnnotation,
@@ -32,10 +34,31 @@ const MAX_ANNOTATION_BODY_BYTES = 16 * 1024;
 
 export function createAnnotationRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
   const app = new Hono<AuthEnv>();
-  /** A note pinned to a site that does not exist is a mistake, not a row. */
+  /** A note pinned to a site that does not exist is a mistake, not a row —
+   * and an out-of-scope site answers exactly the same. An install-wide
+   * annotation (siteId null) shows on every site, so it is admin-only. */
   const checkSite = (c: Context, data: AnnotationCreate): Response | undefined => {
-    if (data.siteId === null || getSite(db, data.siteId) !== undefined) return undefined;
-    return c.json({ error: `unknown site ${data.siteId}` }, 404);
+    const principal = c.get('principal');
+    if (data.siteId === null) {
+      if (principal !== undefined && principal.kind !== 'admin') {
+        return c.json({ error: 'an all-sites annotation is admin-only' }, 403);
+      }
+      return undefined;
+    }
+    if (getSite(db, data.siteId) === undefined) {
+      return c.json({ error: `unknown site ${data.siteId}` }, 404);
+    }
+    if (principal !== undefined && !canManageSite(principal, data.siteId)) {
+      return c.json({ error: `unknown site ${data.siteId}` }, 404);
+    }
+    return undefined;
+  };
+
+  /** True when the stored row is this principal's to edit or delete. */
+  const rowWritable = (c: Context, row: AnnotationRow): boolean => {
+    const principal = c.get('principal');
+    if (principal === undefined || principal.kind === 'admin') return true;
+    return row.site_id !== null && canManageSite(principal, row.site_id);
   };
   app.use('/api/admin/annotations', bodyLimit({ maxSize: MAX_ANNOTATION_BODY_BYTES }));
   app.use('/api/admin/annotations/*', bodyLimit({ maxSize: MAX_ANNOTATION_BODY_BYTES }));
@@ -50,10 +73,22 @@ export function createAnnotationRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
 
   app.get('/api/admin/annotations', (c) => {
     const site = c.req.query('site');
-    if (site === undefined) return c.json(listAnnotations(db).map(toInfo));
+    // A user's management list is the rows they may edit — their sites' notes;
+    // the install-wide (NULL-site) rows are the admin's.
+    if (site === undefined) {
+      return c.json(
+        listAnnotations(db)
+          .filter((row) => rowWritable(c, row))
+          .map(toInfo),
+      );
+    }
     const siteId = parseDashboardId(site);
     if (siteId === undefined) return c.json({ error: 'invalid site id' }, 400);
-    return c.json(listAnnotations(db, siteId).map(toInfo));
+    return c.json(
+      listAnnotations(db, siteId)
+        .filter((row) => rowWritable(c, row))
+        .map(toInfo),
+    );
   });
 
   app.post('/api/admin/annotations', async (c) => {
@@ -78,6 +113,10 @@ export function createAnnotationRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
   app.put('/api/admin/annotations/:id', async (c) => {
     const id = parseDashboardId(c.req.param('id'));
     if (id === undefined) return c.json({ error: 'invalid annotation id' }, 400);
+    const existing = getAnnotation(db, id);
+    if (existing === undefined || !rowWritable(c, existing)) {
+      return c.json({ error: `unknown annotation ${id}` }, 404);
+    }
     const body = await parseAnnotationBody(c);
     if (body.ok === false) return body.response;
     const unknownSite = checkSite(c, body.data);
@@ -101,6 +140,10 @@ export function createAnnotationRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
   app.delete('/api/admin/annotations/:id', (c) => {
     const id = parseDashboardId(c.req.param('id'));
     if (id === undefined) return c.json({ error: 'invalid annotation id' }, 400);
+    const existing = getAnnotation(db, id);
+    if (existing === undefined || !rowWritable(c, existing)) {
+      return c.json({ error: `unknown annotation ${id}` }, 404);
+    }
     const deleted = withWriteTransaction(db, () => {
       const gone = deleteAnnotation(db, id);
       if (gone) bumpAnnotationsVersion(db);

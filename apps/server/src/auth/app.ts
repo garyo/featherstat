@@ -23,6 +23,7 @@ import { createSpaRoutes } from '../routes/spa.ts';
 import { createUserRoutes } from '../routes/users.ts';
 import { createViewerRoutes } from '../routes/viewers.ts';
 import { type Auth, type AuthEnv, type AuthOptions, createAuth } from './auth.ts';
+import { isManagerRoute } from './routes-policy.ts';
 
 /**
  * `createApp` wrapped in the ops shell (docs/02 § Security posture, docs/01
@@ -174,10 +175,17 @@ export function createSecuredApp(options: SecuredAppOptions = {}): SecuredApp {
     );
     // The whole admin surface is the write surface: one wall, before any
     // router — a viewer or token principal reads dashboards and data, never
-    // this. The lifecycle paths above stay reachable for login itself.
-    app.use('/api/admin/*', (c, next) =>
-      PUBLIC_API_PATHS.has(c.req.path) ? next() : createdAuth.requireAdmin(c, next),
-    );
+    // this. The lifecycle paths above stay reachable for login itself. The
+    // wall dispatches on the routes-policy classification: an explicit list
+    // of manager routes opens to users (whose handlers then scope per object,
+    // canManageSite), and everything else defaults to admin-only.
+    app.use('/api/admin/*', (c, next) => {
+      if (PUBLIC_API_PATHS.has(c.req.path)) return next();
+      const wall = isManagerRoute(c.req.method, c.req.path)
+        ? createdAuth.requireManager
+        : createdAuth.requireAdmin;
+      return wall(c, next);
+    });
     app.use('/api/query', timed(metrics));
     app.use('/api/realtime', sseGauge(metrics));
     // Order matters: these routers gate `/api/admin/*` wholesale, so they mount

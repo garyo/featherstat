@@ -24,7 +24,7 @@ import {
 } from '../db/index.ts';
 import { executeQueryRequest, resolveSiteWindows, UnknownSiteError } from '../query/executor.ts';
 import { expandSegments, resolveDerived } from '../query/stored.ts';
-import { parseDashboardId } from './dashboards.ts';
+import { parseDashboardId, siteOf, writableBy } from './dashboards.ts';
 import { windowTag } from './query.ts';
 import { clientIp } from './track.ts';
 
@@ -88,7 +88,8 @@ export function createShareRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
   app.post('/api/admin/dashboards/:id/share', (c) => {
     const id = parseDashboardId(c.req.param('id'));
     if (id === undefined) return c.json({ error: 'invalid dashboard id' }, 400);
-    if (getDashboard(db, id) === undefined) {
+    const row = getDashboard(db, id);
+    if (row === undefined || !writableBy(c.get('principal'), siteOf(row))) {
       return c.json({ error: `unknown dashboard ${id}` }, 404);
     }
     const token = randomBytes(TOKEN_BYTES).toString('base64url');
@@ -101,7 +102,8 @@ export function createShareRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
   app.delete('/api/admin/dashboards/:id/share', (c) => {
     const id = parseDashboardId(c.req.param('id'));
     if (id === undefined) return c.json({ error: 'invalid dashboard id' }, 400);
-    if (getDashboard(db, id) === undefined) {
+    const row = getDashboard(db, id);
+    if (row === undefined || !writableBy(c.get('principal'), siteOf(row))) {
       return c.json({ error: `unknown dashboard ${id}` }, 404);
     }
     const revoked = withWriteTransaction(db, () => revokeShareTokens(db, id, auth.now()));

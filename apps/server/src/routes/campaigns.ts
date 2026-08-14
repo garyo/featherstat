@@ -8,11 +8,13 @@ import {
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { Auth, AuthEnv } from '../auth/auth.ts';
+import { canManageSite } from '../auth/principal.ts';
 import {
   type CampaignRow,
   createCampaign,
   type Db,
   deleteCampaign,
+  getCampaign,
   listCampaignAliases,
   listCampaigns,
   replaceCampaignAliases,
@@ -106,17 +108,29 @@ export function createCampaignRoutes(
 
   // --- Registry ------------------------------------------------------------
 
+  /** Out-of-scope site answers exactly like nonexistent — a probe learns nothing. */
+  const deniedSite = (c: Context, siteId: number): Response | undefined =>
+    canManageSite(c.get('principal'), siteId)
+      ? undefined
+      : c.json({ error: `unknown site ${siteId}` }, 404);
+
   const list = (c: Context): Response => {
     const siteId = Number(c.req.query('site'));
     if (!Number.isInteger(siteId) || siteId <= 0) return c.json({ error: 'invalid site id' }, 400);
     return c.json(listCampaigns(db, siteId).map(toInfo));
   };
   app.get('/api/campaigns', list);
-  app.get('/api/admin/campaigns', list);
+  app.get('/api/admin/campaigns', (c) => {
+    const siteId = Number(c.req.query('site'));
+    if (!Number.isInteger(siteId) || siteId <= 0) return c.json({ error: 'invalid site id' }, 400);
+    return deniedSite(c, siteId) ?? list(c);
+  });
 
   app.post('/api/admin/campaigns', async (c) => {
     const siteId = Number(c.req.query('site'));
     if (!Number.isInteger(siteId) || siteId <= 0) return c.json({ error: 'invalid site id' }, 400);
+    const denied = deniedSite(c, siteId);
+    if (denied !== undefined) return denied;
     const body = await parseCampaignBody(c);
     if (body.ok === false) return body.response;
     const row = tryWrite(c, () =>
@@ -131,6 +145,10 @@ export function createCampaignRoutes(
   app.put('/api/admin/campaigns/:id', async (c) => {
     const id = parseDashboardId(c.req.param('id'));
     if (id === undefined) return c.json({ error: 'invalid campaign id' }, 400);
+    const existing = getCampaign(db, id);
+    if (existing === undefined || !canManageSite(c.get('principal'), existing.site_id)) {
+      return c.json({ error: `unknown campaign ${id}` }, 404);
+    }
     const body = await parseCampaignBody(c);
     if (body.ok === false) return body.response;
     const row = tryWrite(c, () =>
@@ -144,6 +162,10 @@ export function createCampaignRoutes(
   app.delete('/api/admin/campaigns/:id', (c) => {
     const id = parseDashboardId(c.req.param('id'));
     if (id === undefined) return c.json({ error: 'invalid campaign id' }, 400);
+    const existing = getCampaign(db, id);
+    if (existing === undefined || !canManageSite(c.get('principal'), existing.site_id)) {
+      return c.json({ error: `unknown campaign ${id}` }, 404);
+    }
     const deleted = withWriteTransaction(db, () => deleteCampaign(db, id));
     if (!deleted) return c.json({ error: `unknown campaign ${id}` }, 404);
     return c.json({ ok: true });

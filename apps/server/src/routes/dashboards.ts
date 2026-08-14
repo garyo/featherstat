@@ -9,7 +9,7 @@ import {
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { Auth, AuthEnv } from '../auth/auth.ts';
-import { canReadSite, type Principal } from '../auth/principal.ts';
+import { canManageSite, canReadSite, type Principal } from '../auth/principal.ts';
 import {
   countLiveShareTokens,
   createDashboard,
@@ -56,6 +56,14 @@ export interface DashboardDetail extends DashboardInfo {
 
 export function createDashboardRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
   const app = new Hono<AuthEnv>();
+
+  /** The write-scope refusal for a POSTed/PUT layout: an out-of-scope site
+   * answers like a nonexistent one; 'all' is not an object, so it says why. */
+  const scopeDenied = (c: Context, site: Dashboard['site']): Response | undefined => {
+    if (writableBy(c.get('principal'), site)) return undefined;
+    if (site === 'all') return c.json({ error: 'an all-sites dashboard is admin-only' }, 403);
+    return c.json({ error: `unknown site ${site}` }, 404);
+  };
   app.use('/api/admin/*', bodyLimit({ maxSize: MAX_DASHBOARD_BODY_BYTES }));
   app.use('/api/admin/*', async (c, next) => {
     await next();
@@ -96,14 +104,20 @@ export function createDashboardRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
   });
 
   app.get('/api/admin/dashboards', (c) =>
-    c.json(listDashboards(db).map((row) => toInfo(row, row.share_count))),
+    c.json(
+      listDashboards(db)
+        .filter((row) => visibleTo(c.get('principal'), row))
+        .map((row) => toInfo(row, row.share_count)),
+    ),
   );
 
   app.get('/api/admin/dashboards/:id', (c) => {
     const id = parseDashboardId(c.req.param('id'));
     if (id === undefined) return c.json({ error: 'invalid dashboard id' }, 400);
     const row = getDashboard(db, id);
-    if (row === undefined) return c.json({ error: `unknown dashboard ${id}` }, 404);
+    if (row === undefined || !visibleTo(c.get('principal'), row)) {
+      return c.json({ error: `unknown dashboard ${id}` }, 404);
+    }
     const detail = toDetail(db, row);
     if (detail === undefined) {
       console.error(`dashboards: stored dashboard ${id} has an invalid layout`);
@@ -122,6 +136,8 @@ export function createDashboardRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
     }
     const body = await parseLayoutBody(c);
     if (body.ok === false) return body.response;
+    const denied = scopeDenied(c, body.data.site);
+    if (denied !== undefined) return denied;
     const row = withWriteTransaction(db, () =>
       createDashboard(db, toRow(body.data, template, auth.now())),
     );
@@ -133,6 +149,14 @@ export function createDashboardRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
     if (id === undefined) return c.json({ error: 'invalid dashboard id' }, 400);
     const body = await parseLayoutBody(c);
     if (body.ok === false) return body.response;
+    // Both ends of the move must be writable: the row as stored and the
+    // scope the new layout puts it in.
+    const existing = getDashboard(db, id);
+    if (existing === undefined || !writableBy(c.get('principal'), siteOf(existing))) {
+      return c.json({ error: `unknown dashboard ${id}` }, 404);
+    }
+    const denied = scopeDenied(c, body.data.site);
+    if (denied !== undefined) return denied;
     const row = withWriteTransaction(db, () =>
       updateDashboard(db, id, toRow(body.data, null, auth.now())),
     );
@@ -146,7 +170,9 @@ export function createDashboardRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
     const id = parseDashboardId(c.req.param('id'));
     if (id === undefined) return c.json({ error: 'invalid dashboard id' }, 400);
     const row = getDashboard(db, id);
-    if (row === undefined) return c.json({ error: `unknown dashboard ${id}` }, 404);
+    if (row === undefined || !writableBy(c.get('principal'), siteOf(row))) {
+      return c.json({ error: `unknown dashboard ${id}` }, 404);
+    }
     const layout = readStoredDashboard(row.layout);
     if (layout === undefined) {
       console.error(`dashboards: stored dashboard ${id} has an invalid layout`);
@@ -166,7 +192,9 @@ export function createDashboardRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
     const id = parseDashboardId(c.req.param('id'));
     if (id === undefined) return c.json({ error: 'invalid dashboard id' }, 400);
     const row = getDashboard(db, id);
-    if (row === undefined) return c.json({ error: `unknown dashboard ${id}` }, 404);
+    if (row === undefined || !writableBy(c.get('principal'), siteOf(row))) {
+      return c.json({ error: `unknown dashboard ${id}` }, 404);
+    }
     const template = row.template === null ? undefined : dashboardTemplate(row.template);
     if (template === undefined) {
       return c.json(
@@ -187,6 +215,10 @@ export function createDashboardRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
   app.delete('/api/admin/dashboards/:id', (c) => {
     const id = parseDashboardId(c.req.param('id'));
     if (id === undefined) return c.json({ error: 'invalid dashboard id' }, 400);
+    const row = getDashboard(db, id);
+    if (row === undefined || !writableBy(c.get('principal'), siteOf(row))) {
+      return c.json({ error: `unknown dashboard ${id}` }, 404);
+    }
     const deleted = withWriteTransaction(db, () => deleteDashboard(db, id));
     if (!deleted) return c.json({ error: `unknown dashboard ${id}` }, 404);
     return c.json({ ok: true });
@@ -200,6 +232,14 @@ function visibleTo(who: Principal | undefined, row: DashboardRow): boolean {
   if (who === undefined || who.kind === 'admin') return true;
   const site = siteOf(row);
   return site === 'all' ? who.sites === 'all' : canReadSite(who, site);
+}
+
+/** Writing is narrower: an 'all'-sites dashboard aggregates every site, so
+ * only the admin writes one; a site-scoped row belongs to the site's managers.
+ * Undefined = mounted without the gate (bare tests) — open, like visibleTo. */
+export function writableBy(who: Principal | undefined, site: Dashboard['site']): boolean {
+  if (who === undefined || who.kind === 'admin') return true;
+  return site !== 'all' && canManageSite(who, site);
 }
 
 /** A positive integer path param, or undefined — shared with the share routes. */
@@ -240,7 +280,7 @@ function toDetail(db: Db, row: DashboardRow): DashboardDetail | undefined {
   return { ...toInfo(row, countLiveShareTokens(db, row.id)), layout };
 }
 
-function siteOf(row: DashboardRow): Dashboard['site'] {
+export function siteOf(row: DashboardRow): Dashboard['site'] {
   return row.site_scope === 'all' ? 'all' : Number(row.site_scope);
 }
 

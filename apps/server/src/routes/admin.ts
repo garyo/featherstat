@@ -24,10 +24,16 @@ import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { Auth, AuthEnv } from '../auth/auth.ts';
 import { hashPassword, verifyPassword } from '../auth/password.ts';
-import { parseSiteScope, serializeSiteScope } from '../auth/principal.ts';
+import {
+  canGrantScope,
+  canManageSite,
+  parseSiteScope,
+  serializeSiteScope,
+} from '../auth/principal.ts';
 import { RateLimiter } from '../auth/ratelimit.ts';
 import {
   type ApiTokenRow,
+  addUserSite,
   bumpAnnotationsVersion,
   countEvents,
   createSite,
@@ -51,6 +57,7 @@ import {
   listExcludedDrops,
   listPropDrops,
   listPropKeys,
+  removeSiteFromUsers,
   revokeApiToken,
   type Site,
   setSetting,
@@ -240,13 +247,21 @@ export function createAdminRoutes(
   app.post('/api/admin/sites', async (c) => {
     const body = await parseBody(c, AdminSiteCreateSchema);
     if (body.ok === false) return body.response;
-    const site = withWriteTransaction(db, () => createSite(db, body.data));
+    const principal = c.get('principal');
+    // Ownership grows on create: a user's new site is theirs, atomically.
+    const site = withWriteTransaction(db, () => {
+      const created = createSite(db, body.data);
+      if (principal.kind === 'user') addUserSite(db, principal.userId, created.id);
+      return created;
+    });
     return c.json(toSiteInfo(site), 201);
   });
 
   app.patch('/api/admin/sites/:id', async (c) => {
     const id = Number(c.req.param('id'));
     if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'invalid site id' }, 400);
+    // Out of scope answers exactly like nonexistent — a probe learns nothing.
+    if (!canManageSite(c.get('principal'), id)) return c.json({ error: `unknown site ${id}` }, 404);
     const body = await parseBody(c, AdminSitePatchSchema);
     if (body.ok === false) return body.response;
     const site = withWriteTransaction(db, () => updateSite(db, id, body.data));
@@ -261,9 +276,11 @@ export function createAdminRoutes(
   app.delete('/api/admin/sites/:id', (c) => {
     const id = Number(c.req.param('id'));
     if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'invalid site id' }, 400);
+    if (!canManageSite(c.get('principal'), id)) return c.json({ error: `unknown site ${id}` }, 404);
     const known = withWriteTransaction(db, () => {
       if (!tombstoneSite(db, id, auth.now())) return false;
       deleteSiteConfigRows(db, id);
+      removeSiteFromUsers(db, id);
       options.propRegistry?.forgetSite(id);
       if (deleteSiteAnnotations(db, id) > 0) bumpAnnotationsVersion(db);
       // deleteDashboard revokes the dashboard's share tokens with it.
@@ -310,18 +327,34 @@ export function createAdminRoutes(
 
   // --- API tokens (docs/04 § 5): mint shows the raw value exactly once ------
 
-  app.get('/api/admin/tokens', (c) => c.json(listApiTokens(db).map(toTokenInfo)));
+  /** A user sees and revokes only their own mints; the admin sees all. */
+  const ownsMint = (c: Context, createdBy: number | null): boolean => {
+    const principal = c.get('principal');
+    return principal.kind !== 'user' || createdBy === principal.userId;
+  };
+
+  app.get('/api/admin/tokens', (c) =>
+    c.json(
+      listApiTokens(db)
+        .filter((row) => ownsMint(c, row.created_by_user_id))
+        .map(toTokenInfo),
+    ),
+  );
 
   app.post('/api/admin/tokens', async (c) => {
     const body = await parseBody(c, ApiTokenCreateSchema);
     if (body.ok === false) return body.response;
+    const principal = c.get('principal');
+    if (!canGrantScope(principal, body.data.sites)) {
+      return c.json({ error: 'scope exceeds your sites' }, 400);
+    }
     const raw = `fs_${randomBytes(32).toString('base64url')}`;
     const row = {
       name: body.data.name,
       token_hash: createHash('sha256').update(raw).digest(),
       site_scope: serializeSiteScope(body.data.sites),
       created_at: auth.now(),
-      created_by_user_id: null,
+      created_by_user_id: principal.kind === 'user' ? principal.userId : null,
     };
     const id = withWriteTransaction(db, () => insertApiToken(db, row));
     const minted: ApiTokenMinted = {
@@ -334,6 +367,11 @@ export function createAdminRoutes(
   app.delete('/api/admin/tokens/:id', (c) => {
     const id = Number(c.req.param('id'));
     if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'invalid token id' }, 400);
+    // Someone else's mint answers exactly like a nonexistent one.
+    const row = listApiTokens(db).find((token) => token.id === id);
+    if (row === undefined || !ownsMint(c, row.created_by_user_id)) {
+      return c.json({ error: `no live token ${id}` }, 404);
+    }
     const revoked = withWriteTransaction(db, () => revokeApiToken(db, id, auth.now()));
     if (!revoked) return c.json({ error: `no live token ${id}` }, 404);
     return c.json({ ok: true });

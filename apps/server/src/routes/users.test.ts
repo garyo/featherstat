@@ -250,9 +250,7 @@ describe('user lifecycle', () => {
     expect(((await sites.json()) as Array<{ id: number }>).map((s) => s.id)).toEqual([2]);
   });
 
-  it('changes its own password via /api/admin/password once WP4 opens it', async () => {
-    // Until the authorization split lands, the route is admin-only: pinned
-    // here so opening it in WP4 flips exactly this expectation.
+  it('changes its own password via /api/admin/password, never the admin hash', async () => {
     const minted = await createUser([1]);
     const cookie = cookiesOf(await claim(minted.url));
     const me = await secured.app.request('/api/admin/me', { headers: { cookie } });
@@ -262,7 +260,12 @@ describe('user lifecycle', () => {
       headers: { 'content-type': 'application/json', cookie, 'x-csrf-token': csrf },
       body: JSON.stringify({ current: USER_PASSWORD, next: 'my-second-password' }),
     });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
+    expect((await loginAs(USER_EMAIL, 'my-second-password')).status).toBe(200);
+    expect((await loginAs(USER_EMAIL, USER_PASSWORD)).status).toBe(401);
+    // The admin's own password is untouched by a user's change.
+    const admin = await adminSession();
+    expect(admin.csrf).toBeTruthy();
   });
 
   it('keeps the whole users surface behind the admin wall', async () => {

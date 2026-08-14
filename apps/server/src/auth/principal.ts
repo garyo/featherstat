@@ -35,6 +35,14 @@ export function canManageSite(principal: Principal, siteId: number): boolean {
   return principal.kind === 'user' && principal.sites.has(siteId);
 }
 
+/** A minted grant (viewer or token scope) must fit inside the minter's own
+ * power: `'all'` is the admin's alone, and a user grants only sites they own. */
+export function canGrantScope(principal: Principal, sites: 'all' | readonly number[]): boolean {
+  if (principal.kind === 'admin') return true;
+  if (principal.kind !== 'user' || sites === 'all') return false;
+  return sites.every((siteId) => principal.sites.has(siteId));
+}
+
 /** `site: "all"` means "all sites this principal can read" — never more. */
 export function readableSites(principal: Principal, all: readonly number[]): number[] {
   return all.filter((siteId) => canReadSite(principal, siteId));
