@@ -20,6 +20,7 @@ import { createQueryRateLimits } from '../routes/query.ts';
 import { createSegmentRoutes } from '../routes/segments.ts';
 import { createShareRoutes } from '../routes/share.ts';
 import { createSpaRoutes } from '../routes/spa.ts';
+import { createUserRoutes } from '../routes/users.ts';
 import { createViewerRoutes } from '../routes/viewers.ts';
 import { type Auth, type AuthEnv, type AuthOptions, createAuth } from './auth.ts';
 
@@ -211,6 +212,8 @@ export function createSecuredApp(options: SecuredAppOptions = {}): SecuredApp {
     app.route('/', createShareRoutes(db, createdAuth));
     // Same shape again: viewer admin under the wall, `GET /invite/:token` public.
     app.route('/', createViewerRoutes(db, createdAuth));
+    // And again: users admin under the wall, `POST /claim/:token` public.
+    app.route('/', createUserRoutes(db, createdAuth));
     // MCP (docs/04 § 6): outside /api, token-Bearer only, gated in its router.
     app.route(
       '/',

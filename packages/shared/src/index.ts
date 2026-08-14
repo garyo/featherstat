@@ -655,7 +655,11 @@ export const AdminPasswordSchema = z.string().min(8).max(200);
 /** Login takes whatever was typed; only setup/change enforce the strength floor. */
 const TypedPasswordSchema = z.string().min(1).max(200);
 
-export const AdminLoginSchema = z.object({ password: TypedPasswordSchema });
+/** Email absent: the instance admin's password. Present: that user's. */
+export const AdminLoginSchema = z.object({
+  password: TypedPasswordSchema,
+  email: z.email().max(254).optional(),
+});
 export const AdminSetupSchema = z.object({
   password: AdminPasswordSchema,
   /** First-boot token printed to the server log — proof of console access, so a
@@ -704,6 +708,8 @@ export interface AdminMe {
   /** Present when authenticated: which kind of session this is, so the SPA
    * can hide the admin surface from a viewer instead of 403-ing into it. */
   principal?: 'admin' | 'user' | 'viewer';
+  /** Present for a user session: who is signed in. */
+  email?: string;
 }
 
 /** Login/setup success: the session rides in cookies, the CSRF token in the body. */
@@ -830,6 +836,45 @@ export interface ViewerInfo {
 export interface MagicLinkMinted {
   viewerId: number;
   /** Relative claim path (`/invite/<token>`); prefix with the instance origin. */
+  url: string;
+  expiresAt: number;
+}
+
+// ---------------------------------------------------------------------------
+// Users (docs/04 § 5) — password-holding accounts that own and manage sites
+// ---------------------------------------------------------------------------
+
+export const UserCreateSchema = z.object({
+  email: z.email().max(254),
+  /** Initial assignment; the set also grows when the user creates a site. */
+  sites: z.array(z.number().int().positive()).max(100).default([]),
+});
+export type UserCreate = z.infer<typeof UserCreateSchema>;
+
+/** `PATCH /api/admin/users/:id` — admin reassignment replaces the whole set. */
+export const UserSitesSchema = z.object({
+  sites: z.array(z.number().int().positive()).max(100),
+});
+export type UserSites = z.infer<typeof UserSitesSchema>;
+
+/** `POST /claim/:token` — the invited user chooses their own password. */
+export const UserClaimSchema = z.object({ password: AdminPasswordSchema });
+
+/** `GET /api/admin/users` row. */
+export interface UserInfo {
+  id: number;
+  email: string;
+  sites: number[];
+  createdAt: number;
+  disabledAt: number | null;
+  /** False until the invite is claimed — login is refused meanwhile. */
+  hasPassword: boolean;
+}
+
+/** User-invite mint response: the single-use claim page, shown exactly once. */
+export interface UserInviteMinted {
+  userId: number;
+  /** Relative claim path (`/welcome/<token>`); prefix with the instance origin. */
   url: string;
   expiresAt: number;
 }

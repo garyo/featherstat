@@ -1154,7 +1154,8 @@ const SQL_INSERT_ADMIN_SESSION =
 const SQL_GET_ADMIN_SESSION =
   'SELECT id, created_at, expires_at, principal_kind, viewer_id, user_id FROM admin_sessions WHERE id = ?';
 const SQL_DELETE_ADMIN_SESSION = 'DELETE FROM admin_sessions WHERE id = ?';
-const SQL_DELETE_ADMIN_SESSIONS_EXCEPT = 'DELETE FROM admin_sessions WHERE id <> ?';
+const SQL_DELETE_ADMIN_SESSIONS_EXCEPT =
+  "DELETE FROM admin_sessions WHERE principal_kind = 'admin' AND id <> ?";
 const SQL_DELETE_EXPIRED_ADMIN_SESSIONS = 'DELETE FROM admin_sessions WHERE expires_at <= ?';
 
 export function insertAdminSession(
@@ -1192,7 +1193,8 @@ export function deleteAdminSession(db: Db, id: string): void {
   stmt(db, SQL_DELETE_ADMIN_SESSION).run(id);
 }
 
-/** Password change: every other device is logged out; the changing session stays. */
+/** Admin password change: the admin's other devices are logged out; the
+ * changing session stays. User and viewer sessions are not the admin's devices. */
 export function deleteAdminSessionsExcept(db: Db, keepId: string): void {
   assertWritable(db);
   stmt(db, SQL_DELETE_ADMIN_SESSIONS_EXCEPT).run(keepId);

@@ -23,7 +23,7 @@ import {
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { Auth, AuthEnv } from '../auth/auth.ts';
-import { verifyPassword } from '../auth/password.ts';
+import { hashPassword, verifyPassword } from '../auth/password.ts';
 import { parseSiteScope, serializeSiteScope } from '../auth/principal.ts';
 import { RateLimiter } from '../auth/ratelimit.ts';
 import {
@@ -40,7 +40,10 @@ import {
   deleteSetting,
   deleteSiteAnnotations,
   deleteSiteConfigRows,
+  deleteUserSessions,
   getSetting,
+  getUser,
+  getUserByEmail,
   insertApiToken,
   listApiTokens,
   listBotDrops,
@@ -51,6 +54,7 @@ import {
   revokeApiToken,
   type Site,
   setSetting,
+  setUserPassword,
   tombstoneSite,
   updateSite,
   withWriteTransaction,
@@ -79,6 +83,14 @@ import { clientIp } from './track.ts';
  * First-run state machine: while no password hash exists, `setup` is the only
  * mutation that succeeds; the gate 401s all other admin (and dashboard) routes.
  */
+
+/**
+ * A well-formed hash no password derives to: verified against when a user
+ * login names no usable account, so every failure costs the same one scrypt.
+ */
+const DECOY_HASH =
+  'scrypt$32768$8$1$rpiLzxaemhczP2Fh-2tuLpDKFLW31mwfTOiFKCAY4iA$' +
+  'woSL-ofmP1MBrXZHifGcdrjFR_D4VGDXqbLd4cdHL7E-MgYA0VteYb4D0MiJhauhhzB1W6oCLJ2lLfnY66XECQ';
 
 const LOGIN_LIMIT = 5;
 /** Backstop across ALL keys: a spoofed-header flood must still hit a wall. */
@@ -139,6 +151,7 @@ export function createAdminRoutes(
       csrf: auth.csrfTokenOf(who.sessionId),
       principal: who.kind,
     };
+    if (who.kind === 'user') me.email = getUser(db, who.userId)?.email;
     return c.json(me);
   });
 
@@ -166,6 +179,20 @@ export function createAdminRoutes(
     if (hash === undefined) return c.json({ error: 'setup required' }, 403);
     const body = await parseBody(c, AdminLoginSchema);
     if (body.ok === false) return body.response;
+    // Email present: a user login. Unknown email, unclaimed invite, disabled
+    // user and wrong password all answer identically — and all cost one scrypt,
+    // so the response's timing names no emails either.
+    if (body.data.email !== undefined) {
+      const user = getUserByEmail(db, body.data.email);
+      const usableHash =
+        user !== undefined && user.disabled_at === null ? user.password_hash : null;
+      const ok = await verifyPassword(body.data.password, usableHash ?? DECOY_HASH);
+      if (user === undefined || usableHash === null || !ok) {
+        return c.json({ error: 'wrong password' }, 401);
+      }
+      const issued = auth.login(c, { kind: 'user', userId: user.id });
+      return c.json({ ok: true, csrf: issued.csrfToken });
+    }
     if (!(await verifyPassword(body.data.password, hash))) {
       return c.json({ error: 'wrong password' }, 401);
     }
@@ -184,6 +211,22 @@ export function createAdminRoutes(
   app.post('/api/admin/password', async (c) => {
     const body = await parseBody(c, AdminChangePasswordSchema);
     if (body.ok === false) return body.response;
+    const principal = c.get('principal');
+    // A user changes their own hash; only the admin touches the settings row.
+    if (principal.kind === 'user') {
+      const user = getUser(db, principal.userId);
+      const hash = user?.password_hash ?? null;
+      if (hash === null || !(await verifyPassword(body.data.current, hash))) {
+        return c.json({ error: 'current password is wrong' }, 403);
+      }
+      const next = await hashPassword(body.data.next);
+      withWriteTransaction(db, () => {
+        setUserPassword(db, principal.userId, next);
+        // Every other device is logged out; the changing session stays.
+        deleteUserSessions(db, principal.userId, c.get('sessionId'));
+      });
+      return c.json({ ok: true });
+    }
     const hash = auth.passwordHash();
     if (hash === undefined || !(await verifyPassword(body.data.current, hash))) {
       return c.json({ error: 'current password is wrong' }, 403);
