@@ -6,14 +6,16 @@ import {
   extendAdminSession,
   getApiTokenByHash,
   getSetting,
+  getUser,
   getViewer,
+  listUserSites,
   setSetting,
   touchApiToken,
   withWriteTransaction,
 } from '../db/index.ts';
 import { bearerCredential } from './bearer.ts';
 import { hashPassword } from './password.ts';
-import { type Principal, parseSiteScope } from './principal.ts';
+import { isManager, type Principal, parseSiteScope } from './principal.ts';
 import {
   CSRF_COOKIE,
   CSRF_HEADER,
@@ -73,6 +75,9 @@ export interface Auth {
   readonly csrfGuard: MiddlewareHandler<AuthEnv>;
   /** 403s everything but the admin — the write surface's second wall. */
   readonly requireAdmin: MiddlewareHandler<AuthEnv>;
+  /** 403s everything but a manager (admin or user) — the wall on routes a
+   * user may hold, whose handlers then check `canManageSite` per object. */
+  readonly requireManager: MiddlewareHandler<AuthEnv>;
   now(): number;
   hasPassword(): boolean;
   /** The stored scrypt string, for verification; undefined until first-run setup. */
@@ -89,8 +94,12 @@ export interface Auth {
   cookiePrincipal(c: Context): Principal | undefined;
 }
 
-/** What a session can be issued as — the magic-link claim passes the viewer form. */
-export type SessionPrincipal = { kind: 'admin' } | { kind: 'viewer'; viewerId: number };
+/** What a session can be issued as — the magic-link claim passes the viewer
+ * form, the user login and invite claim the user form. */
+export type SessionPrincipal =
+  | { kind: 'admin' }
+  | { kind: 'viewer'; viewerId: number }
+  | { kind: 'user'; userId: number };
 
 export function createAuth(db: Db, options: AuthOptions = {}): Auth {
   const env = options.env ?? process.env;
@@ -135,11 +144,22 @@ export function createAuth(db: Db, options: AuthOptions = {}): Auth {
     return { kind: 'token', tokenId: row.id, sites: parseSiteScope(row.site_scope) };
   };
 
-  /** Session row → principal; a viewer session whose viewer was revoked dies here. */
+  /** Session row → principal; a session whose viewer was revoked or whose
+   * user was disabled dies here — revocation reaches live sessions at the gate. */
   const cookiePrincipalOf = (c: Context): Principal | undefined => {
     const session = verifySessionCookie(db, secret, getCookie(c, SESSION_COOKIE), now());
     if (session === undefined) return undefined;
     if (session.principal_kind === 'admin') return { kind: 'admin', sessionId: session.id };
+    if (session.principal_kind === 'user' && session.user_id !== null) {
+      const user = getUser(db, session.user_id);
+      if (user === undefined || user.disabled_at !== null) return undefined;
+      return {
+        kind: 'user',
+        sessionId: session.id,
+        userId: user.id,
+        sites: new Set(listUserSites(db, user.id)),
+      };
+    }
     if (session.principal_kind === 'viewer' && session.viewer_id !== null) {
       const viewer = getViewer(db, session.viewer_id);
       if (viewer === undefined || viewer.revoked_at !== null) return undefined;
@@ -207,11 +227,20 @@ export function createAuth(db: Db, options: AuthOptions = {}): Auth {
     await next();
   };
 
+  const requireManager: MiddlewareHandler<AuthEnv> = async (c, next) => {
+    const principal = c.get('principal');
+    if (principal === undefined || !isManager(principal)) {
+      return c.json({ error: 'admin only' }, 403);
+    }
+    await next();
+  };
+
   return {
     disabled,
     gate,
     csrfGuard,
     requireAdmin,
+    requireManager,
     now,
     hasPassword: () => getSetting(db, PASSWORD_SETTING) !== undefined,
     passwordHash: () => getSetting(db, PASSWORD_SETTING),

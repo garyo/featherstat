@@ -33,7 +33,8 @@ export const SESSION_TTL_MS = 14 * DAY_MS;
  */
 export const VIEWER_SESSION_TTL_MS = 90 * DAY_MS;
 
-export function sessionTtlOf(kind: 'admin' | 'viewer'): number {
+/** Users have a password to log back in with, so they share the admin's fixed TTL. */
+export function sessionTtlOf(kind: 'admin' | 'viewer' | 'user'): number {
   return kind === 'viewer' ? VIEWER_SESSION_TTL_MS : SESSION_TTL_MS;
 }
 
@@ -61,8 +62,11 @@ export function issueSession(
   db: Db,
   secret: Buffer,
   now: number,
-  /** Defaults to an admin session; viewer logins (magic links) pass theirs. */
-  principal: { kind: 'admin' } | { kind: 'viewer'; viewerId: number } = { kind: 'admin' },
+  /** Defaults to an admin session; viewer logins (magic links) and user logins pass theirs. */
+  principal:
+    | { kind: 'admin' }
+    | { kind: 'viewer'; viewerId: number }
+    | { kind: 'user'; userId: number } = { kind: 'admin' },
 ): IssuedSession {
   const id = randomBytes(SESSION_ID_BYTES).toString('hex');
   const expiresAt = now + sessionTtlOf(principal.kind);
@@ -74,6 +78,7 @@ export function issueSession(
       expires_at: expiresAt,
       principal_kind: principal.kind,
       viewer_id: principal.kind === 'viewer' ? principal.viewerId : null,
+      user_id: principal.kind === 'user' ? principal.userId : null,
     });
   });
   return {

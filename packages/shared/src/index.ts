@@ -703,7 +703,7 @@ export interface AdminMe {
   csrf?: string;
   /** Present when authenticated: which kind of session this is, so the SPA
    * can hide the admin surface from a viewer instead of 403-ing into it. */
-  principal?: 'admin' | 'viewer';
+  principal?: 'admin' | 'user' | 'viewer';
 }
 
 /** Login/setup success: the session rides in cookies, the CSRF token in the body. */

@@ -2,14 +2,16 @@
  * Who is asking (docs/04 § 5). Every gated request resolves to exactly one of
  * these, in one place (auth.gate), and every site-scoped read goes through
  * `readableSites`/`canReadSite` — the one chokepoint that keeps a scoped
- * principal from widening itself. Admin is the only writer; viewers and
- * tokens are read-only by construction (the admin surface requires `admin`).
+ * principal from widening itself. Admin and users are the writers — a user
+ * only within the sites they own (`canManageSite`); viewers and tokens are
+ * read-only by construction (the admin surface requires a manager).
  */
 
 export type SiteScope = 'all' | ReadonlySet<number>;
 
 export type Principal =
   | { kind: 'admin'; sessionId: string }
+  | { kind: 'user'; sessionId: string; userId: number; sites: ReadonlySet<number> }
   | { kind: 'viewer'; sessionId: string; viewerId: number; sites: SiteScope }
   | { kind: 'token'; tokenId: number; sites: SiteScope };
 
@@ -17,9 +19,20 @@ export function isAdmin(principal: Principal): boolean {
   return principal.kind === 'admin';
 }
 
+/** A principal that may hold the management surface at all: admin or user. */
+export function isManager(principal: Principal): boolean {
+  return principal.kind === 'admin' || principal.kind === 'user';
+}
+
 export function canReadSite(principal: Principal, siteId: number): boolean {
   if (principal.kind === 'admin') return true;
   return principal.sites === 'all' || principal.sites.has(siteId);
+}
+
+/** Writing is narrower than reading: only the admin and the owning user. */
+export function canManageSite(principal: Principal, siteId: number): boolean {
+  if (principal.kind === 'admin') return true;
+  return principal.kind === 'user' && principal.sites.has(siteId);
 }
 
 /** `site: "all"` means "all sites this principal can read" — never more. */

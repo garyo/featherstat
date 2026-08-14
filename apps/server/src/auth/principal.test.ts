@@ -1,11 +1,24 @@
 import type { ApiTokenMinted } from '@featherstat/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openTestDb, T0 } from '../../test/rows.ts';
-import { type Db, withWriteTransaction } from '../db/index.ts';
+import {
+  addUserSite,
+  type Db,
+  disableUser,
+  insertUser,
+  withWriteTransaction,
+} from '../db/index.ts';
 import { createPipeline, type Pipeline } from '../pipeline/index.ts';
 import { createRealtimeHub } from '../realtime/hub.ts';
 import { createSecuredApp, type SecuredApp } from './app.ts';
-import { canReadSite, parseSiteScope, readableSites, serializeSiteScope } from './principal.ts';
+import {
+  canManageSite,
+  canReadSite,
+  isManager,
+  parseSiteScope,
+  readableSites,
+  serializeSiteScope,
+} from './principal.ts';
 import { ensureAuthSecret, issueSession } from './session.ts';
 
 /**
@@ -261,6 +274,82 @@ describe('token principals', () => {
     for (const scheme of ['Bearerish', 'Basic', 'Bear']) {
       expect((await bearerRequest(minted.token, '/api/sites', { scheme })).status).toBe(401);
     }
+  });
+});
+
+describe('scope helpers — managers', () => {
+  const admin = { kind: 'admin', sessionId: 's' } as const;
+  const user = { kind: 'user', sessionId: 's', userId: 7, sites: new Set([2]) } as const;
+  const viewer = { kind: 'viewer', sessionId: 's', viewerId: 1, sites: 'all' } as const;
+  const token = { kind: 'token', tokenId: 1, sites: 'all' } as const;
+
+  it('managers are the admin and users, nobody else', () => {
+    expect(isManager(admin)).toBe(true);
+    expect(isManager(user)).toBe(true);
+    expect(isManager(viewer)).toBe(false);
+    expect(isManager(token)).toBe(false);
+  });
+
+  it('writing is narrower than reading: only the admin and the owning user', () => {
+    expect(canManageSite(admin, 999)).toBe(true);
+    expect(canManageSite(user, 2)).toBe(true);
+    expect(canManageSite(user, 1)).toBe(false);
+    // An all-scope viewer or token READS everything and manages nothing.
+    expect(canReadSite(viewer, 1)).toBe(true);
+    expect(canManageSite(viewer, 1)).toBe(false);
+    expect(canManageSite(token, 1)).toBe(false);
+  });
+});
+
+describe('user principals', () => {
+  async function userCookie(sites: number[]): Promise<{ cookie: string; userId: number }> {
+    await adminSession(); // sets the password so auth is configured
+    const userId = withWriteTransaction(db, () => {
+      const user = insertUser(db, 'owner@example.com', T0);
+      for (const siteId of sites) addUserSite(db, user.id, siteId);
+      return user.id;
+    });
+    const issued = issueSession(db, ensureAuthSecret(db), T0, { kind: 'user', userId });
+    return { cookie: `__Host-session=${issued.cookieValue}`, userId };
+  }
+
+  it('reads its own sites and is told the rest do not exist', async () => {
+    const { cookie } = await userCookie([2]);
+    const sites = await secured.app.request('/api/sites', { headers: { cookie } });
+    expect(((await sites.json()) as Array<{ id: number }>).map((s) => s.id)).toEqual([2]);
+
+    const query = await secured.app.request('/api/query', {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: queryBody(2),
+    });
+    expect(query.status).toBe(200);
+
+    const outOfScope = await secured.app.request('/api/query', {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: queryBody(1),
+    });
+    expect(outOfScope.status).toBe(404);
+  });
+
+  it('dies when the user is disabled, even with a live session', async () => {
+    const { cookie, userId } = await userCookie([2]);
+    withWriteTransaction(db, () => {
+      disableUser(db, userId, T0 + 1);
+    });
+    const res = await secured.app.request('/api/sites', { headers: { cookie } });
+    expect(res.status).toBe(401);
+  });
+
+  it('is 403d from /mcp like any cookie session', async () => {
+    const { cookie } = await userCookie([2]);
+    const res = await secured.app.request('/mcp', {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: '{}',
+    });
+    expect(res.status).toBe(403);
   });
 });
 
