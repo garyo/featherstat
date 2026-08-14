@@ -50,7 +50,10 @@ dashboards — with none of the weight.
 
 - Not a Matomo fork, and not full Matomo parity: no e-commerce, funnels,
   A/B tests, heatmaps, session replay, or tag manager.
-- Not multi-tenant SaaS: one admin, optional read-only share links. No RBAC.
+- Not multi-tenant SaaS — but it is **multi-user**: one instance admin can
+  invite users by email, each owning and managing only their own sites, plus
+  read-only viewers, scoped API tokens, and share links. No role matrix
+  beyond that.
 - Not horizontally scalable: one node is the design point. SQLite is the
   ceiling and that ceiling is far above the target workload.
 

@@ -95,8 +95,9 @@ CREATE TABLE sessions (
 CREATE INDEX ix_sessions_site_date ON sessions (site_id, local_date);
 CREATE INDEX ix_sessions_open      ON sessions (site_id, visitor_id, last_seen_at);
 
--- Small tables: dashboards (id, name, site_scope, layout JSON),
--- share_tokens, api_tokens, settings (key/value), schema_migrations.
+-- Small tables: dashboards (id, name, site_scope, layout JSON), share_tokens,
+-- api_tokens, viewers, magic_links, admin_sessions, users, user_sites
+-- (site ownership, docs/04 § 5), settings (key/value), schema_migrations.
 ```
 
 Migrations: sequential SQL files applied at boot, tracked in

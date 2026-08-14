@@ -15,7 +15,7 @@ is the visual reference for everything below (both views, light and dark).
 | **Site** | The workhorse. Filter row (date presets — Today · Last 24 hours · 7 / 30 / 90 days · Month to date, the second of which is the rolling window whose comparison is like-for-like, 04 § 3 — active dimension filters as removable chips; plus an explicit date range and the compare control — see § Custom ranges & compare) → KPI row → main time series → breakdown grid (pages, referrers, geo, devices, events, outbound links, time on page, hours heatmap) → top journeys. Every breakdown row is click-to-filter; a filter on an event-level dimension renders the session-only KPI tiles (engagement, bounce) as "—" rather than erroring the row. |
 | **Journeys** (per site) | R21. A sankey of the first N steps from the entry page (pages and events as nodes, edge weight = sessions) over a top-journeys table: sequence · sessions · avg time · exit rate. Clicking a sankey edge filters the table; the view honors the global filter row, so "journeys of visitors from HN" is one click. **A step is a move, not a hit**: a page repeated back to back — reloaded, or announced twice by an SPA router — is one step, so no edge loops a node back to itself and no journey reads `/app → /app` (03 § Journeys, 06). A session that never left its entry page is a one-step journey with no edges, and shows up in the table rather than the sankey. |
 | **Realtime** | Active-now hero number, a per-visitor tally of the last 30 minutes (alias · hits · engaged time · place · site — the time is the server's, since only it sees the heartbeat pings), live feed, country tally of the same window. Pure SSE, no queries. The world map with fading dots (city centroids) moved to **M2**: it needs the map-outline data that arrives with the sankey work, so M1 ships hero + feed + country list and the map joins when that asset lands. |
-| **Settings** | Every admin surface, behind a section nav: Sites & tracking (sites CRUD, snippet, password) · Access (API tokens, viewers) · Query objects (segments, derived metrics, goals) · Campaigns (registry, aliases, UTM link builder) · Notifications (ntfy, alert rules) · Data (prop governance, annotations, diagnostics). See § Settings. |
+| **Settings** | Every admin surface, behind a section nav: Sites & tracking (sites CRUD, snippet, password) · Access (API tokens, viewers) · Users (admin-only) · Query objects (segments, derived metrics, goals) · Campaigns (registry, aliases, UTM link builder) · Notifications (ntfy, alert rules) · Data (prop governance, annotations, diagnostics). See § Settings. |
 
 Single-page app. The header is **Scope × View**: one scope picker (All sites
 | each site) beside three view tabs (Dashboard | Journeys | Realtime) —
@@ -32,12 +32,17 @@ hub ring boot-seeds from the newest stored events).
 ## Settings
 
 One code-split chunk (never on the dashboard path), organized as a section nav
-so eleven admin surfaces stay eleven small panels instead of one wall:
+so the admin surfaces stay small panels instead of one wall. The nav is
+role-filtered: a user (R23) gets the per-site sections (Sites & tracking,
+Access, Query objects, Campaigns — minus the admin-only cards: segments,
+derived metrics, campaign aliases); Users, Notifications and Data are the
+admin's alone, and a viewer gets no ⚙ at all:
 
 | Section | Panels |
 | --- | --- |
-| **Sites & tracking** | Sites CRUD, the tracking snippet, password change. |
-| **Access** | API tokens and viewers — the two read-only principals (04 § 5). Both mints show their secret (the bearer token, the `/invite/…` magic link) exactly once, with a copy button and a "you will not see this again" line; the lists that follow show only names, scopes and dates. |
+| **Sites & tracking** | Sites CRUD, the tracking snippet, password change. Users see and manage only the sites they own (R23); the admin sees all. |
+| **Access** | API tokens and viewers — the two read-only principals (04 § 5). Both mints show their secret (the bearer token, the `/invite/…` magic link) exactly once, with a copy button and a "you will not see this again" line; the lists that follow show only names, scopes and dates. A user's mint form offers only their own sites (no all-sites option), and their lists hold only their own mints. |
+| **Users** (admin-only) | Password-holding accounts that own and manage sites (04 § 5, R23): invite by email (the `/welcome/…` claim link shows once), site assignment, re-invite (doubles as a password reset), disable. |
 | **Query objects** | Segments, derived metrics, goals — the stored vocabularies queries reference as `{segment: id}`, `d:<name>`, `goal:<id>:…`. Segments and goals share the filter editor of § The filter editor: rows of dim/op/value that AND together, an "Edit as JSON" mode, and **Build visually…**, which opens the same expression editor the dashboard filter row does. The row mode round-trips only trees it can represent — anything richer opens in JSON, never silently flattened. A stored filter carries no segment ref (04 § 3), so no segment picker is offered here. |
 | **Campaigns** | The registry (`campaign_status` reads it at query time), the alias lists (per-site and install-wide site 0; saving is a full-list replace and warns that history is rewritten), and a client-only UTM link builder that suggests registered campaigns and flags values ingest would normalize (via the shared `canonicalUtmValue`). |
 | **Notifications** | The ntfy endpoint + per-hit rules, and the alert rules evaluated hourly — together because both deliver through the same endpoint. |

@@ -105,7 +105,9 @@ implementation:
 - **`settings`** — key/value internals, including secrets (salt material, the
   auth secret, password hash).
 - **Auth tables** — `admin_sessions`, `api_tokens`, `viewers`, `magic_links`,
-  `share_tokens`. Hashes at rest, but still not yours to read or replicate.
+  `share_tokens`, `users`, `user_sites`. Hashes at rest, but still not yours
+  to read or replicate. (Site *ownership* lives in `user_sites`, deliberately
+  a join table here rather than a column on the contracted `sites`.)
 - **`dashboards`** — the row exists, but the `layout` JSON's internals are the
   SPA's schema and move with it.
 - **Rollup tables** (`rollup_*`) — derived data, rebuildable from raw at any

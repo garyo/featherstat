@@ -81,7 +81,8 @@ Features in real use, and therefore the compatibility surface:
 
 Matomo features **not** used (and not carried over): goals/funnels, e-commerce,
 site search, custom dimensions, segments, user IDs, tag manager, A/B, consent
-manager, multi-user roles.
+manager. (Matomo's role matrix is not carried over either — featherstat grew
+its own, simpler multi-user model later: R23.)
 
 ## Requirements
 
@@ -132,6 +133,11 @@ manager, multi-user roles.
 - **R17** Litestream streaming backup of the SQLite file to GCS.
 - **R18** Weekly email/ntfy digest.
 - **R19** A realtime globe view (an homage to globe-viz).
+- **R23** **Multi-user**: the instance admin can invite users by email; each
+  user owns a set of sites (including any they create) and fully manages
+  them — dashboards, goals, campaigns, annotations, tracker snippet, and
+  viewer/token invites scoped within them — while seeing nothing of anyone
+  else's. One admin, no role matrix beyond admin/user/viewer/token.
 
 ## Constraints
 

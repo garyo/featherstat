@@ -770,6 +770,20 @@ single stream.
 
 ## 5. Admin & operations
 
+**The wall is split in two** (auth/routes-policy.ts): every `/api/admin/*`
+route is classified either **manager** — open to the admin and to user
+principals, whose handlers then check `canManageSite` per object — or
+**admin-only**, and admin-only is the default, so a route added tomorrow is
+born admin-only exactly as it is born authenticated. Manager routes: sites
+CRUD, dashboards (+ share links), goals, campaigns, annotations, viewer/token
+mint-list-revoke, logout, password. Admin-only: user accounts, data settings,
+prop scrubs, exclusions, diagnostics, ntfy, and writes to the
+global-namespace objects (segments, derived metrics, campaign aliases, alert
+rules) — users read those, only the admin writes them. Out-of-scope writes
+answer **404 exactly like nonexistent**, everywhere; an `'all'`-scope
+dashboard or install-wide annotation is admin-write and answers 403 to a
+user, since `'all'` is not an object to hide.
+
 Conventional REST under `/api/admin` (session auth + CSRF): sites CRUD,
 dashboards CRUD (layout JSON — writes validate the schema AND the batch
 invariants: unique query ids, derived-query count within the batch cap;
@@ -912,6 +926,31 @@ absence ends it. The `__Host-` cookie pair is the same as the admin's, and
 surface exactly as a token does — queries, sites, realtime, dashboards reads,
 segment/goal/derived listings — scoped through the same `readableSites`
 chokepoint; the whole `/api/admin/*` write surface answers 403.
+
+**Users: password-holding accounts that own and manage sites (R23).** A user
+is an email plus an owned site set (the `user_sites` join table; ownership
+also grows atomically when the user creates a site, and a deleted site sheds
+its owners). Managed admin-only: `GET /api/admin/users` lists them with their
+sites, `POST /api/admin/users {email, sites?}` creates one — or re-invites an
+existing email, restoring a disabled account — and mints a **single-use
+invite link** (raw token `fsu_<43 base64url>`, sha256-at-rest, 7-day expiry)
+whose claim path `/welcome/<token>` appears exactly once in the response;
+`POST /api/admin/users/:id/invite` re-mints, which doubles as a password
+reset (the old password works until the new link is claimed);
+`PATCH /api/admin/users/:id {sites}` replaces the assignment;
+`DELETE /api/admin/users/:id` disables — sessions and outstanding invites die
+with it. `POST /claim/:token {password}` (public, rate-limited like
+`/invite`; all failures one identical 410) consumes the link, sets the user's
+first password and signs them in. From then on `POST /api/admin/login` with
+`{email, password}` issues a user session — email absent still means the
+instance admin's settings-row password, unchanged — and every user-login
+failure answers the same 401 at the same one-scrypt cost, so the response
+names no emails. User sessions share the admin's fixed 14-day TTL (they can
+log back in). `GET /api/admin/me` answers `principal: "user"` plus `email`.
+A user's viewer/token mints must fit inside their own sites (`'all'` or any
+foreign site is a 400), and list/revoke see only their own mints
+(`created_by_user_id`); grants stay fixed at mint — reassigning a site does
+not shrink a standing viewer or token scope.
 
 First-run setup (`POST /api/admin/setup`) additionally requires the one-time
 **setup token** the server prints to its log at first boot: between `docker

@@ -134,3 +134,10 @@ Ride-alongs: site deletion, retention completeness, nightly `VACUUM INTO`
 backups. The query and dashboard surfaces are specified in
 [04-api.md](04-api.md) and [05-dashboards.md](05-dashboards.md), which are
 maintained to match.
+
+**Multi-user (2026-08, R23)**: the auth pillar grew a fourth principal — user
+accounts that log in with email + password (claimed by single-use invite
+link), each owning and fully managing its own set of sites, with the admin
+wall split into a manager surface and an admin-only surface
+(04-api.md § 5). The instance admin's settings-row password and the
+read-only viewer/token principals are unchanged.
