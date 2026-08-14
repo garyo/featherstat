@@ -58,7 +58,8 @@ export interface AdminClientOptions {
 export interface AdminClient {
   me(): Promise<AdminMe>;
   setup(password: string, setupToken: string): Promise<void>;
-  login(password: string): Promise<void>;
+  /** Email absent: the instance admin's password. Present: that user's. */
+  login(password: string, email?: string): Promise<void>;
   logout(): Promise<void>;
   changePassword(current: string, next: string): Promise<void>;
   createSite(site: AdminSiteCreate): Promise<SiteInfo>;
@@ -146,10 +147,10 @@ export function createAdminClient(options: AdminClientOptions = {}): AdminClient
       });
       csrf = grant.csrf;
     },
-    async login(password) {
+    async login(password, email) {
       const grant = await call<AdminSessionGrant>('/api/admin/login', {
         method: 'POST',
-        body: { password },
+        body: email === undefined || email === '' ? { password } : { password, email },
         authenticated: false,
       });
       csrf = grant.csrf;

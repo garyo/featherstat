@@ -17,6 +17,9 @@ import type {
   MagicLinkMinted,
   SegmentCreate,
   SegmentInfo,
+  UserCreate,
+  UserInfo,
+  UserInviteMinted,
   ViewerInfo,
   ViewerInvite,
 } from '@featherstat/shared';
@@ -36,6 +39,15 @@ export interface AdminObjects {
   /** Mints a scoped read-only token; `token` appears here once and never again. */
   createToken(token: ApiTokenCreate): Promise<ApiTokenMinted>;
   revokeToken(id: number): Promise<void>;
+  listUsers(): Promise<UserInfo[]>;
+  /** Create (or re-invite) a user by email; `url` is the single-use claim link, shown once. */
+  createUser(user: UserCreate): Promise<UserInviteMinted>;
+  /** A fresh invite link for an existing user — doubles as a password reset. */
+  reinviteUser(id: number): Promise<UserInviteMinted>;
+  /** Admin reassignment: replaces the user's whole site set. */
+  setUserSites(id: number, sites: number[]): Promise<UserInfo>;
+  /** Disable: sessions and outstanding invites die; re-inviting restores. */
+  disableUser(id: number): Promise<void>;
   listViewers(): Promise<ViewerInfo[]>;
   /** Invite (or re-invite) an email; `url` is the single-use claim link, shown once. */
   inviteViewer(invite: ViewerInvite): Promise<MagicLinkMinted>;
@@ -84,6 +96,14 @@ export function adminObjects(admin: AdminClient): AdminObjects {
     createToken: (token) => call('/api/admin/tokens', { method: 'POST', body: token }),
     async revokeToken(id) {
       await call(`/api/admin/tokens/${id}`, { method: 'DELETE' });
+    },
+    listUsers: () => call('/api/admin/users'),
+    createUser: (user) => call('/api/admin/users', { method: 'POST', body: user }),
+    reinviteUser: (id) => call(`/api/admin/users/${id}/invite`, { method: 'POST' }),
+    setUserSites: (id, sites) =>
+      call(`/api/admin/users/${id}`, { method: 'PATCH', body: { sites } }),
+    async disableUser(id) {
+      await call(`/api/admin/users/${id}`, { method: 'DELETE' });
     },
     listViewers: () => call('/api/admin/viewers'),
     inviteViewer: (invite) => call('/api/admin/viewers', { method: 'POST', body: invite }),

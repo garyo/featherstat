@@ -51,8 +51,9 @@ interface Props {
 
 let { admin, auth }: Props = $props();
 
-/** Until a site card has been visited, the site switcher opens site 1. */
-const FIRST_SITE = 1;
+/** Until a site card has been visited, the switcher opens the first readable
+ * site — a scoped user's directory may not contain site 1 at all. */
+const firstSite = (): number => directory.sites?.[0]?.id ?? 1;
 
 const view = createViewState();
 
@@ -247,7 +248,16 @@ function segmentFilterOf(node: FilterNode): SegmentFilterNode {
 
 // Which site the switcher points at: the one being viewed, or the last one
 // visited while the overview is up — including after a back/forward move.
-let siteTab = $state(typeof view.current.site === 'number' ? view.current.site : FIRST_SITE);
+let siteTab = $state(typeof view.current.site === 'number' ? view.current.site : 1);
+// The directory arrives after boot: adopt the first readable site while no
+// explicit choice has been made, so a scoped user never wears a site they
+// cannot read as their fallback.
+$effect(() => {
+  if (typeof view.current.site !== 'number' && directory.sites !== undefined) {
+    const readable = directory.sites.some((s) => s.id === siteTab);
+    if (!readable) siteTab = firstSite();
+  }
+});
 $effect(() => {
   if (typeof site === 'number') siteTab = site;
 });
@@ -335,6 +345,8 @@ const app = $derived<AppEnv>({
     onhome={selectHome}
     ontoggletheme={toggleTheme}
     onlogout={logout}
+    showSettings={auth.role !== 'viewer'}
+    who={auth.email}
   />
 
   {#if current === 'settings'}
@@ -342,6 +354,7 @@ const app = $derived<AppEnv>({
       <SettingsPanel
         {admin}
         sites={directory.sites}
+        role={auth.role}
         onsiteschanged={() => void directory.reload()}
       />
     {/if}

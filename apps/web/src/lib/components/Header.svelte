@@ -29,6 +29,10 @@ interface Props {
   onhome: () => void;
   ontoggletheme: () => void;
   onlogout: () => void;
+  /** Viewers have no settings sections at all — hide the ⚙ instead of 403ing. */
+  showSettings?: boolean;
+  /** Who is signed in (a user's email); the admin and viewers show nothing. */
+  who?: string;
 }
 
 let {
@@ -46,6 +50,8 @@ let {
   onhome,
   ontoggletheme,
   onlogout,
+  showSettings = true,
+  who,
 }: Props = $props();
 
 const selected = $derived(site === 'all' ? 'all' : String(site));
@@ -139,14 +145,17 @@ function onhomeclick(event: MouseEvent): void {
   </nav>
   <div class="spacer"></div>
   {#if !connected}<span class="compare-note">Live updates reconnecting…</span>{/if}
-  <button
-    class="icon-btn"
-    type="button"
-    title="Settings"
-    aria-label="Settings"
-    aria-current={view === 'settings' ? 'page' : undefined}
-    onclick={() => onselectview('settings')}>⚙</button
-  >
+  {#if who !== undefined}<span class="compare-note">{who}</span>{/if}
+  {#if showSettings}
+    <button
+      class="icon-btn"
+      type="button"
+      title="Settings"
+      aria-label="Settings"
+      aria-current={view === 'settings' ? 'page' : undefined}
+      onclick={() => onselectview('settings')}>⚙</button
+    >
+  {/if}
   <button
     class="icon-btn"
     type="button"

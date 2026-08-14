@@ -11,6 +11,7 @@ import {
 import type { AdminClient } from '../../lib/admin.ts';
 import { type PanelFailure, panelFailure } from '../../lib/admin-failure.ts';
 import { adminObjects } from '../../lib/admin-objects.ts';
+import type { AuthRole } from '../../lib/auth.svelte.ts';
 import FilterEditor from '../../lib/components/FilterEditor.svelte';
 import {
   describeFilter,
@@ -36,9 +37,11 @@ import PanelError from './PanelError.svelte';
 interface Props {
   admin: AdminClient;
   sites: SiteInfo[] | undefined;
+  /** Segments and derived metrics are global-namespace objects — admin-write. */
+  role?: AuthRole;
 }
 
-let { admin, sites }: Props = $props();
+let { admin, sites, role = 'admin' }: Props = $props();
 // svelte-ignore state_referenced_locally
 const api = adminObjects(admin);
 
@@ -429,6 +432,7 @@ async function deleteGoal(id: number): Promise<void> {
 }
 </script>
 
+{#if role === 'admin'}
 <div class="card c6">
   <h2>Segments</h2>
   <p class="widget-note">
@@ -538,6 +542,8 @@ async function deleteGoal(id: number): Promise<void> {
     {/if}
   {/if}
 </div>
+
+{/if}
 
 <div class="card c12">
   <h2>Goals</h2>

@@ -3,6 +3,7 @@ import type { CampaignAlias, CampaignInfo, SiteInfo } from '@featherstat/shared'
 import type { AdminClient } from '../../lib/admin.ts';
 import { type PanelFailure, panelFailure } from '../../lib/admin-failure.ts';
 import { adminObjects } from '../../lib/admin-objects.ts';
+import type { AuthRole } from '../../lib/auth.svelte.ts';
 import {
   buildUtmUrl,
   emptyUtmDraft,
@@ -21,9 +22,11 @@ import PanelError from './PanelError.svelte';
 interface Props {
   admin: AdminClient;
   sites: SiteInfo[] | undefined;
+  /** Aliases rewrite history install-wide — admin-only. */
+  role?: AuthRole;
 }
 
-let { admin, sites }: Props = $props();
+let { admin, sites, role = 'admin' }: Props = $props();
 // svelte-ignore state_referenced_locally
 const api = adminObjects(admin);
 
@@ -275,6 +278,7 @@ async function copyUtm(): Promise<void> {
   {/if}
 </div>
 
+{#if role === 'admin'}
 <div class="card c6">
   <h2>Campaign aliases</h2>
   <p class="widget-note">
@@ -339,6 +343,8 @@ async function copyUtm(): Promise<void> {
     </form>
   {/if}
 </div>
+
+{/if}
 
 <div class="card c6">
   <h2>UTM link builder</h2>

@@ -2,6 +2,7 @@
 import type { SiteInfo } from '@featherstat/shared';
 import type { AdminClient } from '../lib/admin.ts';
 import { type PanelFailure, panelFailure } from '../lib/admin-failure.ts';
+import type { AuthRole } from '../lib/auth.svelte.ts';
 import { parseDomains, trackingSnippet } from '../lib/settings.ts';
 import AccessPanels from './settings/AccessPanels.svelte';
 import CampaignPanels from './settings/CampaignPanels.svelte';
@@ -9,6 +10,7 @@ import DataPanels from './settings/DataPanels.svelte';
 import NotifyPanels from './settings/NotifyPanels.svelte';
 import PanelError from './settings/PanelError.svelte';
 import QueryPanels from './settings/QueryPanels.svelte';
+import UsersPanel from './settings/UsersPanel.svelte';
 
 /**
  * The settings view (docs/04 § 5, docs/05 § Settings): a section nav over every
@@ -32,27 +34,32 @@ interface Props {
   admin: AdminClient;
   /** The live site directory; undefined while it loads. */
   sites: SiteInfo[] | undefined;
+  /** Which sections this session may hold — a user gets the per-site ones. */
+  role?: AuthRole;
   /** Sites changed server-side — the directory (header, cards) must reload. */
   onsiteschanged: () => void;
 }
 
-let { admin, sites, onsiteschanged }: Props = $props();
+let { admin, sites, role = 'admin', onsiteschanged }: Props = $props();
 
 // ---------- sections ----------
-type Section = 'sites' | 'access' | 'query' | 'campaigns' | 'notify' | 'data';
-const SECTIONS: ReadonlyArray<{ id: Section; label: string }> = [
+type Section = 'sites' | 'access' | 'users' | 'query' | 'campaigns' | 'notify' | 'data';
+const ALL_SECTIONS: ReadonlyArray<{ id: Section; label: string; adminOnly?: boolean }> = [
   { id: 'sites', label: 'Sites & tracking' },
   { id: 'access', label: 'Access' },
+  { id: 'users', label: 'Users', adminOnly: true },
   { id: 'query', label: 'Query objects' },
   { id: 'campaigns', label: 'Campaigns' },
-  { id: 'notify', label: 'Notifications' },
-  { id: 'data', label: 'Data' },
+  { id: 'notify', label: 'Notifications', adminOnly: true },
+  { id: 'data', label: 'Data', adminOnly: true },
 ];
+const SECTIONS = $derived(ALL_SECTIONS.filter((s) => role === 'admin' || s.adminOnly !== true));
 let section = $state<Section>('sites');
 
 /** Panel props are uniform, so one component slot serves every section. */
 const PANELS: Record<Exclude<Section, 'sites'>, typeof AccessPanels> = {
   access: AccessPanels,
+  users: UsersPanel,
   query: QueryPanels,
   campaigns: CampaignPanels,
   notify: NotifyPanels,
@@ -352,7 +359,7 @@ const nameOf = (id: number): string => sites?.find((s) => s.id === id)?.name ?? 
       </form>
     </div>
   {:else if Panel !== undefined}
-    <Panel {admin} {sites} />
+    <Panel {admin} {sites} {role} />
   {/if}
 </div>
 

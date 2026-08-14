@@ -4,6 +4,7 @@ import { emptyScope, type ScopeDraft, scopeLabel, scopeOf, toggleSite } from '..
 import type { AdminClient } from '../../lib/admin.ts';
 import { type PanelFailure, panelFailure } from '../../lib/admin-failure.ts';
 import { adminObjects } from '../../lib/admin-objects.ts';
+import type { AuthRole } from '../../lib/auth.svelte.ts';
 import PanelError from './PanelError.svelte';
 
 /**
@@ -18,11 +19,16 @@ import PanelError from './PanelError.svelte';
 interface Props {
   admin: AdminClient;
   sites: SiteInfo[] | undefined;
+  /** A user mints only within their own sites — 'all' is the admin's scope. */
+  role?: AuthRole;
 }
 
-let { admin, sites }: Props = $props();
+let { admin, sites, role = 'admin' }: Props = $props();
 // svelte-ignore state_referenced_locally
 const api = adminObjects(admin);
+/** Users start on "Only:" because "All sites" is not theirs to grant. */
+const initialScope = (): ScopeDraft =>
+  role === 'admin' ? emptyScope() : { all: false, sites: [] };
 const nameOf = (id: number): string => sites?.find((s) => s.id === id)?.name ?? `Site ${id}`;
 const day = (ms: number): string => new Date(ms).toLocaleDateString();
 
@@ -30,7 +36,7 @@ const day = (ms: number): string => new Date(ms).toLocaleDateString();
 let tokens = $state<ApiTokenInfo[] | undefined>(undefined);
 let tokensFailed = $state(false);
 let tokenName = $state('');
-let tokenScope = $state<ScopeDraft>(emptyScope());
+let tokenScope = $state<ScopeDraft>(initialScope());
 let tokenBusy = $state(false);
 let tokenError = $state<PanelFailure | undefined>(undefined);
 /** The revoke button's own report — the mint form is elsewhere on the card. */
@@ -61,7 +67,7 @@ async function mintToken(event: SubmitEvent): Promise<void> {
     const grant = await api.createToken({ name: tokenName.trim(), sites: scope });
     minted = grant.token;
     tokenName = '';
-    tokenScope = emptyScope();
+    tokenScope = initialScope();
     await loadTokens();
   } catch (failure) {
     tokenError = panelFailure(failure, 'Minting failed — try again.');
@@ -84,7 +90,7 @@ async function revokeToken(id: number): Promise<void> {
 let viewers = $state<ViewerInfo[] | undefined>(undefined);
 let viewersFailed = $state(false);
 let viewerEmail = $state('');
-let viewerScope = $state<ScopeDraft>(emptyScope());
+let viewerScope = $state<ScopeDraft>(initialScope());
 let viewerBusy = $state(false);
 let viewerError = $state<PanelFailure | undefined>(undefined);
 let viewerRowError = $state<PanelFailure | undefined>(undefined);
@@ -117,7 +123,7 @@ async function inviteViewer(event: SubmitEvent): Promise<void> {
     const link = await api.inviteViewer({ email, sites: scope });
     invite = { email, url: inviteUrl(link.url) };
     viewerEmail = '';
-    viewerScope = emptyScope();
+    viewerScope = initialScope();
     await loadViewers();
   } catch (failure) {
     viewerError = panelFailure(failure, 'Inviting failed — try again.');
@@ -164,19 +170,21 @@ async function copySecret(secret: string): Promise<void> {
 {#snippet scopePicker(draft: ScopeDraft, kind: string)}
   <fieldset class="scope">
     <legend>Can read</legend>
-    <label class="check">
-      <input type="radio" name="{kind}-scope" checked={draft.all} onchange={() => (draft.all = true)} />
-      All sites
-    </label>
-    <label class="check">
-      <input
-        type="radio"
-        name="{kind}-scope"
-        checked={!draft.all}
-        onchange={() => (draft.all = false)}
-      />
-      Only:
-    </label>
+    {#if role === 'admin'}
+      <label class="check">
+        <input type="radio" name="{kind}-scope" checked={draft.all} onchange={() => (draft.all = true)} />
+        All sites
+      </label>
+      <label class="check">
+        <input
+          type="radio"
+          name="{kind}-scope"
+          checked={!draft.all}
+          onchange={() => (draft.all = false)}
+        />
+        Only:
+      </label>
+    {/if}
     {#each sites ?? [] as site (site.id)}
       <label class="check indent">
         <input

@@ -7,16 +7,17 @@ interface Props {
 }
 
 let { auth }: Props = $props();
+let email = $state('');
 let password = $state('');
 
 /** Server errors are terse lowercase API strings — dress the common one for people. */
 const shownError = $derived(
-  auth.error === 'wrong password' ? 'Wrong password — try again.' : auth.error,
+  auth.error === 'wrong password' ? 'Wrong email or password — try again.' : auth.error,
 );
 
 function submit(event: SubmitEvent): void {
   event.preventDefault();
-  void auth.login(password);
+  void auth.login(password, email);
 }
 </script>
 
@@ -24,11 +25,20 @@ function submit(event: SubmitEvent): void {
   <form class="card auth-card" onsubmit={submit}>
     <div class="wordmark">featherstat<span class="dot">.</span></div>
     <p class="auth-what">
-      Private analytics console for this site's owner. featherstat is
-      self-hosted, open-source web analytics; this page asks only for the
-      operator's own password and collects nothing from visitors.
+      Private analytics console for this instance's operators. featherstat is
+      self-hosted, open-source web analytics; this page asks only for an
+      operator's own credentials and collects nothing from visitors.
     </p>
     <h1>Log in</h1>
+    <label class="field">
+      Email
+      <input
+        type="email"
+        bind:value={email}
+        autocomplete="username"
+        placeholder="blank for the instance admin"
+      />
+    </label>
     <label class="field">
       Password
       <input

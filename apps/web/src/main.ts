@@ -1,6 +1,7 @@
 import { mount } from 'svelte';
 import App from './App.svelte';
 import { shareTokenFromPath } from './lib/share.ts';
+import { welcomeTokenFromPath } from './lib/welcome.ts';
 import './theme.css';
 import './lib/layout.css';
 import './lib/forms.css';
@@ -12,7 +13,13 @@ const target = document.getElementById('app');
 if (!target) throw new Error('missing #app mount point');
 
 const shareToken = shareTokenFromPath(window.location.pathname);
-if (shareToken === undefined) {
+const welcomeToken = welcomeTokenFromPath(window.location.pathname);
+if (welcomeToken !== undefined) {
+  // An invite claim carries no session either: same pre-auth mount as share.
+  void import('./welcome/welcome.ts').then(({ WelcomeView }) =>
+    mount(WelcomeView, { target, props: { token: welcomeToken } }),
+  );
+} else if (shareToken === undefined) {
   mount(App, { target });
 } else {
   // A share link carries no session: the read-only page is its own chunk, and

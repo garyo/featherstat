@@ -96,6 +96,8 @@ export const CHUNK_MAX_GZIP: Readonly<Record<string, number>> = {
   /** The share page and the dialog that mints links for it — small by construction. */
   share: 2_048,
   dialog: 2_048,
+  /** The invite-claim page (`/welcome/<token>`) — a password form and one POST. */
+  welcome: 2_048,
   /** The dashboard-library management panel — a list of rows and five verbs. */
   manage: 2_560,
 };
@@ -118,6 +120,7 @@ export const CHUNK_MARKERS: Readonly<Record<string, readonly string[]>> = {
     'Save alert rules',
     'Really delete + scrub',
     'New annotation',
+    'Invite user',
   ],
   // The second marker is a detail TEMPLATE's widget title: the shared entity
   // templates must ride this chunk, never the entry.
@@ -125,6 +128,7 @@ export const CHUNK_MARKERS: Readonly<Record<string, readonly string[]>> = {
   WidgetFilters: ['Only count rows where'],
   share: ['Shared dashboard'],
   dialog: ['Create share link'],
+  welcome: ['Claim account'],
   // NOT the switcher's "Manage dashboards…" line — that trigger rides the entry.
   manage: ['New empty dashboard'],
 };
