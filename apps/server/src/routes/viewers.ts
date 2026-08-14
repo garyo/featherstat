@@ -96,6 +96,8 @@ export function createViewerRoutes(
     insertMagicLink(db, {
       token_hash: sha256(raw),
       viewer_id: viewer.id,
+      user_id: null,
+      purpose: 'viewer-login',
       created_at: auth.now(),
       expires_at: expiresAt,
     });
@@ -162,7 +164,7 @@ export function createViewerRoutes(
     if (!LINK_TOKEN_SHAPE.test(raw)) return deadLink(c);
     const viewerId = withWriteTransaction(db, () => {
       const link = getMagicLink(db, sha256(raw));
-      if (link === undefined) return undefined;
+      if (link === undefined || link.viewer_id === null) return undefined;
       const viewer = getViewer(db, link.viewer_id);
       if (viewer === undefined || viewer.revoked_at !== null) return undefined;
       // The UPDATE is the claim: single use even under concurrent requests.

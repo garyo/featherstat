@@ -5,7 +5,9 @@ import BetterSqlite3 from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { event, SESSION, session, VISITOR } from '../../test/rows.ts';
 import {
+  addUserSite,
   bumpDataEpoch,
+  consumeMagicLink,
   countEvents,
   createDashboard,
   createSite,
@@ -14,25 +16,41 @@ import {
   dataVersion,
   deleteDashboard,
   deleteSetting,
+  deleteUserSessions,
+  disableUser,
+  enableUser,
+  expireUserMagicLinks,
+  getAdminSession,
   getBotDrops,
   getDashboard,
+  getMagicLink,
   getSetting,
   getShareToken,
   getSite,
+  getUser,
+  getUserByEmail,
   incrementBotDrops,
+  insertAdminSession,
   insertEvents,
+  insertMagicLink,
   insertShareToken,
+  insertUser,
   listBotDrops,
   listDashboards,
   listSites,
+  listUserSites,
+  listUsers,
   migrate,
   type NewDashboard,
   observeWriteTransactions,
   openDb,
+  removeSiteFromUsers,
   revokeShareTokens,
   schemaVersion,
   setSetting,
   settingKeysWithPrefix,
+  setUserPassword,
+  setUserSites,
   updateDashboard,
   updateSite,
   upsertSessions,
@@ -88,6 +106,8 @@ describe('migrate', () => {
       'settings',
       'share_tokens',
       'sites',
+      'user_sites',
+      'users',
       'viewers',
     ]);
     // Spelled from MIGRATIONS rather than repeated: the list is the fact, and
@@ -115,6 +135,7 @@ describe('migrate', () => {
       'ix_sessions_open',
       'ix_sessions_site_date',
       'ix_share_tokens_dashboard',
+      'ix_user_sites_site',
     ]);
     db.close();
   });
@@ -282,6 +303,97 @@ describe('helpers', () => {
         timezone: 'UTC',
       });
       expect(write(() => updateSite(db, 99, { name: 'Ghost' }))).toBeUndefined();
+    });
+  });
+
+  describe('users', () => {
+    it('round-trips a user; email lookup is case-insensitive', () => {
+      const created = write(() => insertUser(db, 'Pat@Example.com', 111));
+      expect(created).toEqual({
+        id: created.id,
+        email: 'Pat@Example.com',
+        password_hash: null,
+        created_at: 111,
+        disabled_at: null,
+      });
+      expect(getUser(db, created.id)).toEqual(created);
+      expect(getUserByEmail(db, 'pat@example.COM')).toEqual(created);
+      expect(listUsers(db).map((u) => u.id)).toEqual([created.id]);
+    });
+
+    it('sets a password and soft-disables; re-enable clears the mark', () => {
+      const user = write(() => insertUser(db, 'a@b.test', 1));
+      write(() => setUserPassword(db, user.id, 'scrypt$x'));
+      expect(getUser(db, user.id)?.password_hash).toBe('scrypt$x');
+      expect(write(() => disableUser(db, user.id, 99))).toBe(true);
+      expect(write(() => disableUser(db, user.id, 100))).toBe(false);
+      expect(getUser(db, user.id)?.disabled_at).toBe(99);
+      write(() => enableUser(db, user.id));
+      expect(getUser(db, user.id)?.disabled_at).toBeNull();
+    });
+
+    it('owns sites: add grows, setUserSites replaces, site removal sheds owners', () => {
+      const user = write(() => insertUser(db, 'a@b.test', 1));
+      write(() => {
+        addUserSite(db, user.id, 3);
+        addUserSite(db, user.id, 1);
+        addUserSite(db, user.id, 3); // idempotent
+      });
+      expect(listUserSites(db, user.id)).toEqual([1, 3]);
+      write(() => setUserSites(db, user.id, [2, 5]));
+      expect(listUserSites(db, user.id)).toEqual([2, 5]);
+      write(() => removeSiteFromUsers(db, 5));
+      expect(listUserSites(db, user.id)).toEqual([2]);
+    });
+
+    it('user sessions round-trip and die together, sparing the kept one', () => {
+      const user = write(() => insertUser(db, 'a@b.test', 1));
+      write(() => {
+        insertAdminSession(db, {
+          id: 'aa',
+          created_at: 1,
+          expires_at: 999,
+          principal_kind: 'user',
+          user_id: user.id,
+        });
+        insertAdminSession(db, {
+          id: 'bb',
+          created_at: 1,
+          expires_at: 999,
+          principal_kind: 'user',
+          user_id: user.id,
+        });
+      });
+      expect(getAdminSession(db, 'aa')).toMatchObject({
+        principal_kind: 'user',
+        user_id: user.id,
+        viewer_id: null,
+      });
+      write(() => deleteUserSessions(db, user.id, 'bb'));
+      expect(getAdminSession(db, 'aa')).toBeUndefined();
+      expect(getAdminSession(db, 'bb')).toBeDefined();
+    });
+
+    it('user-invite magic links round-trip and expire on disable', () => {
+      const user = write(() => insertUser(db, 'a@b.test', 1));
+      const hash = new Uint8Array(32).fill(7);
+      write(() =>
+        insertMagicLink(db, {
+          token_hash: hash,
+          viewer_id: null,
+          user_id: user.id,
+          purpose: 'user-invite',
+          created_at: 1,
+          expires_at: 1000,
+        }),
+      );
+      expect(getMagicLink(db, hash)).toMatchObject({
+        viewer_id: null,
+        user_id: user.id,
+        purpose: 'user-invite',
+      });
+      write(() => expireUserMagicLinks(db, user.id, 500));
+      expect(write(() => consumeMagicLink(db, hash, 600))).toBe(false);
     });
   });
 

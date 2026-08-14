@@ -278,6 +278,7 @@ export function createAdminRoutes(
       token_hash: createHash('sha256').update(raw).digest(),
       site_scope: serializeSiteScope(body.data.sites),
       created_at: auth.now(),
+      created_by_user_id: null,
     };
     const id = withWriteTransaction(db, () => insertApiToken(db, row));
     const minted: ApiTokenMinted = {

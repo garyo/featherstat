@@ -1143,23 +1143,24 @@ export interface AdminSessionRow {
   id: string;
   created_at: number;
   expires_at: number;
-  /** 'admin' | 'viewer' — resolved to a Principal by the auth gate. */
+  /** 'admin' | 'viewer' | 'user' — resolved to a Principal by the auth gate. */
   principal_kind: string;
   viewer_id: number | null;
+  user_id: number | null;
 }
 
 const SQL_INSERT_ADMIN_SESSION =
-  'INSERT INTO admin_sessions (id, created_at, expires_at, principal_kind, viewer_id) VALUES (?, ?, ?, ?, ?)';
+  'INSERT INTO admin_sessions (id, created_at, expires_at, principal_kind, viewer_id, user_id) VALUES (?, ?, ?, ?, ?, ?)';
 const SQL_GET_ADMIN_SESSION =
-  'SELECT id, created_at, expires_at, principal_kind, viewer_id FROM admin_sessions WHERE id = ?';
+  'SELECT id, created_at, expires_at, principal_kind, viewer_id, user_id FROM admin_sessions WHERE id = ?';
 const SQL_DELETE_ADMIN_SESSION = 'DELETE FROM admin_sessions WHERE id = ?';
 const SQL_DELETE_ADMIN_SESSIONS_EXCEPT = 'DELETE FROM admin_sessions WHERE id <> ?';
 const SQL_DELETE_EXPIRED_ADMIN_SESSIONS = 'DELETE FROM admin_sessions WHERE expires_at <= ?';
 
 export function insertAdminSession(
   db: Db,
-  row: Omit<AdminSessionRow, 'principal_kind' | 'viewer_id'> &
-    Partial<Pick<AdminSessionRow, 'principal_kind' | 'viewer_id'>>,
+  row: Omit<AdminSessionRow, 'principal_kind' | 'viewer_id' | 'user_id'> &
+    Partial<Pick<AdminSessionRow, 'principal_kind' | 'viewer_id' | 'user_id'>>,
 ): void {
   assertWritable(db);
   stmt(db, SQL_INSERT_ADMIN_SESSION).run(
@@ -1168,6 +1169,7 @@ export function insertAdminSession(
     row.expires_at,
     row.principal_kind ?? 'admin',
     row.viewer_id ?? null,
+    row.user_id ?? null,
   );
 }
 
@@ -1201,6 +1203,12 @@ export function deleteExpiredAdminSessions(db: Db, now: number): void {
   stmt(db, SQL_DELETE_EXPIRED_ADMIN_SESSIONS).run(now);
 }
 
+/** Logs a user out everywhere; `keepId` (their own password-change session) survives. */
+export function deleteUserSessions(db: Db, userId: number, keepId?: string): void {
+  assertWritable(db);
+  stmt(db, 'DELETE FROM admin_sessions WHERE user_id = ? AND id <> ?').run(userId, keepId ?? '');
+}
+
 // ---------------------------------------------------------------------------
 // API tokens & viewers (docs/04 § 5): scoped read-only principals
 // ---------------------------------------------------------------------------
@@ -1215,11 +1223,14 @@ export interface ApiTokenRow {
   created_at: number;
   last_used_at: number | null;
   revoked_at: number | null;
+  /** Minting user, or NULL for an admin mint. Bounds who may list/revoke it. */
+  created_by_user_id: number | null;
 }
 
-const API_TOKEN_COLUMNS = 'id, name, token_hash, site_scope, created_at, last_used_at, revoked_at';
+const API_TOKEN_COLUMNS =
+  'id, name, token_hash, site_scope, created_at, last_used_at, revoked_at, created_by_user_id';
 const SQL_INSERT_API_TOKEN =
-  'INSERT INTO api_tokens (name, token_hash, site_scope, created_at) VALUES (?, ?, ?, ?)';
+  'INSERT INTO api_tokens (name, token_hash, site_scope, created_at, created_by_user_id) VALUES (?, ?, ?, ?, ?)';
 const SQL_GET_API_TOKEN = `SELECT ${API_TOKEN_COLUMNS} FROM api_tokens WHERE token_hash = ?`;
 const SQL_LIST_API_TOKENS = `SELECT ${API_TOKEN_COLUMNS} FROM api_tokens ORDER BY id`;
 const SQL_REVOKE_API_TOKEN =
@@ -1228,7 +1239,8 @@ const SQL_TOUCH_API_TOKEN = 'UPDATE api_tokens SET last_used_at = ? WHERE id = ?
 
 export function insertApiToken(
   db: Db,
-  row: Pick<ApiTokenRow, 'name' | 'token_hash' | 'site_scope' | 'created_at'>,
+  row: Pick<ApiTokenRow, 'name' | 'token_hash' | 'site_scope' | 'created_at'> &
+    Partial<Pick<ApiTokenRow, 'created_by_user_id'>>,
 ): number {
   assertWritable(db);
   const info = stmt(db, SQL_INSERT_API_TOKEN).run(
@@ -1236,6 +1248,7 @@ export function insertApiToken(
     row.token_hash,
     row.site_scope,
     row.created_at,
+    row.created_by_user_id ?? null,
   );
   return Number(info.lastInsertRowid);
 }
@@ -1265,13 +1278,16 @@ export interface ViewerRow {
   site_scope: string;
   created_at: number;
   revoked_at: number | null;
+  /** Inviting user, or NULL for an admin invite. Bounds who may list/revoke it. */
+  created_by_user_id: number | null;
 }
 
-const VIEWER_COLUMNS = 'id, email, site_scope, created_at, revoked_at';
+const VIEWER_COLUMNS = 'id, email, site_scope, created_at, revoked_at, created_by_user_id';
 const SQL_GET_VIEWER = `SELECT ${VIEWER_COLUMNS} FROM viewers WHERE id = ?`;
 const SQL_GET_VIEWER_BY_EMAIL = `SELECT ${VIEWER_COLUMNS} FROM viewers WHERE email = ?`;
 const SQL_LIST_VIEWERS = `SELECT ${VIEWER_COLUMNS} FROM viewers ORDER BY id`;
-const SQL_INSERT_VIEWER = 'INSERT INTO viewers (email, site_scope, created_at) VALUES (?, ?, ?)';
+const SQL_INSERT_VIEWER =
+  'INSERT INTO viewers (email, site_scope, created_at, created_by_user_id) VALUES (?, ?, ?, ?)';
 // Re-inviting is a decision to restore access, so it clears any revocation.
 const SQL_REINVITE_VIEWER = `UPDATE viewers SET site_scope = ?, revoked_at = NULL WHERE id = ? RETURNING ${VIEWER_COLUMNS}`;
 const SQL_REVOKE_VIEWER = 'UPDATE viewers SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL';
@@ -1290,11 +1306,25 @@ export function listViewers(db: Db): ViewerRow[] {
 
 export function insertViewer(
   db: Db,
-  row: Pick<ViewerRow, 'email' | 'site_scope' | 'created_at'>,
+  row: Pick<ViewerRow, 'email' | 'site_scope' | 'created_at'> &
+    Partial<Pick<ViewerRow, 'created_by_user_id'>>,
 ): ViewerRow {
   assertWritable(db);
-  const info = stmt(db, SQL_INSERT_VIEWER).run(row.email, row.site_scope, row.created_at);
-  return { id: Number(info.lastInsertRowid), ...row, revoked_at: null };
+  const createdBy = row.created_by_user_id ?? null;
+  const info = stmt(db, SQL_INSERT_VIEWER).run(
+    row.email,
+    row.site_scope,
+    row.created_at,
+    createdBy,
+  );
+  return {
+    id: Number(info.lastInsertRowid),
+    email: row.email,
+    site_scope: row.site_scope,
+    created_at: row.created_at,
+    revoked_at: null,
+    created_by_user_id: createdBy,
+  };
 }
 
 /** Re-invite: updates the scope and clears a revocation. Undefined if unknown. */
@@ -1312,15 +1342,20 @@ export function revokeViewer(db: Db, id: number, now: number): boolean {
 export interface MagicLinkRow {
   /** sha256 of the raw link token — the raw value exists only in the mint response. */
   token_hash: Uint8Array;
-  viewer_id: number;
+  /** Exactly one of viewer_id / user_id is set (schema CHECK). */
+  viewer_id: number | null;
+  user_id: number | null;
+  /** 'viewer-login' | 'user-invite' — what claiming the link does. */
+  purpose: string;
   created_at: number;
   expires_at: number;
   used_at: number | null;
 }
 
-const MAGIC_LINK_COLUMNS = 'token_hash, viewer_id, created_at, expires_at, used_at';
+const MAGIC_LINK_COLUMNS =
+  'token_hash, viewer_id, user_id, purpose, created_at, expires_at, used_at';
 const SQL_INSERT_MAGIC_LINK =
-  'INSERT INTO magic_links (token_hash, viewer_id, created_at, expires_at) VALUES (?, ?, ?, ?)';
+  'INSERT INTO magic_links (token_hash, viewer_id, user_id, purpose, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)';
 const SQL_GET_MAGIC_LINK = `SELECT ${MAGIC_LINK_COLUMNS} FROM magic_links WHERE token_hash = ?`;
 // Single use: the UPDATE is the claim — `changes === 1` means WE consumed it,
 // so two concurrent claims of one link cannot both win.
@@ -1328,6 +1363,8 @@ const SQL_CONSUME_MAGIC_LINK =
   'UPDATE magic_links SET used_at = ? WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?';
 const SQL_EXPIRE_VIEWER_MAGIC_LINKS =
   'UPDATE magic_links SET expires_at = ? WHERE viewer_id = ? AND used_at IS NULL AND expires_at > ?';
+const SQL_EXPIRE_USER_MAGIC_LINKS =
+  'UPDATE magic_links SET expires_at = ? WHERE user_id = ? AND used_at IS NULL AND expires_at > ?';
 const SQL_PRUNE_MAGIC_LINKS =
   'DELETE FROM magic_links WHERE expires_at <= ? OR used_at IS NOT NULL';
 
@@ -1336,6 +1373,8 @@ export function insertMagicLink(db: Db, row: Omit<MagicLinkRow, 'used_at'>): voi
   stmt(db, SQL_INSERT_MAGIC_LINK).run(
     row.token_hash,
     row.viewer_id,
+    row.user_id,
+    row.purpose,
     row.created_at,
     row.expires_at,
   );
@@ -1357,8 +1396,111 @@ export function expireViewerMagicLinks(db: Db, viewerId: number, now: number): v
   stmt(db, SQL_EXPIRE_VIEWER_MAGIC_LINKS).run(now, viewerId, now);
 }
 
+/** Expires every outstanding invite of a user — the disable companion. */
+export function expireUserMagicLinks(db: Db, userId: number, now: number): void {
+  assertWritable(db);
+  stmt(db, SQL_EXPIRE_USER_MAGIC_LINKS).run(now, userId, now);
+}
+
 /** Drops expired and consumed links — opportunistic sweep, mirrors the session one. */
 export function pruneMagicLinks(db: Db, now: number): void {
   assertWritable(db);
   stmt(db, SQL_PRUNE_MAGIC_LINKS).run(now);
+}
+
+// ---------------------------------------------------------------------------
+// Users (docs/04 § 5): password-holding accounts that own and manage sites.
+// The instance admin is not here — it stays the `auth.password` settings row.
+// ---------------------------------------------------------------------------
+
+export interface UserRow {
+  id: number;
+  email: string;
+  /** scrypt string, or NULL while the invite is unclaimed (login refuses NULL). */
+  password_hash: string | null;
+  created_at: number;
+  disabled_at: number | null;
+}
+
+const USER_COLUMNS = 'id, email, password_hash, created_at, disabled_at';
+const SQL_GET_USER = `SELECT ${USER_COLUMNS} FROM users WHERE id = ?`;
+const SQL_GET_USER_BY_EMAIL = `SELECT ${USER_COLUMNS} FROM users WHERE email = ?`;
+const SQL_LIST_USERS = `SELECT ${USER_COLUMNS} FROM users ORDER BY id`;
+const SQL_INSERT_USER = 'INSERT INTO users (email, created_at) VALUES (?, ?)';
+const SQL_SET_USER_PASSWORD = 'UPDATE users SET password_hash = ? WHERE id = ?';
+const SQL_DISABLE_USER = 'UPDATE users SET disabled_at = ? WHERE id = ? AND disabled_at IS NULL';
+const SQL_ENABLE_USER = 'UPDATE users SET disabled_at = NULL WHERE id = ?';
+
+export function getUser(db: Db, id: number): UserRow | undefined {
+  return stmt<UserRow>(db, SQL_GET_USER).get(id);
+}
+
+/** Case-insensitive: the email column collates NOCASE. */
+export function getUserByEmail(db: Db, email: string): UserRow | undefined {
+  return stmt<UserRow>(db, SQL_GET_USER_BY_EMAIL).get(email);
+}
+
+export function listUsers(db: Db): UserRow[] {
+  return stmt<UserRow>(db, SQL_LIST_USERS).all() as UserRow[];
+}
+
+export function insertUser(db: Db, email: string, now: number): UserRow {
+  assertWritable(db);
+  const info = stmt(db, SQL_INSERT_USER).run(email, now);
+  return {
+    id: Number(info.lastInsertRowid),
+    email,
+    password_hash: null,
+    created_at: now,
+    disabled_at: null,
+  };
+}
+
+export function setUserPassword(db: Db, id: number, passwordHash: string): void {
+  assertWritable(db);
+  stmt(db, SQL_SET_USER_PASSWORD).run(passwordHash, id);
+}
+
+/** Soft revoke; false if unknown or already disabled. Live sessions die at the gate. */
+export function disableUser(db: Db, id: number, now: number): boolean {
+  assertWritable(db);
+  return stmt(db, SQL_DISABLE_USER).run(now, id).changes > 0;
+}
+
+/** Re-invite restores access, exactly as it does for viewers. */
+export function enableUser(db: Db, id: number): void {
+  assertWritable(db);
+  stmt(db, SQL_ENABLE_USER).run(id);
+}
+
+const SQL_LIST_USER_SITES = 'SELECT site_id FROM user_sites WHERE user_id = ? ORDER BY site_id';
+const SQL_ADD_USER_SITE = 'INSERT OR IGNORE INTO user_sites (user_id, site_id) VALUES (?, ?)';
+const SQL_CLEAR_USER_SITES = 'DELETE FROM user_sites WHERE user_id = ?';
+const SQL_REMOVE_SITE_FROM_USERS = 'DELETE FROM user_sites WHERE site_id = ?';
+
+export function listUserSites(db: Db, userId: number): number[] {
+  return (
+    stmt<{ site_id: number }>(db, SQL_LIST_USER_SITES).all(userId) as Array<{
+      site_id: number;
+    }>
+  ).map((row) => row.site_id);
+}
+
+/** Ownership grows on site create: one row, in the creating transaction. */
+export function addUserSite(db: Db, userId: number, siteId: number): void {
+  assertWritable(db);
+  stmt(db, SQL_ADD_USER_SITE).run(userId, siteId);
+}
+
+/** Admin reassignment: replaces the user's whole set. */
+export function setUserSites(db: Db, userId: number, siteIds: readonly number[]): void {
+  assertWritable(db);
+  stmt(db, SQL_CLEAR_USER_SITES).run(userId);
+  for (const siteId of siteIds) stmt(db, SQL_ADD_USER_SITE).run(userId, siteId);
+}
+
+/** Site deletion companion: no user owns a tombstoned site. */
+export function removeSiteFromUsers(db: Db, siteId: number): void {
+  assertWritable(db);
+  stmt(db, SQL_REMOVE_SITE_FROM_USERS).run(siteId);
 }
