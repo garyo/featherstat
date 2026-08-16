@@ -50,6 +50,16 @@ describe('DASHBOARD_TEMPLATES', () => {
     expect(dashboardTemplate('acquisition')?.build(42).site).toBe(42);
   });
 
+  it('ships the live feed on the all-sites overview, outside the batch', () => {
+    // The overview a non-admin user lands on IS this template (stored all-sites
+    // dashboards are admin-only), so the recent-hits feed must ship with it —
+    // and stay queryless: it rides the SSE stream (invariant 1).
+    const built = dashboardTemplate('all-sites')?.build('all', SITE_IDS);
+    const feed = built?.grid.find((widget) => widget.viz === 'feed');
+    expect(feed).toBeDefined();
+    expect(feed?.query).toBeUndefined();
+  });
+
   it('threads the live site ids into the all-sites card grid', () => {
     const built = dashboardTemplate('all-sites')?.build('all', [3, 9]);
     expect(built?.grid[0]?.options.siteIds).toEqual([3, 9]);
