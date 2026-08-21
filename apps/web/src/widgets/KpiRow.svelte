@@ -33,6 +33,7 @@ const tiles = $derived.by(() => {
     // The tile reads its unit and its aggregate off the answer it was handed,
     // so the number and its sparkline cannot end up on different scales.
     measures: main.result.measures,
+    seriesMeasures: spark.kind === 'ready' ? spark.result.measures : undefined,
   });
 });
 </script>
@@ -65,11 +66,18 @@ const tiles = $derived.by(() => {
           <div class="value" class:na={tile.value === '—'} title={tile.exact}>{tile.value}</div>
           <div class="delta {tile.delta.tone}">{tile.delta.text}</div>
         </div>
-        <!-- A one-point series (e.g. the day-bucketed spark under "today") draws
-             nothing, so the box collapses rather than leaving a hole. -->
+        <!-- A one-point series draws nothing, so the box collapses rather than
+             leaving a hole. The line is min-anchored and always fills its box,
+             so the scale beside it is what gives the shape a magnitude. -->
         {#if tile.spark.length > 1}
           <div class="spark">
             <Sparkline data={tile.spark} width={150} height={34} />
+            {#if tile.scale !== undefined}
+              <div class="scale" aria-label="range across the period">
+                <span>{tile.scale.peak}</span>
+                {#if tile.scale.floor !== undefined}<span>{tile.scale.floor}</span>{/if}
+              </div>
+            {/if}
           </div>
         {/if}
       </div>

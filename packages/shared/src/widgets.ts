@@ -20,11 +20,6 @@ const PAGES_INFIX = '~pages~';
 /** Browser rows shown under the device bar's divider (mockup). */
 const BROWSERS_LIMIT = 6;
 
-/** A KPI sparkline companion, recognizable anywhere the batch is reshaped. */
-export function isSparkCompanion(id: string): boolean {
-  return id.endsWith(SPARK_SUFFIX);
-}
-
 /** The slot key a site-cards widget reads one site's top-pages result from. */
 export function sitePagesSlot(siteId: number): string {
   return `pages~${siteId}`;
@@ -180,10 +175,13 @@ const INTRADAY_PRESETS = new Set<RangePreset>(['today', '24h']);
  * they would draw. An explicit `{from, to}` range is intraday exactly when it is
  * a single day — the one shape where a day bucket collapses to a point.
  *
- * KPI spark companions are exempt: they mix session-level metrics (engaged_ms,
- * bounce_rate) that the vocabulary cannot bucket by hour, so rewriting them
- * turns the whole companion into a compile error. They keep day buckets and
- * collapse to a single point, which KpiRow renders sparkless.
+ * KPI spark companions are rewritten like everything else. They were once
+ * exempt, because their session metrics had no hour to bucket by; sessions
+ * carry `local_hour` as of schema 104, so the exemption is gone. It was never
+ * the safe default it looked like — across `24h`'s local midnight, day buckets
+ * draw exactly two points spanning `24 − h` and `h` hours for `h` since
+ * midnight, so flat traffic slopes down all morning and up all evening and the
+ * line reports the clock rather than the site.
  */
 export function hourlyWhenIntraday(
   queries: readonly Query[],
@@ -193,8 +191,6 @@ export function hourlyWhenIntraday(
     typeof range === 'string' ? INTRADAY_PRESETS.has(range) : range.from === range.to;
   if (!intraday) return [...queries];
   return queries.map((query) =>
-    'kind' in query || query.bucket !== 'day' || isSparkCompanion(query.id)
-      ? query
-      : { ...query, bucket: 'hour' },
+    'kind' in query || query.bucket !== 'day' ? query : { ...query, bucket: 'hour' },
   );
 }

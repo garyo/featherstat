@@ -1,4 +1,9 @@
-import { type CampaignField, type QueryRequest, readStoredDashboard } from '@featherstat/shared';
+import {
+  type CampaignField,
+  localClock,
+  type QueryRequest,
+  readStoredDashboard,
+} from '@featherstat/shared';
 import {
   countEvents,
   createSite,
@@ -454,6 +459,20 @@ type V1SessionSourceRow = { rid: number } & {
     : string | number | null;
 };
 
+/**
+ * Site timezones from the source, for the one column a v1 session cannot
+ * supply: `local_hour`. v1 dated a visit but never gave it an hour, so the
+ * rewrite derives it the way ingest does — from `started_at` in the site's own
+ * zone (docs/03 § Timezones).
+ */
+function sourceTimezones(source: Db): Map<number, string> {
+  const rows = stmt<{ id: number; timezone: string }>(
+    source,
+    'SELECT id, timezone FROM sites',
+  ).all() as { id: number; timezone: string }[];
+  return new Map(rows.map((row) => [row.id, row.timezone]));
+}
+
 function importSessions(
   target: Db,
   source: Db,
@@ -462,6 +481,7 @@ function importSessions(
   dryRun: boolean,
   batchSize: number,
 ): void {
+  const timezones = sourceTimezones(source);
   // Sessions key on a blob id, so the cursor is the source table's rowid; the
   // upsert makes a re-read of any row idempotent.
   const sql = `SELECT rowid AS rid, ${V1_SESSION_COLUMNS.join(', ')}
@@ -475,7 +495,9 @@ FROM sessions WHERE rowid > ? ORDER BY rowid LIMIT ?`;
     const last = rows.at(-1);
     if (last === undefined) return;
     const mapped: SessionRow[] = rows.map((row) => {
-      const { rid: _rid, utm_source, utm_medium, utm_campaign, ...shared } = row;
+      const { rid: _rid, utm_source, utm_medium, utm_campaign, ...rest } = row;
+      const zone = timezones.get(row.site_id as number) ?? 'UTC';
+      const shared = { ...rest, local_hour: localClock(zone, row.started_at as number).hour };
       const entry_path = healedPath(row.entry_path, report);
       const exit_path = healedPath(row.exit_path, report);
       const noUtm = utm_source === null && utm_medium === null && utm_campaign === null;

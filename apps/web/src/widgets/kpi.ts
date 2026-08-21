@@ -38,7 +38,15 @@ export interface TileModel {
   /** Exact value for the tooltip when `value` is compacted. */
   exact: string | undefined;
   delta: { text: string; tone: Tone };
-  spark: number[];
+  /** A period the measure could not reduce is a gap, never a zero (Sparkline). */
+  spark: (number | undefined)[];
+  /**
+   * The sparkline's own y-axis, in the metric's unit. The line is min-anchored
+   * and fills its box whatever the amplitude, so without these numbers a bump
+   * of two visitors and a bump of two thousand draw the same picture.
+   * `floor` is omitted for a flat line, where `peak` alone is the value.
+   */
+  scale: { peak: string; floor: string | undefined } | undefined;
   /**
    * True when the measure is a distinct count, which is exact within a day and
    * an approximation over a longer range (docs/03 § Visitor identity). Derived
@@ -119,6 +127,13 @@ export interface TileInput {
   series: readonly SeriesPoint[];
   /** What the result said its columns mean; without it a tile cannot read one. */
   measures: Measures | undefined;
+  /**
+   * The same, for the companion. A metric it does not declare is one it never
+   * answered — under an intraday range it carries only what an hour bucket can
+   * reach — and `seriesOf` zero-fills the rest, so without this the tile would
+   * draw a flat line at zero instead of no line at all.
+   */
+  seriesMeasures: Measures | undefined;
 }
 
 export function tileModels(names: readonly string[], input: TileInput): TileModel[] {
@@ -160,8 +175,38 @@ function model(
             text: `${delta.dir > 0 ? '▴' : '▾'} ${delta.text}`,
             tone: delta.dir > 0 === def.goodWhenUp ? 'up' : 'down',
           },
-    spark: sparkOf(def.metric, measure, slices),
+    ...withScale(
+      input.seriesMeasures?.[def.metric] === undefined ? [] : sparkOf(def.metric, measure, slices),
+      measure,
+    ),
     approximate: measure.aggregate === 'distinct',
+  };
+}
+
+/**
+ * A sparkline and the axis labels saying what it is worth. The axis spans what
+ * was actually measured, so a gap neither drags the floor to zero nor claims a
+ * range nothing supports. Two measured points are the fewest that draw a line,
+ * and anything shorter carries no scale either.
+ */
+function withScale(
+  spark: (number | undefined)[],
+  measure: Measure,
+): Pick<TileModel, 'spark' | 'scale'> {
+  const measured = spark.filter((value): value is number => value !== undefined);
+  // Nothing measured anywhere is no line at all, and the tile's box collapses
+  // rather than reserving height for it. One point is a line's worth of data
+  // short, but it still carries a value the tile is checked against.
+  if (measured.length === 0) return { spark: [], scale: undefined };
+  if (measured.length < 2) return { spark, scale: undefined };
+  const peak = Math.max(...measured);
+  const floor = Math.min(...measured);
+  return {
+    spark,
+    scale: {
+      peak: formatMeasure(measure.unit, peak),
+      floor: floor === peak ? undefined : formatMeasure(measure.unit, floor),
+    },
   };
 }
 
@@ -172,21 +217,19 @@ function model(
  * (defect 13), and a rate re-divides its declared components rather than
  * averaging averages.
  *
- * A slice the measure cannot reduce drops the whole sparkline rather than
- * drawing a hole: a line with a fabricated point in it is worse than no line.
+ * A slice the measure cannot reduce becomes a GAP, never a fabricated point: a
+ * bounce rate wants visits to weight itself by, and an hour of a quiet site has
+ * none, which makes that slice unknown rather than zero. Where no slice reduces
+ * at all the caller draws nothing — the companion is then missing a component
+ * the measure needs (a bounce rate with no `visits` beside it), which is a
+ * different thing from a period nobody visited.
  */
 function sparkOf(
   metric: Metric,
   measure: Measure,
   slices: readonly (readonly BucketValues[])[],
-): number[] {
-  const points: number[] = [];
-  for (const slice of slices) {
-    const point = measurePerBucket(metric, measure, slice);
-    if (point === undefined) return [];
-    points.push(point);
-  }
-  return points;
+): (number | undefined)[] {
+  return slices.map((slice) => measurePerBucket(metric, measure, slice));
 }
 
 /**
@@ -202,6 +245,7 @@ function blank(name: string, def: TileDef): TileModel {
     exact: undefined,
     delta: { text: '—', tone: 'muted' },
     spark: [],
+    scale: undefined,
     approximate: false,
   };
 }

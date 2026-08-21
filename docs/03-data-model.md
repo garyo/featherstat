@@ -79,7 +79,8 @@ CREATE TABLE sessions (
   visitor_id    BLOB NOT NULL,
   started_at    INTEGER NOT NULL,         -- UTC ms
   last_seen_at  INTEGER NOT NULL,
-  local_date    TEXT NOT NULL,
+  local_date    TEXT NOT NULL,            -- the date the visit STARTED, in site tz
+  local_hour    INTEGER,                  -- 0–23, the hour it started (schema 104)
   entry_path    TEXT, exit_path TEXT,
   pageviews     INTEGER NOT NULL DEFAULT 0,
   events        INTEGER NOT NULL DEFAULT 0,
@@ -673,8 +674,10 @@ new ops and rolling windows are slow before they are ever wrong). The rules:
   touch at most ONE rolled dimension — rollups store marginals, not joints.
   Filtering the same dimension a query groups by is fine (still marginal).
 - Hour shapes (`bucket: 'hour'` or the `local_hour` dimension) answer from
-  `rollup_traffic_hour`, which has no dim rows and no distincts: additive
-  event metrics only, no rolled dimension in play.
+  `rollup_traffic_hour`, which has no dim rows, no distincts and no session
+  columns: additive event metrics only, no rolled dimension in play. A SESSION
+  metric by hour is answerable — sessions carry `local_hour`, the hour the
+  visit started — but only from raw, since no stored table holds it.
 - **Distinct honesty enforced at routing**: `visitors` (and the events-side
   `visits`) roll up only at day buckets or over a single-day window, and only
   where no filter can merge two dim rows into one group. Everything wider goes

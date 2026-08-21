@@ -67,6 +67,21 @@ describe('shared vocabulary constants stay true to the compiler tables', () => {
     }
   });
 
+  // Sessions carry `local_hour` as of schema 104, so an hour bucket no longer
+  // blocks their table — unlike an event-level dim, which still does. This is
+  // what lets `hourlyWhenIntraday` (packages/shared) take a whole KPI batch
+  // hourly on an intraday range instead of exempting the spark companion.
+  it('an hour bucket answers every metric — sessions carry an hour of their own', () => {
+    for (const metric of MetricSchema.options) {
+      const compiled = compileMetricQuery(
+        { id: 'q', metrics: [metric], bucket: 'hour' },
+        [],
+        sites(1),
+      );
+      expect(isQueryError(compiled), metric).toBe(false);
+    }
+  });
+
   it('SESSION_ONLY_DIMENSIONS = exactly the dims that break event-level metrics', () => {
     const sessionOnly = new Set<string>(SESSION_ONLY_DIMENSIONS);
     for (const dim of BaseDimensionSchema.options) {
@@ -289,12 +304,15 @@ describe('compileMetricQuery', () => {
     );
     expect(byFilter).toHaveProperty(['error', 'code'], 'unsupported');
 
+    // An hour BUCKET is not one of these crossings: sessions carry their own
+    // `local_hour` (the hour the visit started), so it stays answerable — see
+    // 'an hour bucket answers every metric' above.
     const byBucket = compileMetricQuery(
       { id: 'q', metrics: ['engaged_ms'], bucket: 'hour' },
       [],
       sites(1),
     );
-    expect(byBucket).toHaveProperty(['error', 'code'], 'unsupported');
+    expect(isQueryError(byBucket)).toBe(false);
   });
 
   it('rejects a list value for single-value ops', () => {

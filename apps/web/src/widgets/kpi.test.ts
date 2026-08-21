@@ -2,6 +2,7 @@ import {
   collectBatch,
   type Dashboard,
   DashboardSchema,
+  type Measure,
   type Measures,
   type ResultRow,
   upgradeDashboard,
@@ -60,15 +61,20 @@ function day(bucket: string, values: SeriesPoint['values']): SeriesPoint {
   return { bucket, values };
 }
 
-/** The common call: totals + compare + a companion series, all against MEASURES. */
+/**
+ * The common call: totals + compare + a companion series, all against MEASURES.
+ * The companion answers whatever the main result does unless a test says
+ * otherwise — which is what an intraday range does to the session metrics.
+ */
 function models(
   names: readonly string[],
   totals: ResultRow | undefined = TOTALS,
   compare?: ResultRow,
   series: readonly SeriesPoint[] = [],
   measures: Measures | undefined = MEASURES,
+  seriesMeasures: Measures | undefined = measures,
 ) {
-  return tileModels(names, { totals, compare, series, measures });
+  return tileModels(names, { totals, compare, series, measures, seriesMeasures });
 }
 
 describe('tileNames', () => {
@@ -237,6 +243,24 @@ describe('tileModels', () => {
     }
   });
 
+  /**
+   * Hourly buckets on a quiet site: some hours had visits and some had none, and
+   * a bounce rate over an hour with no visits is unknown rather than zero. The
+   * measured hours still draw — dropping the line for them would leave the
+   * metric with no intraday shape at all on exactly the sites that need one.
+   */
+  it('leaves a gap for a period it could not measure, and draws the rest', () => {
+    const series = [
+      day('2026-07-01 09:00', { bounce_rate: 1, visits: 2 }),
+      day('2026-07-01 10:00', { bounce_rate: 0, visits: 0 }), // nobody came
+      day('2026-07-01 11:00', { bounce_rate: 0, visits: 4 }),
+    ];
+    const [tile] = models(['bounce_rate'], TOTALS, undefined, series);
+    expect(tile?.spark).toEqual([1, undefined, 0]);
+    // The axis spans what was measured; the gap neither raises nor lowers it.
+    expect(tile?.scale).toEqual({ peak: '100%', floor: '0%' });
+  });
+
   it('drops the whole sparkline when a slice cannot be reduced', () => {
     // bounce_rate re-weights on `visits`; a companion that did not ask for it
     // has nothing to weight by, so there is no honest line to draw.
@@ -244,5 +268,53 @@ describe('tileModels', () => {
     const [tile] = models(['bounce_rate'], TOTALS, undefined, series);
     expect(tile?.value).toBe('31%');
     expect(tile?.spark).toEqual([]);
+  });
+
+  /**
+   * The line is min-anchored and fills its box at any amplitude, so the numbers
+   * beside it are the only thing separating a bump of two from a bump of two
+   * thousand. They are written in the measure's own unit, like the tile's value.
+   */
+  it('states the sparkline range in the metric’s unit', () => {
+    const series = [
+      day('2026-07-01', { visitors: 2, bounce_rate: 0.5, visits: 2 }),
+      day('2026-07-02', { visitors: 9, bounce_rate: 0.1, visits: 2 }),
+    ];
+    const [visitors, bounce] = models(['visitors', 'bounce_rate'], TOTALS, undefined, series);
+    expect(visitors?.scale).toEqual({ peak: '9', floor: '2' });
+    expect(bounce?.scale).toEqual({ peak: '50%', floor: '10%' });
+  });
+
+  it('states a flat line as one number, and an absent line as none', () => {
+    const flat = [day('2026-07-01', { visitors: 4 }), day('2026-07-02', { visitors: 4 })];
+    expect(models(['visitors'], TOTALS, undefined, flat)[0]?.scale).toEqual({
+      peak: '4',
+      floor: undefined,
+    });
+    // No companion, so no line — and nothing to put an axis on.
+    expect(models(['visitors'])[0]?.scale).toBeUndefined();
+  });
+
+  /**
+   * What an intraday range does: the companion goes hourly, which only the
+   * events side can answer, so it comes back WITHOUT the session metrics. The
+   * number still reads off the main result — only the line is missing. Without
+   * this the tile drew a flat line at zero, because `seriesOf` zero-fills a
+   * column its rows never carried, which reads as "no bounces all day".
+   */
+  it('sparks only what the companion answered, never a zero-filled column', () => {
+    const hourly: Measures = { visitors: MEASURES.visitors as Measure };
+    const series = [day('2026-07-01 00:00', { visitors: 3 }), day('2026-07-01 01:00', {})];
+    const [visitors, bounce] = models(
+      ['visitors', 'bounce_rate'],
+      TOTALS,
+      undefined,
+      series,
+      MEASURES,
+      hourly,
+    );
+    expect(visitors?.spark).toEqual([3, 0]);
+    expect(bounce?.value).toBe('31%'); // the number survives
+    expect(bounce?.spark).toEqual([]); // the fabricated flat line does not
   });
 });

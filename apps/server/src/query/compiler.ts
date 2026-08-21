@@ -138,9 +138,17 @@ function weekExpr(alias: string): string {
   return `date(${alias}.local_date, '+1 day', 'weekday 1', '-7 days')`;
 }
 
-/** `hour` needs `local_hour`, which only events carry. */
+/**
+ * `hour` reads `local_hour` on either table. On sessions that is the hour the
+ * visit STARTED — exactly what the `day` row below means by `s.local_date`, one
+ * grain finer, so a session lands in one bucket rather than being spread across
+ * the hours it spanned.
+ */
 const BUCKETS: Record<Bucket, { events: string; sessions: string | null }> = {
-  hour: { events: "e.local_date || printf(' %02d:00', e.local_hour)", sessions: null },
+  hour: {
+    events: "e.local_date || printf(' %02d:00', e.local_hour)",
+    sessions: "s.local_date || printf(' %02d:00', s.local_hour)",
+  },
   day: { events: 'e.local_date', sessions: 's.local_date' },
   week: { events: weekExpr('e'), sessions: weekExpr('s') },
   month: { events: "strftime('%Y-%m', e.local_date)", sessions: "strftime('%Y-%m', s.local_date)" },

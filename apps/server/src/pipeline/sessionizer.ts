@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import {
   type Hit,
   isHeartbeat,
+  type LocalClock,
   localClock,
   PING_CLAMP_MS,
   SESSION_REVIVAL_MS,
@@ -125,7 +126,7 @@ export class Sessionizer {
       this.dropped += 1;
       return undefined;
     }
-    const state = carried ?? this.begin(input, page, local.date, key);
+    const state = carried ?? this.begin(input, page, local, key);
 
     const row = state.row;
     state.seq += 1;
@@ -227,11 +228,11 @@ export class Sessionizer {
   private begin(
     input: SessionizerInput,
     page: PageParts,
-    localDate: string,
+    local: LocalClock,
     key: string,
   ): OpenSession {
     const state: OpenSession = {
-      ...startSession(input, page, localDate, this.normalizeUtm),
+      ...startSession(input, page, local, this.normalizeUtm),
       touched: this.flushes,
     };
     this.open.set(key, state);
@@ -293,7 +294,7 @@ function sessionKey(siteId: number, visitorId: Uint8Array): string {
 function startSession(
   input: SessionizerInput,
   page: PageParts,
-  localDate: string,
+  local: LocalClock,
   normalizeUtm: UtmNormalizer,
 ): RestoredSession {
   const { site, hit, now } = input;
@@ -303,7 +304,8 @@ function startSession(
     visitor_id: input.visitorId,
     started_at: now,
     last_seen_at: now,
-    local_date: localDate,
+    local_date: local.date,
+    local_hour: local.hour,
     entry_path: page.path,
     exit_path: null,
     pageviews: 0,

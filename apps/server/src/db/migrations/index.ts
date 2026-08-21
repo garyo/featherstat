@@ -3,6 +3,7 @@ import { migration100 } from './100-v2-init.ts';
 import { migration101 } from './101-ref-domain-raw.ts';
 import { migration102 } from './102-excluded-drops.ts';
 import { migration103 } from './103-users.ts';
+import { migration104 } from './104-session-local-hour.ts';
 
 /**
  * Applied in order at boot. Append only — never edit or renumber a shipped
@@ -15,4 +16,5 @@ export const MIGRATIONS: readonly Migration[] = [
   migration101,
   migration102,
   migration103,
+  migration104,
 ];

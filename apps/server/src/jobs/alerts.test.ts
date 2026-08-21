@@ -49,6 +49,7 @@ function seedDay(date: string, hour: number, count: number, over: Partial<EventR
         started_at: ts,
         last_seen_at: ts,
         local_date: date,
+        local_hour: hour,
         pageviews: 1,
         events: 0,
         engaged_ms: 0,

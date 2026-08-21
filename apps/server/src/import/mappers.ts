@@ -172,13 +172,15 @@ export function mapVisit(row: MatomoVisitRow, timezone: string): SessionRow | nu
   const started = utcMs(row.visit_first_action_time);
   const visitorId = visitorIdOf(row.idvisitor);
   if (started === null || visitorId === null) return null;
+  const local = localClock(timezone, started);
   return {
     id: sessionIdForVisit(row.idvisit),
     site_id: row.idsite,
     visitor_id: visitorId,
     started_at: started,
     last_seen_at: utcMs(row.visit_last_action_time) ?? started,
-    local_date: localClock(timezone, started).date,
+    local_date: local.date,
+    local_hour: local.hour,
     entry_path: actionPath(row.entry_url_name, row.entry_url_prefix),
     exit_path: actionPath(row.exit_url_name, row.exit_url_prefix),
     // Matomo has no pure pageview counter on the visit; total_actions

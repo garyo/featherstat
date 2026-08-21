@@ -169,6 +169,7 @@ describe('a KPI tile writes the server’s own number', () => {
       compare: main.compare?.[0],
       series,
       measures: main.measures,
+      seriesMeasures: spark.measures,
     }).map((tile) => [tile.name, tile]),
   );
 
@@ -208,8 +209,11 @@ describe('a KPI tile writes the server’s own number', () => {
     for (const tile of tiles.values()) {
       const measure = main.measures?.[tile.name] as Measure | undefined;
       if (measure === undefined) throw new Error(`no measure for ${tile.name}`);
-      expect(tile.spark.length, `${tile.name} spark`).toBeGreaterThan(1);
-      for (const point of tile.spark) {
+      // A gap is a period the measure could not reduce; it carries no value to
+      // write, so the scale check ranges over what WAS measured.
+      const measured = tile.spark.filter((point): point is number => point !== undefined);
+      expect(measured.length, `${tile.name} spark`).toBeGreaterThan(1);
+      for (const point of measured) {
         expect(Number.isFinite(point), `${tile.name} spark point`).toBe(true);
         expect(formatMeasure(measure.unit, point), `${tile.name} spark scale`).not.toMatch(
           /NaN|\d{4,}%/,

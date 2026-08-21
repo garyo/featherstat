@@ -60,6 +60,7 @@ function hits(date: string, count: number, over: Partial<EventRow>): void {
         started_at: ts,
         last_seen_at: ts,
         local_date: date,
+        local_hour: 12,
         pageviews: 1,
         events: 0,
         engaged_ms: 0,

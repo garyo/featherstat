@@ -97,9 +97,15 @@ A dashboard is JSON: a grid of widget cards.
 ```
 
 - **Viz types (v1)**: `kpi-row` (stat tiles: value, signed delta vs compare
-  period, 12-point sparkline — omitted on a single-day range, where session
-  metrics like `engaged_ms`/`bounce_rate` cannot be bucketed by hour, so
-  `today` has no honest intraday companion), `timeseries` (line/area, ≤ 4 series),
+  period, 12-point sparkline labelled with its own peak and floor — the line is
+  min-anchored and fills its box at any amplitude, so the numbers beside it are
+  what separate a bump of two from a bump of two thousand. An intraday range
+  takes the companion hourly, every metric included, since sessions carry
+  `local_hour` from schema 104. Day buckets are not the fallback: across `24h`'s
+  local midnight they draw two points spanning `24 − h` and `h` hours, which
+  slopes with the clock rather than the traffic. A period the measure cannot
+  reduce — a bounce rate over an hour with no visits — is a GAP in the line,
+  never a zero), `timeseries` (line/area, ≤ 4 series),
   `bar-list` (the Plausible-style ranked list with inline bars — the
   workhorse for every breakdown), `table` (sortable — **M2**, with the widget
   editor; until then every chart carries its own accessibility fallback, see

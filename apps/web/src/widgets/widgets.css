@@ -81,6 +81,22 @@
 .tile .spark {
   margin-top: 8px;
   height: 34px;
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+/* The sparkline's y-axis: its peak over its floor, read against the line's own
+   top and bottom edges. Tabular figures so the two never jitter apart. */
+.tile .scale {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 /* ---------- bar lists ---------- */

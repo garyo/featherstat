@@ -96,6 +96,7 @@ export function session(overrides: Partial<SessionRow> = {}): SessionRow {
     started_at: TS,
     last_seen_at: TS,
     local_date: '2023-11-14',
+    local_hour: 17,
     pageviews: 1,
     events: 0,
     engaged_ms: 0,

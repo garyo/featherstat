@@ -98,6 +98,8 @@ export interface SessionRow {
   started_at: number;
   last_seen_at: number;
   local_date: string;
+  /** The hour `started_at` fell in, site-local — `local_date`'s grain partner. */
+  local_hour: number;
   pageviews: number;
   events: number;
   engaged_ms: number;
@@ -417,13 +419,13 @@ const SQL_INSERT_EVENT = `INSERT INTO events (
 
 /** Counters and exit state are re-sent in full by the sessionizer; first-touch columns stick. */
 const SQL_UPSERT_SESSION = `INSERT INTO sessions (
-  id, site_id, visitor_id, started_at, last_seen_at, local_date,
+  id, site_id, visitor_id, started_at, last_seen_at, local_date, local_hour,
   entry_path, exit_path, pageviews, events, engaged_ms,
   ref_domain, ref_domain_raw, ref_type, utm_source, utm_medium, utm_campaign,
   utm_source_raw, utm_medium_raw, utm_campaign_raw,
   browser, os, device_type, country, region, city
 ) VALUES (
-  @id, @site_id, @visitor_id, @started_at, @last_seen_at, @local_date,
+  @id, @site_id, @visitor_id, @started_at, @last_seen_at, @local_date, @local_hour,
   @entry_path, @exit_path, @pageviews, @events, @engaged_ms,
   @ref_domain, @ref_domain_raw, @ref_type, @utm_source, @utm_medium, @utm_campaign,
   @utm_source_raw, @utm_medium_raw, @utm_campaign_raw,

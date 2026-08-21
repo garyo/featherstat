@@ -53,6 +53,7 @@ function seedVisits(site: number, date: string, count: number, path: string): vo
         started_at: ts,
         last_seen_at: ts,
         local_date: date,
+        local_hour: 11,
         pageviews: 1,
         events: 0,
         engaged_ms: 0,

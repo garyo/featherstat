@@ -77,10 +77,11 @@ export interface RolledDim<Column> {
 }
 
 /** Nullable string columns a rolled dimension may read on each side.
- * (`local_hour` is excluded: it shares a name with a dimension but is numeric,
- * and it is 'derived' — a rollup key column, never a rolled value.) */
+ * (`local_hour` is excluded on both: it shares a name with a dimension but is
+ * numeric, and it is 'derived' — a rollup key column, never a rolled value.
+ * Sessions carry one too, the hour the visit started.) */
 export type EventDimColumn = Exclude<Extract<keyof EventRow, BaseDimension>, 'local_hour'>;
-export type SessionDimColumn = Extract<keyof SessionRow, BaseDimension>;
+export type SessionDimColumn = Exclude<Extract<keyof SessionRow, BaseDimension>, 'local_hour'>;
 
 function rolled<Column extends string>(sides: readonly ('events' | 'sessions' | 'both')[]) {
   const dims: RolledDim<Column>[] = [];

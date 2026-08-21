@@ -5,6 +5,7 @@ import {
   MAX_QUERIES_PER_BATCH,
   overviewTemplate,
   type QueryResponse,
+  SESSION_ONLY_METRICS,
 } from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
 import {
@@ -198,12 +199,23 @@ describe('hourlyWhenIntraday', () => {
     }
   });
 
-  it('leaves the KPI spark companion day-bucketed — its session metrics cannot take hours', () => {
-    const hourly = hourlyWhenIntraday(queries, 'today');
+  // Left at day buckets under `24h` this drew two points whose spans were the
+  // hours either side of local midnight, so flat traffic sloped down all
+  // morning and up all evening. Sessions carry `local_hour` now, so the
+  // companion goes hourly carrying every metric it declared — including the
+  // session-level ones that used to have no hour to bucket by.
+  it('takes the KPI spark companion hourly, session metrics and all', () => {
+    const hourly = hourlyWhenIntraday(queries, '24h');
     const spark = hourly.find((q) => q.id === 'kpis~spark');
-    expect(spark).toBeDefined();
     if (spark === undefined || 'kind' in spark) throw new Error('metric query expected');
-    expect(spark.bucket).toBe('day');
+    expect(spark.bucket).toBe('hour');
+    // Every metric the tile row declared, carried across untouched.
+    const kpis = queries.find((q) => q.id === 'kpis');
+    if (kpis === undefined || 'kind' in kpis) throw new Error('metric query expected');
+    expect(spark.metrics).toEqual(kpis.metrics);
+    expect(spark.metrics.some((m) => (SESSION_ONLY_METRICS as readonly string[]).includes(m))).toBe(
+      true,
+    );
   });
 
   it('leaves every other preset untouched, without mutating the input', () => {

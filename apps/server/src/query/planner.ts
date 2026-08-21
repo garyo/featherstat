@@ -35,9 +35,11 @@ import {
  *   the events-side `visits`) route to rollups only at day buckets or over a
  *   single-day window, and only where no filter can merge two dim rows into
  *   one group.
- * - **Hour grain is undimensioned**: `rollup_traffic_hour` carries no dim rows
- *   and no distincts, so hour shapes roll up only for additive event metrics
- *   with no rolled dimension in play.
+ * - **Hour grain is undimensioned, and event-side only**: `rollup_traffic_hour`
+ *   carries no dim rows, no distincts and no session columns, so hour shapes
+ *   roll up only for additive event metrics with no rolled dimension in play.
+ *   A session metric by hour is answerable — sessions carry `local_hour` — but
+ *   only from raw.
  * - **Rolling windows go raw**: a `fromTs`/`toTs` refinement cuts inside local
  *   dates; mapping those instants onto rollup keys is DST-fraught, and the 24h
  *   preset is cheap on raw anyway (correctness first, docs/03).
@@ -103,6 +105,10 @@ export function planMetricRoute(
     const table = routeTable(metric, blockers);
     if (table === null) return 'raw'; // the raw compiler owns the honest refusal
     if (table === 'sessions') {
+      // `rollup_sessions_day` is daily and `rollup_traffic_hour` has no session
+      // side, so nothing stored can answer a session metric by hour — the raw
+      // tables can, now that sessions carry `local_hour`.
+      if (hourShape) return 'raw';
       if (context.sessionRollupsStale === true) return 'raw';
       if (rolledDim !== undefined && !sessionSideRolled(rolledDim)) return 'raw';
       continue;
