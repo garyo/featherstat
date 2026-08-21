@@ -230,7 +230,7 @@ describe('visitor engagement', () => {
     ];
     const row = visitorTally(hits, now)[0];
     expect(row).toMatchObject({ city: 'Wake Forest', region: 'North Carolina', country: 'US' });
-    expect(placeOf(row ?? {})).toBe('Wake Forest, NC');
+    expect(placeOf(row ?? {})).toBe('Wake Forest, NC, US');
   });
 
   it('leaves the tally alone when no engagement has arrived', () => {

@@ -340,14 +340,15 @@ export function countryTally(
 }
 
 /**
- * Where the subdivision is how people write an address: `Wake Forest, NC` reads
- * as a place, while `Exeter, Devon` is noise next to `Exeter, GB`. Only as a
- * CODE — the stored region is a name ("North Carolina"), and the full word is
- * too long for a feed row.
+ * Where the subdivision is how people write an address: `Wake Forest, NC, US`
+ * reads as a place, while `Exeter, Devon` is noise next to `Exeter, GB`. Only
+ * as a CODE — the stored region is a name ("North Carolina"), and the full word
+ * is too long for a feed row. The country stays on the end: `San Jose, CA`
+ * alone reads as Canada.
  */
 const REGION_AS_PLACE = new Set(['US', 'CA']);
 
-/** A hit's place, as the feed prints it: `City, NC` or `City, CC`, else the country, else Unknown. */
+/** A hit's place, as the feed prints it: `City, NC, US` or `City, CC`, else the country, else Unknown. */
 export function placeOf(place: {
   city?: string | undefined;
   region?: string | undefined;
@@ -358,7 +359,9 @@ export function placeOf(place: {
       place.region !== undefined && REGION_AS_PLACE.has(place.country)
         ? subdivisionCode(place.region)
         : undefined;
-    return `${place.city}, ${region ?? place.country}`;
+    return region === undefined
+      ? `${place.city}, ${place.country}`
+      : `${place.city}, ${region}, ${place.country}`;
   }
   if (place.city !== undefined) return place.city;
   return place.country !== undefined ? countryName(place.country) : undefined;

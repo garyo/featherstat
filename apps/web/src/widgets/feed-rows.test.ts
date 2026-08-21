@@ -23,14 +23,17 @@ describe('feed row labels', () => {
 
   // The stored region is the geo database's own word — a NAME from DB-IP City
   // Lite, a code from the Matomo importer. Both must print as the code.
-  it('prints the state for US and CA — the address line people expect', () => {
+  it('prints the state for US and CA, country appended — `CA` alone reads as Canada', () => {
     expect(placeLabel(hit({ city: 'Wake Forest', region: 'North Carolina', country: 'US' }))).toBe(
-      'Wake Forest, NC',
+      'Wake Forest, NC, US',
     );
     expect(placeLabel(hit({ city: 'Toronto', region: 'Ontario', country: 'CA' }))).toBe(
-      'Toronto, ON',
+      'Toronto, ON, CA',
     );
-    expect(placeLabel(hit({ city: 'Boston', region: 'MA', country: 'US' }))).toBe('Boston, MA');
+    expect(placeLabel(hit({ city: 'Boston', region: 'MA', country: 'US' }))).toBe('Boston, MA, US');
+    expect(placeLabel(hit({ city: 'San Jose', region: 'California', country: 'US' }))).toBe(
+      'San Jose, CA, US',
+    );
   });
 
   it('prints the country elsewhere, region or not — `Exeter, GB`, never `Exeter, Devon`', () => {
