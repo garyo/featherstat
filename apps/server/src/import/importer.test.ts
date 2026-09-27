@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createSite, type Db, getSetting, openDb, withWriteTransaction } from '../db/index.ts';
-import { importMatomo, type SourceQuery } from './importer.ts';
+import { importMatomo, parseSiteMap, type SourceQuery } from './importer.ts';
 import type { MatomoActionRow, MatomoSiteRow, MatomoVisitRow } from './mappers.ts';
 
 /**
@@ -241,7 +241,6 @@ describe('importMatomo', () => {
       { site_id: 2, type: 'pageview', seq: 1, local_date: '2026-07-02' },
     ]);
 
-    expect(getSetting(db, 'import:matomo:site')).toBe('2');
     expect(getSetting(db, 'import:matomo:log_visit')).toBe('502');
     expect(getSetting(db, 'import:matomo:log_link_visit_action')).toBe('9003');
     db.close();
@@ -253,7 +252,7 @@ describe('importMatomo', () => {
     await importMatomo(db, fakeSource(data).source, { batchSize: 2 });
     const rerun = await importMatomo(db, fakeSource(data).source, { batchSize: 2 });
 
-    expect(rerun).toMatchObject({ sites: 0, sitesSkipped: 0, sessions: 0, events: 0 });
+    expect(rerun).toMatchObject({ sites: 0, sitesSkipped: 2, sessions: 0, events: 0 });
     expect(count(db, 'sessions')).toBe(2);
     expect(count(db, 'events')).toBe(3);
     db.close();
@@ -446,5 +445,92 @@ describe('importMatomo', () => {
     expect(db.prepare('SELECT name FROM sites WHERE id = 1').pluck().get()).toBe('Local name');
     expect(count(db, 'sessions')).toBe(2);
     db.close();
+  });
+
+  describe('site id collisions', () => {
+    function withUnrelatedSiteOne(): Db {
+      const db = openDb(':memory:');
+      withWriteTransaction(db, () => {
+        createSite(db, { id: 1, name: 'Unrelated', domains: ['other.test'], timezone: 'UTC' });
+      });
+      return db;
+    }
+
+    it('refuses a Matomo id held by a local site sharing none of its domains', async () => {
+      const db = withUnrelatedSiteOne();
+      await expect(importMatomo(db, fakeSource(fixtures()).source)).rejects.toThrow(
+        /Matomo site 1 'One' .* collides with local site 1 'Unrelated' \(other\.test\)/,
+      );
+      // All or nothing: not even the uncontested site 2 was created.
+      expect(count(db, 'sites')).toBe(1);
+      expect(count(db, 'sessions')).toBe(0);
+      db.close();
+    });
+
+    it('--site-map moves the Matomo site to a free local id, and remembers it', async () => {
+      const db = withUnrelatedSiteOne();
+      const data = fixtures();
+      await importMatomo(db, fakeSource(data).source, { siteMap: new Map([[1, 7]]) });
+
+      expect(db.prepare('SELECT name FROM sites WHERE id = 7').pluck().get()).toBe('One');
+      expect(db.prepare('SELECT DISTINCT site_id FROM events ORDER BY 1').pluck().all()).toEqual([
+        2, 7,
+      ]);
+      expect(getSetting(db, 'import:matomo:site-map')).toBe('1:7');
+
+      // A top-up without the flag still lands site 1's new visit on 7.
+      data.visits.push(visitRow({ idvisit: 503, visit_first_action_time: '2026-07-03 12:00:00' }));
+      await importMatomo(db, fakeSource(data).source);
+      expect(db.prepare('SELECT site_id FROM sessions WHERE rowid = 3').pluck().get()).toBe(7);
+      expect(db.prepare('SELECT COUNT(*) FROM sessions WHERE site_id = 1').pluck().get()).toBe(0);
+      db.close();
+    });
+
+    it('n:n vouches for the same site: rows land on it, in its own zone', async () => {
+      const db = withUnrelatedSiteOne();
+      await importMatomo(db, fakeSource(fixtures()).source, { siteMap: new Map([[1, 1]]) });
+      // 02:00 UTC stays Jul 2 in the local site's UTC, not Jul 1 as in New York.
+      expect(db.prepare('SELECT local_date FROM sessions WHERE site_id = 1').pluck().get()).toBe(
+        '2026-07-02',
+      );
+      expect(db.prepare('SELECT name FROM sites WHERE id = 1').pluck().get()).toBe('Unrelated');
+      db.close();
+    });
+
+    it('refuses a map that contradicts the recorded one, or merges two sites', async () => {
+      const db = withUnrelatedSiteOne();
+      const { source } = fakeSource(fixtures());
+      await importMatomo(db, source, { siteMap: new Map([[1, 7]]) });
+      await expect(importMatomo(db, source, { siteMap: new Map([[1, 8]]) })).rejects.toThrow(
+        /imported into local site 7/,
+      );
+
+      const fresh = openDb(':memory:');
+      await expect(
+        importMatomo(fresh, fakeSource(fixtures()).source, { siteMap: new Map([[1, 2]]) }),
+      ).rejects.toThrow(/Matomo sites 1 and 2 both map to local site 2/);
+      await expect(
+        importMatomo(fresh, fakeSource(fixtures()).source, { siteMap: new Map([[9, 10]]) }),
+      ).rejects.toThrow(/names Matomo site 9, which the source lacks/);
+      fresh.close();
+      db.close();
+    });
+  });
+});
+
+describe('parseSiteMap', () => {
+  it('reads comma-separated matomo:local pairs', () => {
+    expect(parseSiteMap('3:7, 4:8')).toEqual(
+      new Map([
+        [3, 7],
+        [4, 8],
+      ]),
+    );
+  });
+
+  it('refuses malformed, zero and repeated entries', () => {
+    expect(() => parseSiteMap('3-7')).toThrow(/<matomo id>:<local id>/);
+    expect(() => parseSiteMap('0:7')).toThrow(/<matomo id>:<local id>/);
+    expect(() => parseSiteMap('3:7,3:8')).toThrow(/Matomo site 3 twice/);
   });
 });

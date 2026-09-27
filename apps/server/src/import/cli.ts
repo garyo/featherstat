@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import BetterSqlite3 from 'better-sqlite3';
 import { openDb, V1_IMPORT_SUBCOMMAND } from '../db/index.ts';
-import { type ImportReport, importMatomo, type SourceQuery } from './importer.ts';
+import { type ImportReport, importMatomo, parseSiteMap, type SourceQuery } from './importer.ts';
 import { importV1, type V1ImportReport } from './v1/importer.ts';
 
 /**
@@ -10,7 +10,7 @@ import { importV1, type V1ImportReport } from './v1/importer.ts';
  *
  *   # Matomo (docs/06 § Importer) — the default when no subcommand is given:
  *   MATOMO_MYSQL_URL=mysql://user:pass@host/matomo \
- *     bun run --cwd apps/server import -- [--dry-run] [--since 2026-07-01] [--until 2026-07-15]
+ *     bun run --cwd apps/server import -- [--dry-run] [--since 2026-07-01] [--until 2026-07-15] [--site-map 3:7]
  *
  *   # featherstat v1 (docs/06 § v1 → v2) — what migrate.ts's refusal points at:
  *   bun run --cwd apps/server import -- v1 <path> [--into <target>] [--dry-run]
@@ -20,7 +20,7 @@ import { importV1, type V1ImportReport } from './v1/importer.ts';
  */
 
 const USAGE = `usage:
-  MATOMO_MYSQL_URL=mysql://user:pass@host/matomo bun run --cwd apps/server import -- [matomo] [--dry-run] [--since YYYY-MM-DD] [--until YYYY-MM-DD]
+  MATOMO_MYSQL_URL=mysql://user:pass@host/matomo bun run --cwd apps/server import -- [matomo] [--dry-run] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--site-map M:L,…]
   bun run --cwd apps/server import -- ${V1_IMPORT_SUBCOMMAND} <path> [--into <target>] [--dry-run]
 
 matomo (default subcommand):
@@ -31,6 +31,10 @@ matomo (default subcommand):
                re-reads the window's visits so mutated rows upsert to final state)
   --until      only scan strictly before this UTC date — at cutover, the date the
                tee started, so live-ingested traffic is not imported twice
+  --site-map   Matomo id → local id pairs (3:7,4:8). Ids are preserved, so a
+               Matomo site whose id a local site with none of its domains already
+               holds is refused; map it to a free id, or to the same id to vouch
+               that they are one site. Remembered for later top-ups
 
   Target database: DB_PATH env, default data/dev.db.
 
@@ -49,6 +53,7 @@ interface CliValues {
   'dry-run'?: boolean;
   since?: string;
   until?: string;
+  'site-map'?: string;
   into?: string;
   help?: boolean;
 }
@@ -63,6 +68,7 @@ async function main(): Promise<void> {
         'dry-run': { type: 'boolean', default: false },
         since: { type: 'string' },
         until: { type: 'string' },
+        'site-map': { type: 'string' },
         into: { type: 'string' },
         help: { type: 'boolean', default: false },
       },
@@ -181,6 +187,14 @@ async function mainMatomo(values: CliValues): Promise<void> {
       return;
     }
   }
+  let siteMap: Map<number, number> | undefined;
+  try {
+    siteMap = values['site-map'] === undefined ? undefined : parseSiteMap(values['site-map']);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : error);
+    process.exitCode = 1;
+    return;
+  }
 
   // The mysql2 dependency is import()ed here so the v1 path never loads it.
   const { createConnection } = await import('mysql2/promise');
@@ -201,6 +215,7 @@ async function mainMatomo(values: CliValues): Promise<void> {
       dryRun: values['dry-run'],
       since: values.since,
       until: values.until,
+      siteMap,
       log: (line) => console.log(`  ${line}`),
     });
     printMatomoReport(report);
