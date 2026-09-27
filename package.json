@@ -13,7 +13,7 @@
   "scripts": {
     "bench": "node --experimental-transform-types --disable-warning=ExperimentalWarning --import ./apps/server/test/replay/shared-alias.ts apps/server/test/replay/bench.ts",
     "build": "bun run --cwd packages/tracker build && bun run --cwd apps/web build && bun run --cwd apps/server build",
-    "check": "biome check . && tsc --noEmit && tsc --noEmit -p packages/tracker && tsc --noEmit -p test/contract && bun run --cwd apps/web check",
+    "check": "biome check --error-on-warnings . && tsc --noEmit && tsc --noEmit -p packages/tracker && tsc --noEmit -p test/contract && bun run --cwd apps/web check",
     "ci": "bash scripts/ci.sh",
     "e2e": "playwright test --config test/e2e/playwright.config.ts",
     "e2e:install": "playwright install chromium",
