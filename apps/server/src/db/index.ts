@@ -1,4 +1,4 @@
-import { type HitType, SiteDomainsSchema } from '@featherstat/shared';
+import { type HitType, isValidTimezone, SiteDomainsSchema } from '@featherstat/shared';
 import BetterSqlite3 from 'better-sqlite3';
 import { type Db, migrate } from './migrate.ts';
 
@@ -305,7 +305,7 @@ export function getSite(db: Db, id: number): Site | undefined {
 export function createSite(db: Db, site: NewSite): Site {
   assertWritable(db);
   const domains = [...site.domains];
-  const timezone = site.timezone ?? DEFAULT_TIMEZONE;
+  const timezone = checkedTimezone(site.timezone ?? DEFAULT_TIMEZONE);
   const created_at = site.created_at ?? Date.now();
   const info = stmt(db, SQL_CREATE_SITE).run(
     site.id ?? null,
@@ -340,7 +340,7 @@ export function updateSite(db: Db, id: number, patch: SitePatch): Site | undefin
   const next = {
     name: patch.name ?? current.name,
     domains: patch.domains === undefined ? current.domains : [...patch.domains],
-    timezone: patch.timezone ?? current.timezone,
+    timezone: checkedTimezone(patch.timezone ?? current.timezone),
   };
   const row = stmt<SiteColumns>(db, SQL_UPDATE_SITE).get(
     next.name,
@@ -349,6 +349,16 @@ export function updateSite(db: Db, id: number, patch: SitePatch): Site | undefin
     id,
   );
   return row === undefined ? undefined : decodeSite(row);
+}
+
+/**
+ * The zod schemas refuse a bad zone at the HTTP boundary; this refuses it at
+ * every other writer (the importers). A stored zone the runtime cannot resolve
+ * degrades every local clock to UTC — silently, since ingest must not throw.
+ */
+function checkedTimezone(timezone: string): string {
+  if (!isValidTimezone(timezone)) throw new Error(`not a usable timezone: '${timezone}'`);
+  return timezone;
 }
 
 function decodeSite(row: SiteColumns): Site {

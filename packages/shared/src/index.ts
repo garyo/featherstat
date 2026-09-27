@@ -641,8 +641,14 @@ export interface QueryResponse {
 // Admin API (docs/04 § 5) — session auth + CSRF; the settings UI's contract
 // ---------------------------------------------------------------------------
 
-/** True when the runtime knows `tz` as an IANA timezone name. */
+/**
+ * True when the runtime knows `tz` as a timezone: an IANA name, or a fixed
+ * `±hhmm` offset (what the Matomo importer maps a manual `UTC+5.75` to). A
+ * colon is refused even where the runtime would take it (`+05:45`): the zone is
+ * a segment of the `salt:<zone>:<date>` settings key (pipeline/identity.ts).
+ */
 export function isValidTimezone(tz: string): boolean {
+  if (tz.includes(':')) return false;
   try {
     new Intl.DateTimeFormat('en-US', { timeZone: tz });
     return true;
@@ -671,7 +677,7 @@ export const AdminChangePasswordSchema = z.object({
   next: AdminPasswordSchema,
 });
 
-const TimezoneSchema = z.string().refine(isValidTimezone, 'not an IANA timezone');
+const TimezoneSchema = z.string().refine(isValidTimezone, 'not an IANA timezone or ±hhmm offset');
 /** Hostname shape (optionally `:port`) — a stored `<script>` or `javascript:` string
  * must be rejected at the boundary, not trusted to render discipline downstream. */
 const DomainSchema = z

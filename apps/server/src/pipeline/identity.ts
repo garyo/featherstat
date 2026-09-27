@@ -30,8 +30,9 @@ function daySaltKey(timezone: string, date: string): string {
 
 /**
  * A day-salt key from before the boundary moved: `salt:<date>`, no zone segment
- * (IANA zone names never contain a colon). Nothing reads one now, so the next
- * rotation destroys it — a salt nothing reads must not outlive the day it keyed.
+ * (no stored zone contains a colon — `isValidTimezone` refuses one). Nothing
+ * reads one now, so the next rotation destroys it — a salt nothing reads must
+ * not outlive the day it keyed.
  */
 function isZonelessSaltKey(key: string): boolean {
   return !key.slice(DAY_SALT_PREFIX.length).includes(':');
