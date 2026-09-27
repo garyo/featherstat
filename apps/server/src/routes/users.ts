@@ -10,8 +10,8 @@ import {
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { Auth, AuthEnv } from '../auth/auth.ts';
+import { fitUserGrants } from '../auth/grants.ts';
 import { hashPassword } from '../auth/password.ts';
-import { narrowScope, parseSiteScope, serializeSiteScope } from '../auth/principal.ts';
 import { FailureBudget } from '../auth/ratelimit.ts';
 import {
   consumeMagicLink,
@@ -20,24 +20,17 @@ import {
   disableUser,
   enableUser,
   expireUserMagicLinks,
-  expireViewerMagicLinks,
   getMagicLink,
   getSite,
   getUser,
   getUserByEmail,
   insertMagicLink,
   insertUser,
-  listApiTokens,
   listUserSites,
   listUsers,
-  listViewers,
   pruneMagicLinks,
-  revokeApiToken,
-  revokeViewer,
-  setApiTokenScope,
   setUserPassword,
   setUserSites,
-  setViewerScope,
   type UserRow,
   withWriteTransaction,
 } from '../db/index.ts';
@@ -156,7 +149,7 @@ export function createUserRoutes(
       if (user === undefined) return undefined;
       const sites = body.data.sites.filter((siteId) => getSite(db, siteId) !== undefined);
       setUserSites(db, id, sites);
-      fitGrants(db, id, sites, auth.now());
+      fitUserGrants(db, id, sites, auth.now());
       return toUserInfo(user, sites);
     });
     if (info === undefined) return c.json({ error: `unknown user ${id}` }, 404);
@@ -173,7 +166,7 @@ export function createUserRoutes(
       if (gone) {
         expireUserMagicLinks(db, id, auth.now());
         deleteUserSessions(db, id);
-        fitGrants(db, id, [], auth.now());
+        fitUserGrants(db, id, [], auth.now());
       }
       return gone;
     });
@@ -222,35 +215,6 @@ export function createUserRoutes(
   });
 
   return app;
-}
-
-/**
- * Keeps a user's standing grants inside their power, in the caller's
- * transaction: every live token and viewer they minted narrows to `sites`, and
- * one left with no site is revoked (a viewer's outstanding links with it).
- * Share links are not grants of the user's — they belong to the dashboard, and
- * whoever manages its site now revokes them (docs/04 § 5).
- */
-function fitGrants(db: Db, userId: number, sites: readonly number[], now: number): void {
-  const owned = new Set(sites);
-  for (const token of listApiTokens(db)) {
-    if (token.created_by_user_id !== userId || token.revoked_at !== null) continue;
-    const kept = narrowScope(parseSiteScope(token.site_scope), owned);
-    if (kept === undefined) continue;
-    if (kept.length === 0) revokeApiToken(db, token.id, now);
-    else setApiTokenScope(db, token.id, serializeSiteScope(kept));
-  }
-  for (const viewer of listViewers(db)) {
-    if (viewer.created_by_user_id !== userId || viewer.revoked_at !== null) continue;
-    const kept = narrowScope(parseSiteScope(viewer.site_scope), owned);
-    if (kept === undefined) continue;
-    if (kept.length > 0) {
-      setViewerScope(db, viewer.id, serializeSiteScope(kept));
-    } else {
-      revokeViewer(db, viewer.id, now);
-      expireViewerMagicLinks(db, viewer.id, now);
-    }
-  }
 }
 
 function sha256(token: string): Buffer {
