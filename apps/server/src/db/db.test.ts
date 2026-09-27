@@ -304,6 +304,19 @@ describe('helpers', () => {
       });
       expect(write(() => updateSite(db, 99, { name: 'Ghost' }))).toBeUndefined();
     });
+
+    it('refuses a timezone the runtime cannot resolve, on create and on update', () => {
+      expect(() =>
+        write(() => createSite(db, { id: 1, name: 'One', domains: [], timezone: 'UTC+10' })),
+      ).toThrow(/not a usable timezone: 'UTC\+10'/);
+      expect(getSite(db, 1)).toBeUndefined();
+
+      write(() => createSite(db, { id: 1, name: 'One', domains: [], timezone: 'UTC' }));
+      expect(() => write(() => updateSite(db, 1, { timezone: 'Mars/Olympus_Mons' }))).toThrow(
+        /not a usable timezone/,
+      );
+      expect(getSite(db, 1)?.timezone).toBe('UTC');
+    });
   });
 
   describe('users', () => {

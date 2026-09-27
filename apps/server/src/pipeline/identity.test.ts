@@ -9,7 +9,7 @@ import {
   tombstoneSite,
   withWriteTransaction,
 } from '../db/index.ts';
-import { Identity, uidEnabledKey } from './identity.ts';
+import { carryDaySalt, Identity, uidEnabledKey } from './identity.ts';
 
 /** Midday in New York on two consecutive site-local days. */
 const DAY1 = Date.UTC(2026, 6, 26, 16);
@@ -261,5 +261,39 @@ describe('forgetting a deleted site', () => {
 
     // A restart must agree with the running process: the salt in use is the stored one.
     expect(hex(new Identity(db).visitorId(hit({ siteId: 3 }), ctx(), TOKYO))).toBe(after);
+  });
+});
+
+describe('carryDaySalt (a site changing timezone)', () => {
+  const LONDON = 'Europe/London';
+
+  it("keeps the site's visitors on their ids for the rest of the new zone's day", () => {
+    const before = id({}, {}); // seen today in New York
+    withWriteTransaction(db, () => carryDaySalt(db, NY, TOKYO, DAY1));
+    expect(getSetting(db, `salt:${TOKYO}:2026-07-27`)).toBe(
+      getSetting(db, `salt:${NY}:2026-07-26`),
+    );
+    expect(id({}, {}, TOKYO)).toBe(before);
+  });
+
+  it('never replaces a salt the new zone already minted — other sites hold ids under it', () => {
+    const london = id({ siteId: 2 }, {}, LONDON);
+    const minted = getSetting(db, `salt:${LONDON}:2026-07-26`);
+    id({}, {});
+    withWriteTransaction(db, () => carryDaySalt(db, NY, LONDON, DAY1));
+    expect(getSetting(db, `salt:${LONDON}:2026-07-26`)).toBe(minted);
+    expect(id({ siteId: 2 }, {}, LONDON)).toBe(london);
+  });
+
+  it("clears the new zone's older salts, as its own rotation would have", () => {
+    withWriteTransaction(db, () => setSetting(db, `salt:${TOKYO}:2026-07-20`, 'ee'.repeat(16)));
+    id({}, {});
+    withWriteTransaction(db, () => carryDaySalt(db, NY, TOKYO, DAY1));
+    expect(getSetting(db, `salt:${TOKYO}:2026-07-20`)).toBeUndefined();
+  });
+
+  it('does nothing when the old zone has no live salt', () => {
+    withWriteTransaction(db, () => carryDaySalt(db, NY, TOKYO, DAY1));
+    expect(getSetting(db, `salt:${TOKYO}:2026-07-27`)).toBeUndefined();
   });
 });

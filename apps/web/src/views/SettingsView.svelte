@@ -259,6 +259,12 @@ const nameOf = (id: number): string => sites?.find((s) => s.id === id)?.name ?? 
             <datalist id="timezones">
               {#each timezones as tz (tz)}<option value={tz}></option>{/each}
             </datalist>
+            {#if draft.id !== undefined && draft.timezone !== sites.find((s) => s.id === draft?.id)?.timezone}
+              <p class="widget-note">
+                Saving re-dates this site's stored history into the new timezone, in the
+                background. Days retention has already pruned keep the old one.
+              </p>
+            {/if}
             <PanelError failure={siteError} />
             <div class="row">
               <button

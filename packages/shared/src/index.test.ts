@@ -6,6 +6,7 @@ import {
   DashboardSchema,
   EVENT_ONLY_DIMENSIONS,
   HitSchema,
+  isValidTimezone,
   MAX_QUERIES_PER_BATCH,
   NtfyUrlSchema,
   QueryRequestSchema,
@@ -152,6 +153,20 @@ describe('DashboardSchema', () => {
       grid: [{ id: 'cards', viz: 'site-cards', w: 12, h: 4 }],
     });
     expect(dash.grid[0]?.options).toEqual({});
+  });
+});
+
+describe('isValidTimezone', () => {
+  it('accepts IANA names and colon-free fixed offsets', () => {
+    for (const tz of ['America/New_York', 'UTC', 'Etc/GMT-10', '+0545', '-0930']) {
+      expect(isValidTimezone(tz), tz).toBe(true);
+    }
+  });
+
+  it('refuses unknown names, Matomo manual offsets, and any colon', () => {
+    for (const tz of ['Mars/Olympus_Mons', 'UTC+10', 'UTC-3.5', '', '+05:45']) {
+      expect(isValidTimezone(tz), tz).toBe(false);
+    }
   });
 });
 

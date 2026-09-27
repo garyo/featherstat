@@ -8,8 +8,10 @@ is the part a person follows.
 
 Settings → Sites → Add. You need a name, the domains it serves from (every
 hostname, including `www.`), and the site's IANA timezone — `local_date` and
-`local_hour` are computed at ingest from it and are not recomputed later
-(docs/03), so a wrong timezone mislabels history rather than just the future.
+`local_hour` are computed at ingest from it. Changing it later re-dates the
+site's stored history in the background, but not the days retention has already
+pruned, and unique-visitor counts on re-dated days become approximate (docs/03
+§ Timezones) — so get it right at the start.
 
 Note the numeric **site id**; the snippet needs it.
 

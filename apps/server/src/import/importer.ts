@@ -1,6 +1,8 @@
 import {
+  bumpDataEpoch,
   createSite,
   type Db,
+  deleteSetting,
   type EventRow,
   getSetting,
   insertEvents,
@@ -8,10 +10,12 @@ import {
   type NewSite,
   type SessionRow,
   setSetting,
+  settingKeysWithPrefix,
   stmt,
   upsertSessions,
   withWriteTransaction,
 } from '../db/index.ts';
+import { rebuildAllRollups } from '../rollup/rebuild.ts';
 import {
   type MatomoActionRow,
   type MatomoSiteRow,
@@ -28,10 +32,22 @@ import {
  * so the whole importer is testable without a live server; the CLI (cli.ts)
  * supplies the real mysql2 connection.
  *
- * Idempotency: a high-water mark per source table lives in `settings`
+ * Idempotency: a high-water mark per log table lives in `settings`
  * (`import:matomo:<table>`) and advances inside the same transaction as each
  * batch's rows — re-running tops up, never duplicates. Sessions additionally
  * get deterministic ids from `idvisit`, so a re-imported visit upserts in place.
+ *
+ * Site ids are preserved (docs/06 R2), so a Matomo id can land on a local site
+ * that is not the same site. Every run resolves every Matomo site before it
+ * writes anything, and refuses one whose id is taken by a local site sharing
+ * none of its domains — unless the operator maps it (`siteMap`), which is then
+ * remembered in `settings` so a later top-up cannot land it somewhere else.
+ *
+ * The rows go in raw, so the run ends by rebuilding the rollups of every site
+ * it wrote to — the planner assumes they cover all history (docs/03 § Rollups)
+ * — and bumping the data epoch: a `--since` re-read rewrites sessions in place,
+ * and the rebuild rewrites the rollup rows cached answers were computed from
+ * (CLAUDE.md invariant 10).
  */
 
 export type SourceQuery = (
@@ -56,6 +72,12 @@ export interface ImportOptions {
    */
   until?: string;
   batchSize?: number;
+  /**
+   * Matomo idsite → local site id, for a Matomo site whose id a different local
+   * site already holds (or `n → n` to vouch that they are the same site).
+   * Merged with the map earlier runs recorded; a contradiction refuses.
+   */
+  siteMap?: ReadonlyMap<number, number>;
   /** Per-batch progress lines. */
   log?: (line: string) => void;
 }
@@ -78,10 +100,22 @@ export interface ImportReport {
   skipped: number;
   /** Per-site/day visit + pageview totals for everything scanned this run. */
   days: DayTotal[];
+  /** Site-days whose rollups were rebuilt from the imported rows. */
+  rollupDays: number;
 }
 
 const DEFAULT_BATCH_SIZE = 1000;
 const WATERMARK_PREFIX = 'import:matomo:';
+/**
+ * `import:matomo:dirty:<local site id>` — set in the same transaction as the
+ * site's first imported rows, cleared only once its rollups are rebuilt and the
+ * epoch bumped. Durable rather than this run's tally, so a run that crashed
+ * after writing rows still owes, and a re-run that imports nothing still pays.
+ */
+const DIRTY_PREFIX = 'import:matomo:dirty:';
+
+/** Stored in the `--site-map` syntax, so one parser validates both. */
+const SITE_MAP_SETTING = 'import:matomo:site-map';
 
 const SQL_SITES = `SELECT idsite, name, main_url, ts_created, timezone
 FROM matomo_site
@@ -161,44 +195,10 @@ export async function importMatomo(
     events: 0,
     skipped: 0,
     days: [],
+    rollupDays: 0,
   };
   const days = new Map<string, DayTotal>();
-  const timezones = new Map(listSites(db).map((site) => [site.id, site.timezone]));
-  const existing = new Set(timezones.keys());
-
-  // -- sites ----------------------------------------------------------------
-  for await (const batch of batches(
-    source,
-    SQL_SITES,
-    'idsite',
-    watermark(db, 'site'),
-    [],
-    batchSize,
-  )) {
-    const rows = batch.rows as unknown as MatomoSiteRow[];
-    const aliases = await siteAliases(
-      source,
-      rows.map((row) => row.idsite),
-    );
-    const created: NewSite[] = [];
-    for (const row of rows) {
-      const site = mapSite(row, aliases.get(row.idsite) ?? []);
-      if (!timezones.has(row.idsite)) timezones.set(row.idsite, row.timezone);
-      if (existing.has(row.idsite)) {
-        report.sitesSkipped += 1;
-        continue;
-      }
-      created.push(site);
-      report.sites += 1;
-    }
-    if (!dryRun) {
-      withWriteTransaction(db, () => {
-        for (const site of created) createSite(db, site);
-        setWatermark(db, 'site', batch.last);
-      });
-    }
-  }
-  options.log?.(`sites: ${report.sites} imported, ${report.sitesSkipped} already present`);
+  const targets = await importSites(db, source, options, batchSize, report);
 
   // -- visits → sessions ------------------------------------------------------
   const hasSince = sinceParams.length > 0;
@@ -221,8 +221,9 @@ export async function importMatomo(
   )) {
     const sessions: SessionRow[] = [];
     for (const raw of batch.rows as unknown as MatomoVisitRow[]) {
-      const timezone = timezones.get(raw.idsite);
-      const session = timezone === undefined ? null : mapVisit(raw, timezone);
+      const target = targets.get(raw.idsite);
+      const session =
+        target === undefined ? null : mapVisit({ ...raw, idsite: target.id }, target.timezone);
       if (session === null) {
         report.skipped += 1;
         continue;
@@ -234,6 +235,7 @@ export async function importMatomo(
     if (!dryRun) {
       withWriteTransaction(db, () => {
         upsertSessions(db, sessions);
+        markDirty(db, sessions);
         setWatermark(db, 'log_visit', batch.last);
       });
     }
@@ -252,8 +254,9 @@ export async function importMatomo(
   )) {
     const events: EventRow[] = [];
     for (const raw of batch.rows as unknown as MatomoActionRow[]) {
-      const timezone = timezones.get(raw.idsite);
-      const mapped = timezone === undefined ? null : mapAction(raw, timezone);
+      const target = targets.get(raw.idsite);
+      const mapped =
+        target === undefined ? null : mapAction({ ...raw, idsite: target.id }, target.timezone);
       if (mapped === null) {
         report.skipped += 1;
         continue;
@@ -267,6 +270,7 @@ export async function importMatomo(
     if (!dryRun) {
       withWriteTransaction(db, () => {
         insertEvents(db, events);
+        markDirty(db, events);
         setWatermark(db, 'log_link_visit_action', batch.last);
       });
       pruneSeqMap(seqByVisit); // safe now: this batch's rows are committed, MAX(seq) re-seeds
@@ -274,10 +278,167 @@ export async function importMatomo(
     options.log?.(`actions: ${report.events} events so far`);
   }
 
+  if (!dryRun) {
+    report.rollupDays = await rebuildDirtyRollups(db);
+    options.log?.(`rollups: ${report.rollupDays} site-days rebuilt`);
+  }
   report.days = [...days.values()].sort(
     (a, b) => a.site_id - b.site_id || a.local_date.localeCompare(b.local_date),
   );
   return report;
+}
+
+// ---------------------------------------------------------------------------
+// Sites
+// ---------------------------------------------------------------------------
+
+/** Where one Matomo site's rows land, and the zone their local clocks use. */
+interface SiteTarget {
+  id: number;
+  timezone: string;
+}
+
+/** `3:7,4:8` → {3 → 7, 4 → 8}: the CLI's `--site-map`. */
+export function parseSiteMap(text: string): Map<number, number> {
+  const map = new Map<number, number>();
+  for (const pair of text.split(',')) {
+    const match = /^\s*(\d+):(\d+)\s*$/.exec(pair);
+    const from = Number(match?.[1]);
+    const to = Number(match?.[2]);
+    if (match === null || from <= 0 || to <= 0) {
+      throw new Error(`--site-map entries are <matomo id>:<local id>, got '${pair}'`);
+    }
+    if (map.has(from)) throw new Error(`--site-map names Matomo site ${from} twice`);
+    map.set(from, to);
+  }
+  return map;
+}
+
+/** The recorded map with this run's on top; an entry may be repeated, never changed. */
+function mergedSiteMap(db: Db, passed: ReadonlyMap<number, number>): Map<number, number> {
+  const stored = getSetting(db, SITE_MAP_SETTING);
+  const merged = stored === undefined ? new Map<number, number>() : parseSiteMap(stored);
+  for (const [from, to] of passed) {
+    const before = merged.get(from);
+    if (before !== undefined && before !== to) {
+      throw new Error(
+        `Matomo site ${from} was imported into local site ${before}; --site-map ${from}:${to} ` +
+          'would split its history across two sites',
+      );
+    }
+    merged.set(from, to);
+  }
+  return merged;
+}
+
+function sharesDomain(a: readonly string[], b: readonly string[]): boolean {
+  return a.some((domain) => b.includes(domain));
+}
+
+function describeSite(site: { id: number; name: string; domains: readonly string[] }): string {
+  return `${site.id} '${site.name}' (${site.domains.join(', ') || 'no domains'})`;
+}
+
+/**
+ * Resolves every Matomo site to its local target, then creates the missing
+ * ones — all or nothing: a refusal (collision, unmappable timezone) is thrown
+ * before anything is written. Reads the whole site table every run; it is
+ * tiny, and a top-up must re-check what the local side has become since.
+ */
+async function importSites(
+  db: Db,
+  source: SourceQuery,
+  options: ImportOptions,
+  batchSize: number,
+  report: ImportReport,
+): Promise<Map<number, SiteTarget>> {
+  const siteMap = mergedSiteMap(db, options.siteMap ?? new Map());
+  const local = new Map(listSites(db).map((site) => [site.id, site]));
+  const targets = new Map<number, SiteTarget>();
+  const claimedBy = new Map<number, number>();
+  const seen = new Set<number>();
+  const created: NewSite[] = [];
+  const problems: string[] = [];
+
+  for await (const batch of batches(source, SQL_SITES, 'idsite', 0, [], batchSize)) {
+    const rows = batch.rows as unknown as MatomoSiteRow[];
+    const aliases = await siteAliases(
+      source,
+      rows.map((row) => row.idsite),
+    );
+    for (const row of rows) {
+      seen.add(row.idsite);
+      const site = mapSite(row, aliases.get(row.idsite) ?? []);
+      const id = siteMap.get(row.idsite) ?? row.idsite;
+      const claimant = claimedBy.get(id);
+      if (claimant !== undefined) {
+        problems.push(`Matomo sites ${claimant} and ${row.idsite} both map to local site ${id}`);
+        continue;
+      }
+      claimedBy.set(id, row.idsite);
+      const existing = local.get(id);
+      if (existing === undefined) {
+        created.push({ ...site, id });
+        targets.set(row.idsite, { id, timezone: site.timezone });
+        report.sites += 1;
+      } else if (siteMap.has(row.idsite) || sharesDomain(existing.domains, site.domains)) {
+        // Rows follow the local site's zone: local_date must agree with it.
+        targets.set(row.idsite, { id, timezone: existing.timezone });
+        report.sitesSkipped += 1;
+      } else {
+        problems.push(
+          `Matomo site ${describeSite({ ...site, id: row.idsite })} collides with local site ${describeSite(existing)}` +
+            ` — pass --site-map ${row.idsite}:<free local id> to import it as a new site, or` +
+            ` --site-map ${row.idsite}:${id} if they are the same site`,
+        );
+      }
+    }
+  }
+  for (const id of options.siteMap?.keys() ?? []) {
+    if (!seen.has(id)) problems.push(`--site-map names Matomo site ${id}, which the source lacks`);
+  }
+  if (problems.length > 0) {
+    throw new Error(`refusing to import:\n  ${problems.join('\n  ')}`);
+  }
+
+  if (!(options.dryRun ?? false)) {
+    withWriteTransaction(db, () => {
+      for (const site of created) createSite(db, site);
+      if (siteMap.size > 0) {
+        const text = [...siteMap].map(([from, to]) => `${from}:${to}`).join(',');
+        setSetting(db, SITE_MAP_SETTING, text);
+      }
+    });
+  }
+  options.log?.(`sites: ${report.sites} imported, ${report.sitesSkipped} already present`);
+  return targets;
+}
+
+// ---------------------------------------------------------------------------
+// Rollups
+// ---------------------------------------------------------------------------
+
+function markDirty(db: Db, rows: ReadonlyArray<{ site_id: number }>): void {
+  for (const siteId of new Set(rows.map((row) => row.site_id))) {
+    setSetting(db, DIRTY_PREFIX + siteId, '1');
+  }
+}
+
+/** Per-site rebuild of every site owed one, then the epoch bump that settles them. */
+async function rebuildDirtyRollups(db: Db): Promise<number> {
+  const owed = settingKeysWithPrefix(db, DIRTY_PREFIX);
+  let days = 0;
+  for (const key of owed) {
+    const siteId = Number(key.slice(DIRTY_PREFIX.length));
+    days += (await rebuildAllRollups(db, { siteId })).days;
+  }
+  if (owed.length > 0) {
+    withWriteTransaction(db, () => {
+      bumpDataEpoch(db);
+      for (const key of owed) deleteSetting(db, key);
+    });
+  }
+  return days;
 }
 
 // ---------------------------------------------------------------------------

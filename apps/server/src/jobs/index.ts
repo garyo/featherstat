@@ -16,6 +16,7 @@ import { runReferrerBackfill } from './referrer-backfill.ts';
 import { runRetention } from './retention.ts';
 import { type Job, type Scheduler, type SchedulerOptions, startScheduler } from './scheduler.ts';
 import { runSitePurges } from './site-purge.ts';
+import { runTimezoneBackfills } from './timezone-backfill.ts';
 
 export {
   ALERT_RULES_KEY,
@@ -50,6 +51,11 @@ export {
 export { RETENTION_DAYS_KEY, retentionDays, runRetention } from './retention.ts';
 export type { Job, Scheduler, SchedulerOptions } from './scheduler.ts';
 export { requestSitePurge, runSitePurges, type SitePurgeResult } from './site-purge.ts';
+export {
+  requestTimezoneBackfill,
+  runTimezoneBackfills,
+  type TimezoneBackfillResult,
+} from './timezone-backfill.ts';
 
 /**
  * A hair longer than the longest month: every run then lands in a month we have
@@ -158,6 +164,19 @@ export function startJobs(db: Db, options: JobsOptions = {}): Scheduler {
       const { completed, rows } = await runCampaignBackfill(db);
       if (completed && rows > 0) {
         console.log(`campaign-backfill: renormalized utm values on ${rows} row(s)`);
+      }
+    },
+  });
+
+  // Same shape as site-purge: the site PATCH kicks the backfill when the zone
+  // changes; this entry is the resume path for a watermark a crash left behind.
+  jobs.push({
+    name: 'timezone-backfill',
+    everyMs: DAY_MS,
+    run: async () => {
+      const { completed, rows } = await runTimezoneBackfills(db, { now: options.now });
+      if (completed > 0) {
+        console.log(`timezone-backfill: re-dated ${rows} row(s) across ${completed} site(s)`);
       }
     },
   });

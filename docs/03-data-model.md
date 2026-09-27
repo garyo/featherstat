@@ -14,7 +14,7 @@ CREATE TABLE sites (
   id          INTEGER PRIMARY KEY,        -- preserved from Matomo (1–6 today)
   name        TEXT NOT NULL,
   domains     TEXT NOT NULL,              -- JSON array; first entry is canonical
-  timezone    TEXT NOT NULL DEFAULT 'America/New_York',
+  timezone    TEXT NOT NULL DEFAULT 'America/New_York',  -- IANA, or fixed ±hhmm (§ Timezones)
   created_at  INTEGER NOT NULL
 );
 
@@ -164,7 +164,9 @@ against the real tz database in `pipeline/identity.test.ts`.
 This is **forward-only for history too**: rows already written keep the ids they
 were minted with, and nothing re-hashes them. There is therefore one transition
 day per install on which both boundaries appear in the data — see
-[06](06-migration.md) § Changes made during the bake.
+[06](06-migration.md) § Changes made during the bake. A site whose timezone
+changes crosses boundaries the same way; § Timezones says what that costs and
+how the salt is carried across the change day.
 - The IP is consumed by the hash and the GeoIP lookup, then discarded. No
   masked-IP column, no debug switch that quietly stores it.
 - Matomo's `_id` parameter (16-hex visitor id), when present, replaces the
@@ -537,9 +539,40 @@ query vocabulary (see 04) without any API change.
 ## Timezones
 
 `ts` is UTC. `local_date`/`local_hour` are computed **at ingest** from the
-site's IANA timezone, so date bucketing, "today", and the hour×weekday heatmap
-are cheap indexed lookups with no tz math at query time. If a site's timezone
-is ever changed, a one-shot backfill recomputes the two columns.
+site's timezone, so date bucketing, "today", and the hour×weekday heatmap
+are cheap indexed lookups with no tz math at query time. A timezone is an IANA
+name or a fixed `±hhmm` offset (what the Matomo importer maps a manual
+`UTC+5.75` to); `isValidTimezone` refuses anything the runtime cannot resolve,
+and a colon, which would break the `salt:<zone>:<date>` key.
+
+**Changing a site's timezone rewrites its history.** The admin PATCH that moves
+the zone enqueues `jobs/timezone-backfill.ts` in its own transaction and kicks
+it — the referrer-backfill shape: a settings watermark per (site, table),
+5 000-row write transactions sharing the lock with ingest, resumed at boot after
+a crash. It re-derives `local_date`/`local_hour` on the site's events (from
+`ts`) and sessions (from `started_at`) in the new zone, rebuilds the site's
+rollups (clearing rollup days only the old zone had), and bumps the data epoch.
+Until it finishes the site's older days read in the old zone while windows
+resolve in the new one. What it cannot move, and so leaves in the old zone:
+
+- **Visits in flight.** A session seen within the returning-reader window
+  (`SESSION_REVIVAL_MS`) may still be held by the sessionizer, whose rollup
+  deltas are keyed by the date it holds, so rewriting its row would drift the
+  rollups. It keeps the date and hour it started on; its events move.
+- **Days retention pruned.** A rollup day whose raw rows are gone has nothing
+  to be recomputed from. A range spanning the raw horizon mixes the two zones.
+- **The drop counters** (`bot_drops`, `excluded_drops`, `prop_drops`) store no
+  instant.
+
+**Distinct visitors on re-dated days are approximate.** Visitor ids were minted
+under the old zone's day salts, so a new-zone day that straddles an old-zone
+midnight holds two generations of id, and a visitor seen on both sides counts
+twice. The change day itself is spared where possible: the PATCH seeds the new
+zone's salt for its current date with the old zone's live one
+(`carryDaySalt`), so the site's visitors keep their ids until the new zone's
+next midnight. When the new zone already has that salt — another site lives
+there — it is kept, since replacing it would re-key that site, and the moved
+site's returning visitors count once more that day.
 
 ## Bots
 
@@ -593,9 +626,10 @@ Pre-aggregated tables maintained **in the same write transaction as the ingest
 flush** (`rollup/apply.ts`, called by the batcher inside `withWriteTransaction`
 — invariant 2 untouched), so within any committed snapshot they can never lag
 the raw rows, and a failed flush rolls both back together. Because they are
-maintained from the first flush (and the importer rebuilds them per day),
-rollups cover ALL history by construction — the read path never needs a
-coverage check, only the routing rules below.
+maintained from the first flush (and both importers, which insert raw rows
+only, finish by rebuilding every site they wrote to), rollups cover ALL
+history by construction — the read path never needs a coverage check, only
+the routing rules below.
 
 The tables (see `db/migrations/100-v2-init.ts`, the authoritative DDL):
 

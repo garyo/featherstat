@@ -25,6 +25,7 @@ import {
 import { readAlertRules, writeAlertRules } from '../jobs/alerts.ts';
 import { runPropScrubs } from '../jobs/prop-scrub.ts';
 import { runSitePurges } from '../jobs/site-purge.ts';
+import { runTimezoneBackfills } from '../jobs/timezone-backfill.ts';
 import { ExclusionMatcher, type Resolver, refreshResolutions } from '../pipeline/exclusions.ts';
 import { PropRegistry } from '../pipeline/props.ts';
 import { createAdminRoutes } from './admin.ts';
@@ -149,6 +150,24 @@ describe('sites CRUD', () => {
       domains: ['one.test', 'alias.test'],
       timezone: 'UTC',
     });
+  });
+
+  it('re-dates stored history when the timezone changes, and only then', async () => {
+    const session = await login();
+    // 02:00 UTC: 22:00 the evening before in New York, 11:00 in Tokyo.
+    const at = Date.UTC(2026, 6, 27, 2);
+    withWriteTransaction(db, () =>
+      insertEvents(db, [event({ ts: at, local_date: '2026-07-26', local_hour: 22 })]),
+    );
+    const clockOf = () => stmt(db, 'SELECT local_date, local_hour FROM events').get();
+
+    await mutate(session, 'PATCH', '/api/admin/sites/1', { timezone: 'America/New_York' });
+    expect(getSetting(db, 'tz_backfill:1:events')).toBeUndefined(); // same zone: nothing owed
+
+    const res = await mutate(session, 'PATCH', '/api/admin/sites/1', { timezone: 'Asia/Tokyo' });
+    expect(res.status).toBe(200);
+    await runTimezoneBackfills(db); // rides the run the route kicked
+    expect(clockOf()).toEqual({ local_date: '2026-07-27', local_hour: 11 });
   });
 
   it('404s an unknown site, 400s an empty patch and a bad id', async () => {

@@ -56,18 +56,35 @@ credentials).
 
 | Matomo source | Destination | Notes |
 | --- | --- | --- |
-| `matomo_site` | `sites` | ids preserved verbatim (R2); alias URLs → `domains` |
+| `matomo_site` | `sites` | ids preserved verbatim (R2) unless `--site-map` moves one (below); alias URLs → `domains` |
 | `matomo_log_visit` | `sessions` | `idvisitor` (8 bytes) → `visitor_id`; `visit_first_action_time`/`visit_last_action_time` → timestamps; `visit_total_time` → `engaged_ms` (best available proxy); `location_country/region/city`; `config_browser_name/os/device_type/resolution`; referrer fields → attribution. (No lat/lon: the `sessions` schema carries none — see 03; the visit's lat/lon is denormalized onto its event rows instead) |
 | `matomo_log_link_visit_action` ⨝ `matomo_log_action` | `events` | pageviews, events (category/action/name/value), outlinks, downloads; `server_time` → `ts`; page URL/title from the joined action rows; visit lat/lon denormalized here |
 
 Import details:
 
 - `local_date`/`local_hour` recomputed from each site's timezone during
-  import (Matomo stores UTC; same convention).
+  import (Matomo stores UTC; same convention). A Matomo *manual offset*
+  (`UTC+10`, `UTC-3.5`, `UTC+5.75`) is no zone any runtime resolves, so it is
+  mapped: whole hours to IANA `Etc/GMT∓h` (POSIX sign — `UTC+10` is
+  `Etc/GMT-10`), fractions to a fixed `±hhmm` offset (`+0545`). A timezone
+  that maps to neither refuses the import, naming the site, before anything is
+  written — a stored zone the runtime cannot resolve would silently compute
+  every local clock in UTC.
 - Historical visitor ids don't chain with the new daily-rotating scheme —
   fine: unique-visitor counts are per-day-exact in both systems, which is the
   only guarantee we make anyway (03).
-- Idempotent: high-water marks per source table (in `settings`) plus
+- **Site id collisions refuse.** Preserving ids means a Matomo site can meet
+  a local site that already holds its id. That is accepted only when the two
+  share a domain (the same site — typically an earlier run's import);
+  otherwise the whole run refuses before writing anything, naming both sites.
+  `--site-map 3:7[,4:8]` resolves it: a free local id imports the Matomo site
+  as a new site there, and `3:3` vouches that the two are one site (its rows
+  then take the *local* site's timezone). The map is recorded in `settings`
+  (`import:matomo:site-map`), so a top-up that forgets the flag still lands
+  there, and a contradicting map is refused — it would split one site's
+  history across two. The site table is re-read every run, so this check
+  sees what the local side has become since.
+- Idempotent: high-water marks per log table (in `settings`) plus
   deterministic session ids derived from `idvisit`, so re-running tops up
   instead of duplicating. (This once enabled a final top-up import at cutover;
   that step is gone — see "History was dropped".)
@@ -77,6 +94,14 @@ Import details:
   upsert to their final state instead of staying frozen mid-visit.
 - `--until YYYY-MM-DD` (exclusive) fences a top-up off from the tee period —
   see the cutover sequence below.
+- **Rollups and the epoch.** Rows go in raw, so the run ends by rebuilding
+  the rollups of every site it wrote to (per-site `rebuildAllRollups`; the
+  planner answers headline KPIs and day buckets from rollups and assumes they
+  cover all history) and then bumping `data_epoch` — a `--since` re-read
+  rewrites sessions in place, which moves no rowid (invariant 10). "Wrote to"
+  is a durable `import:matomo:dirty:<site>` flag set with the rows, so a run
+  that died before its rebuild is settled by the next one, even one that
+  imports nothing.
 - Validation gate: for three spot-check months, per-site daily
   visits/pageviews from `/api/query` must match Matomo's API within rounding.
   Known definitional deltas (bot filtering, ping handling) get documented

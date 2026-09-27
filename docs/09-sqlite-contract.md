@@ -48,7 +48,7 @@ each here; docs/03 is the depth.
 | `id` | site id, stable across import (the query API's `site`) |
 | `name` | display name |
 | `domains` | JSON array of hostnames; the first entry is canonical |
-| `timezone` | IANA zone every `local_date`/`local_hour` below was computed in |
+| `timezone` | IANA zone (or fixed `±hhmm` offset) every `local_date`/`local_hour` below was computed in — after a change, once the timezone backfill finishes, with the exceptions docs/03 § Timezones lists |
 | `created_at` | UTC unix ms |
 | `deleted_at` | tombstone; non-NULL rows are logically gone — the purge job removes their data, and the row itself stays so the id is never reused |
 
