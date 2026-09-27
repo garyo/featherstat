@@ -203,6 +203,16 @@ Props are a native-collector feature only (§ 2).
   `track(action, {category, name, value, props})`,
   `page(url?, title?, props?)` — auto pageviews send no props —
   and scroll depth (below).
+- **What the history hook counts as a page view** (`navigation.ts`): a
+  change of path, however it happened; a change of query when pushed or
+  reached by back/forward, since the query is page identity; never a fragment
+  — an in-page anchor is the same page, and the server strips it from `path`
+  anyway. A `replaceState` that rewrites only the query is the app keeping
+  state in the address bar — a search box on every keystroke, a filter, a
+  sort — and is not a view. Plausible ignores `replaceState` entirely, which
+  also misses a router's redirect; Matomo leaves SPA tracking to the tag
+  author. Counting the path change and dropping the typing keeps the redirect
+  and loses nothing a reader would call a page.
 - **Every hit is addressed to the page as REPORTED**, not to `location.href`:
   once a view is announced under its own URL (an SPA naming its route, or a
   404 page reporting itself as one canonical `/404`), its pings, read

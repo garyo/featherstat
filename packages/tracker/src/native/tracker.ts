@@ -1,6 +1,7 @@
 import type { HitType } from '@featherstat/shared';
 import { isExitPingWorthwhile } from '../exit.ts';
 import { classifyLink, isLinkActivation } from '../links.ts';
+import { type HistoryChange, isNewView } from '../navigation.ts';
 import { whenActivated } from '../prerender.ts';
 import { isRepeatView } from '../repeat.ts';
 import { documentHeight, READ_THRESHOLD_PCT, scrollDepthPct } from '../scroll.ts';
@@ -174,8 +175,12 @@ export function init(config: TrackerConfig): () => void {
     // `scroll` is already one of INPUT_EVENTS, so this needs no listener of its own.
     throttledMeasure();
   };
-  const onNavigate = (): void => {
-    if (location.href !== runtime?.url) page();
+  /** The address bar as the history hook last saw it (navigation.ts). */
+  let seen = '';
+  const onNavigate = (change: HistoryChange): void => {
+    const from = seen;
+    seen = location.href;
+    if (isNewView(from, seen, change)) page();
   };
   const onClick = (event: Event): void => {
     if (!isLinkActivation(event)) return;
@@ -210,10 +215,9 @@ export function init(config: TrackerConfig): () => void {
     document.addEventListener('click', onClick, true);
     document.addEventListener('auxclick', onClick, true);
   }
-  if (autoPageviews) window.addEventListener('popstate', onNavigate);
-  const unhook = autoPageviews ? hookHistory(onNavigate) : undefined;
   /** Drops a first page view still waiting on activation (prerender.ts). */
   let unwait: (() => void) | undefined;
+  let unhook: (() => void) | undefined;
 
   const started: Runtime = {
     site: config.site,
@@ -233,12 +237,16 @@ export function init(config: TrackerConfig): () => void {
       for (const event of INPUT_EVENTS) document.removeEventListener(event, onInput, INPUT_OPTIONS);
       document.removeEventListener('click', onClick, true);
       document.removeEventListener('auxclick', onClick, true);
-      window.removeEventListener('popstate', onNavigate);
       unhook?.();
       unwait?.();
     },
   };
   runtime = started;
+
+  if (autoPageviews) {
+    seen = location.href;
+    unhook = hookHistory(onNavigate);
+  }
 
   // Not `page()` directly: a prerendered document reaches here before the visitor
   // has decided to come, and the view it would announce is not one yet
@@ -316,23 +324,26 @@ function emit(hit: NativeHit): void {
   send(runtime.endpoint, JSON.stringify({ site: runtime.site, hits: [hit] }));
 }
 
-function hookHistory(onNavigate: () => void): () => void {
+function hookHistory(onNavigate: (change: HistoryChange) => void): () => void {
   const { pushState, replaceState } = history;
+  const onPop = (): void => onNavigate('pop');
   history.pushState = function patchedPushState(
     this: History,
     ...args: Parameters<History['pushState']>
   ) {
     pushState.apply(this, args);
-    onNavigate();
+    onNavigate('push');
   };
   history.replaceState = function patchedReplaceState(
     this: History,
     ...args: Parameters<History['replaceState']>
   ) {
     replaceState.apply(this, args);
-    onNavigate();
+    onNavigate('replace');
   };
+  window.addEventListener('popstate', onPop);
   return () => {
+    window.removeEventListener('popstate', onPop);
     history.pushState = pushState;
     history.replaceState = replaceState;
   };

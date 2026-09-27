@@ -87,6 +87,36 @@ describe('pageviews', () => {
     expect(sent()).toHaveLength(1);
   });
 
+  it('treats an in-page anchor as the same page view, whichever way it is reached', () => {
+    start();
+    history.pushState({}, '', '#intro');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    history.replaceState({}, '', '#outro');
+    expect(sent()).toHaveLength(1);
+  });
+
+  it('counts a pushed query as a page, but not a replaced one — the search box case', () => {
+    start();
+    const entry = location.href;
+    for (const typed of ['o', 'ow', 'owl']) history.replaceState({}, '', `?q=${typed}`);
+    expect(sent()).toHaveLength(1);
+    history.pushState({}, '', '?q=owl&page=2');
+    expect(sent()).toHaveLength(2);
+    // The ignored replaces left the reported page where it was.
+    expect(sent()[1]).toMatchObject({ type: 'pageview', url: location.href, referrer: entry });
+  });
+
+  it('counts back and forward across pages, not across anchors', () => {
+    start();
+    history.pushState({}, '', '/era/permian#extinction');
+    expect(sent()).toHaveLength(2);
+    history.replaceState({}, '', '/era/permian'); // back off the anchor: same page
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    expect(sent()).toHaveLength(2);
+    history.replaceState({}, '', '/era/triassic');
+    expect(sent()).toHaveLength(3);
+  });
+
   it('opts out of auto pageviews, leaving page() to the app', () => {
     start({ autoPageviews: false });
     expect(sent()).toHaveLength(0);
