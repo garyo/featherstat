@@ -166,7 +166,7 @@ site's version moves, and the ETag machinery makes a no-op revalidation free.
 | Frontend | **Svelte 5 + Vite SPA**, served statically by the server | Smallest bundles and least ceremony for a dashboard; no SSR needed behind auth. *Rejected:* React (bigger bundles/boilerplate; larger contributor pool is real but not decisive), SvelteKit (SSR machinery with no job here), htmx/server-rendered (realtime + client-side chart interactions want a real SPA). |
 | Charts | **Apache ECharts**, tree-shaken, behind a thin `Chart` wrapper | One engine covering every planned viz (time series, bar-lists, heatmap, world map, journey sankey), canvas rendering, first-class theming for our palette. Proven in-house: globe-viz already pairs ECharts 6 (trend charts) with a hand-built three.js globe — the future realtime globe reuses that three.js approach rather than echarts-gl. Cost: bundle weight — mitigated by per-chart imports and code-splitting; budget in [05-dashboards.md](05-dashboards.md). *Rejected:* Observable Plot (elegant, but maps/interactions become DIY), uPlot (time-series-only), Chart.js (weak beyond basics), d3-from-scratch (maximum code for minimum leverage). The wrapper keeps a future engine swap contained. |
 | Auth | Instance admin password + per-user email/password accounts (scrypt via node:crypto), signed HttpOnly session cookies; scoped bearer tokens for API; magic-link viewers; signed read-only share tokens | The admin owns the instance (R13, R23); users own and manage their sites and log in with email + password, claimed via a single-use invite link. Viewers and tokens stay read-only. See [04-api.md](04-api.md) § 5 for the principal model and the manager/admin route split. |
-| Lint/format/test | **biome** + **vitest** | One fast tool for lint+format; vitest everywhere. Playwright e2e later, run via project scripts. |
+| Lint/format/test | **biome** + **vitest** | One fast tool for lint+format; vitest everywhere. Playwright for e2e, run via project scripts. |
 
 ## Repository layout
 
@@ -281,4 +281,6 @@ faster raw shapes, never a dishonest route.
 - Replay harness: N days of synthetic multi-site traffic piped through the
   real ingest path into a temp DB; dashboard queries asserted against known
   totals. Doubles as the perf benchmark.
-- e2e (later): Playwright against a seeded instance, run via project scripts.
+- e2e: Playwright against a freshly seeded instance serving the built SPA
+  (`test/e2e`, `bun run e2e`) — outside `bun run ci`, its own job in GitHub
+  Actions.

@@ -174,10 +174,11 @@ and the cost, live in `apps/server/test/replay/calibrated.ts`. The consequence
 worth holding: **the pre-push hook is the only thing enforcing perf**, so a
 clone without it can land a regression.
 
-**`bun run e2e` is deliberately outside all of that** (`test/e2e`, ~25 s): run it
-after touching anything the browser renders, and wire it into CI when there is
-one. It is out of `ci` so the pre-push gate stays fast, which is what keeps it
-being run at all. It exists because `ci` was green through every UI defect of
+**`bun run e2e` is deliberately outside `bun run ci`** (`test/e2e`, ~25 s): run
+it after touching anything the browser renders. It is out of `ci` so the pre-push
+gate stays fast, which is what keeps it being run at all; GitHub Actions runs it
+as its own `e2e` job beside the gates, uploading the Playwright report and
+traces when it fails. It exists because `ci` was green through every UI defect of
 the v2 bake — nothing type-checks how a template stringifies a value, so the
 gap was never unit coverage but that **nothing opened the app**. Its
 `nonsense.spec.ts` sweep — no screen may render `[object Object]`, `undefined`,
