@@ -44,14 +44,15 @@ import {
  *   dates; mapping those instants onto rollup keys is DST-fraught, and the 24h
  *   preset is cheap on raw anyway (correctness first, docs/03).
  * - **The bounce guard**: `bounced` bakes in `ENGAGEMENT_THRESHOLD_MS`
- *   (invariant 5). While `rollup_meta` says the stored history needs a rebuild,
- *   session metrics refuse the rollup route rather than answer from stale rows.
+ *   (invariant 5). While `rollup_meta` says the stored history needs a rebuild
+ *   or was built under another threshold, session metrics refuse the rollup
+ *   route rather than answer from stale rows.
  */
 
 export type QueryRoute = 'rollup' | 'raw';
 
 export interface PlanContext {
-  /** `rollupNeedsRebuild(db)`: the session side's bounce columns are stale. */
+  /** `sessionRollupsStale(db)`: the session side's bounce columns are stale. */
   sessionRollupsStale?: boolean;
 }
 

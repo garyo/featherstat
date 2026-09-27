@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { localClock, type SiteWindow } from '@featherstat/shared';
+import { ENGAGEMENT_THRESHOLD_MS, localClock, type SiteWindow } from '@featherstat/shared';
 import { campaignsVersion, type Db } from '../db/index.ts';
 
 /**
@@ -50,7 +50,11 @@ export function windowTag(windows: readonly SiteWindow[], now: number): string {
     .join(',');
 }
 
-/** A strong tag over (data version, schema version, canonical body, windows). */
+/**
+ * A strong tag over (data version, schema version, bounce threshold, canonical
+ * body, windows). The threshold is a code constant, not data: a deploy that
+ * changes it changes every bounce answer while the data version stands still.
+ */
 export function batchEtag(
   version: number,
   schema: number,
@@ -59,7 +63,9 @@ export function batchEtag(
   now: number,
 ): string {
   const hash = createHash('sha256')
-    .update(`${version}|${schema}|${canonicalBody}|${windowTag(windows, now)}`)
+    .update(
+      `${version}|${schema}|${ENGAGEMENT_THRESHOLD_MS}|${canonicalBody}|${windowTag(windows, now)}`,
+    )
     .digest('base64url');
   return `"${hash}"`;
 }

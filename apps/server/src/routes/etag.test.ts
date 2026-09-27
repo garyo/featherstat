@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { canonicalize, ifNoneMatchHits } from './etag.ts';
 
 describe('ifNoneMatchHits', () => {
@@ -30,5 +30,28 @@ describe('canonicalize', () => {
     expect(canonicalize({ b: 1, a: [{ d: 2, c: undefined }] })).toBe(
       canonicalize({ a: [{ d: 2 }], b: 1 }),
     );
+  });
+});
+
+describe('batchEtag', () => {
+  afterEach(() => {
+    vi.doUnmock('@featherstat/shared');
+    vi.resetModules();
+  });
+
+  /** The tag under a given bounce threshold — a code constant a deploy can change. */
+  async function tagUnder(threshold: number): Promise<string> {
+    vi.resetModules();
+    vi.doMock('@featherstat/shared', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('@featherstat/shared')>()),
+      ENGAGEMENT_THRESHOLD_MS: threshold,
+    }));
+    const { batchEtag } = await import('./etag.ts');
+    return batchEtag(7, 104, '{}', [], 0);
+  }
+
+  it('moves with the engagement threshold, which changes bounce without moving data', async () => {
+    expect(await tagUnder(10_000)).toBe(await tagUnder(10_000));
+    expect(await tagUnder(10_000)).not.toBe(await tagUnder(15_000));
   });
 });

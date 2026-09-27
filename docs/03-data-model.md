@@ -685,8 +685,12 @@ new ops and rolling windows are slow before they are ever wrong). The rules:
   and the read-equivalence suite carries a uid-stable visitor spanning days to
   prove the wrong route yields the wrong number.
 - Session metrics route to `rollup_sessions_day` unless `rollup_meta` says the
-  stored `bounced` is stale (`needs_rebuild`) — then they fall back to raw
-  until the rebuild runs, so bounce numbers are never quietly wrong.
+  stored `bounced` is stale — `needs_rebuild`, or an `engagement_threshold_ms`
+  other than the code's (the read path checks it itself: the flush path only
+  notices a changed threshold on its first apply after boot) — then they fall
+  back to raw until the rebuild runs, so bounce numbers are never quietly
+  wrong. The threshold also joins the batch ETag, so answers cached under the
+  old definition expire on the deploy that changes it.
 - The rolling `24h` preset always goes to raw: its edges cut inside local
   dates, and mapping instants onto rollup keys is DST-fraught. Correctness
   first; the shape is cheap on raw.

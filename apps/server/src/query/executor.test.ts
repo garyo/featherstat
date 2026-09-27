@@ -1,4 +1,5 @@
 import {
+  ENGAGEMENT_THRESHOLD_MS,
   localClock,
   type QueryRequest,
   type QueryResponse,
@@ -17,7 +18,7 @@ import {
   upsertSessions,
   withWriteTransaction,
 } from '../db/index.ts';
-import { META_RAW_HORIZON, setRollupMeta } from '../rollup/apply.ts';
+import { META_ENGAGEMENT_THRESHOLD, META_RAW_HORIZON, setRollupMeta } from '../rollup/apply.ts';
 import { executeQueryRequest, UnknownSiteError } from './executor.ts';
 
 /**
@@ -988,6 +989,54 @@ describe("the rolling '24h' window", () => {
       ).meta.windows[0];
     expect(windowAt(AT + 29 * 60_000)).toEqual(windowAt(AT));
     expect(windowAt(AT + 3_600_000)).not.toEqual(windowAt(AT));
+  });
+});
+
+/**
+ * Invariant 5 on the read side: `rollup_sessions_day.bounced` bakes in the
+ * threshold it was built under. A deploy that changes ENGAGEMENT_THRESHOLD_MS
+ * leaves `needs_rebuild` unset until the first flush notices — reads before
+ * then must already refuse the stale rollups and answer bounce from raw rows.
+ */
+describe('a changed engagement threshold on the read path', () => {
+  let stale: Db;
+  const D = '2026-07-27';
+
+  beforeAll(() => {
+    stale = openDb(':memory:');
+    withWriteTransaction(stale, () => {
+      createSite(stale, { id: 1, name: 'one', domains: ['one.test'], timezone: 'UTC' });
+      const ts = Date.parse(`${D}T12:00:00Z`);
+      insertEvents(stale, [event({ ts, local_date: D })]);
+      upsertSessions(stale, [session({ started_at: ts, last_seen_at: ts, local_date: D })]);
+    });
+    syncRollups(stale);
+    // A rollup that disagrees with raw — as one built under another threshold would.
+    withWriteTransaction(stale, () =>
+      stale.prepare('UPDATE rollup_sessions_day SET bounced = 0').run(),
+    );
+  });
+
+  const bounce = (): unknown =>
+    resultOf(
+      executeQueryRequest(stale, {
+        site: 1,
+        range: { from: D, to: D },
+        queries: [{ id: 'q', metrics: ['bounce_rate'] }],
+      }),
+      'q',
+    ).rows[0]?.bounce_rate;
+
+  it('answers bounce from raw rows while the stored threshold differs from the code', () => {
+    withWriteTransaction(stale, () =>
+      setRollupMeta(stale, META_ENGAGEMENT_THRESHOLD, String(ENGAGEMENT_THRESHOLD_MS + 1)),
+    );
+    expect(bounce()).toBe(1); // the one raw session is a bounce
+    // The guard has teeth: under the matching threshold the rollup answers.
+    withWriteTransaction(stale, () =>
+      setRollupMeta(stale, META_ENGAGEMENT_THRESHOLD, String(ENGAGEMENT_THRESHOLD_MS)),
+    );
+    expect(bounce()).toBe(0);
   });
 });
 

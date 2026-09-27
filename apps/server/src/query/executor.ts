@@ -33,7 +33,7 @@ import {
   stmt,
   withReadSnapshot,
 } from '../db/index.ts';
-import { rawHorizonTs, rollupNeedsRebuild } from '../rollup/apply.ts';
+import { rawHorizonTs, sessionRollupsStale as rollupsStale } from '../rollup/apply.ts';
 import { type CompiledAdjacency, compileAdjacencyQuery } from './adjacency.ts';
 import { runChangesQuery } from './changes.ts';
 import {
@@ -148,7 +148,7 @@ export function executeQueryRequest(
     // The rollup routing inputs, read once inside the snapshot: whether the
     // session rollups are suspended (stale bounce definition), and the raw
     // floor retention has pruned to (docs/03 § Rollups).
-    const sessionRollupsStale = rollupNeedsRebuild(db);
+    const sessionRollupsStale = rollupsStale(db);
     const horizonTs = rawHorizonTs(db);
 
     const results: QueryResponse['results'] = {};

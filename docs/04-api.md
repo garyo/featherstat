@@ -635,8 +635,9 @@ buckets rather than the top groups; the schema refuses that combination with a
     retention horizon refuses the whole query honestly.
 - **Click-to-filter falls out for free**: clicking a row in any breakdown adds
   a `filters` entry and re-issues the same batch.
-- **Caching**: response ETag = hash(max event rowid, schema version,
-  canonicalized request body, resolved per-site windows *including their
+- **Caching**: response ETag = hash(max event rowid, schema version, the
+  engagement threshold (a code constant bounce depends on), canonicalized
+  request body, resolved per-site windows *including their
   timezones and any rolling instants* — so a preset like `today` expires at
   site-local midnight even when no data changed, `24h` expires when the site's
   local hour turns and is stable in between, and re-zoning a site expires an
