@@ -1,4 +1,3 @@
-import { fileURLToPath } from 'node:url';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { defineConfig } from 'vitest/config';
 
@@ -18,11 +17,6 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   plugins: [svelte()],
   resolve: {
-    alias: {
-      '@featherstat/shared': fileURLToPath(
-        new URL('../../packages/shared/src/index.ts', import.meta.url),
-      ),
-    },
     // Without this, `svelte` resolves to its server build and `mount()` throws:
     // vitest transforms through the SSR pipeline even when the environment is a DOM.
     conditions: ['browser'],

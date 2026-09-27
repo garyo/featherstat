@@ -5,14 +5,15 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "dev": "NODE_ENV=${NODE_ENV:-development} DB_PATH=${DB_PATH:-data/dev.db} node --watch --experimental-transform-types --disable-warning=ExperimentalWarning --import ./test/replay/shared-alias.ts src/main.ts",
-    "seed": "node --experimental-transform-types --disable-warning=ExperimentalWarning --import ./test/replay/shared-alias.ts src/dev/seed.ts",
-    "import": "node --experimental-transform-types --disable-warning=ExperimentalWarning --import ./test/replay/shared-alias.ts src/import/cli.ts",
-    "geoip-refresh": "node --experimental-transform-types --disable-warning=ExperimentalWarning --import ./test/replay/shared-alias.ts src/jobs/geoip-refresh-cli.ts",
-    "build": "esbuild src/main.ts --bundle --platform=node --format=esm --target=node24 --external:better-sqlite3 --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" --outfile=dist/main.js && esbuild src/import/cli.ts --bundle --platform=node --format=esm --target=node24 --external:better-sqlite3 --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" --outfile=dist/import.js && esbuild src/jobs/geoip-refresh-cli.ts --bundle --platform=node --format=esm --target=node24 --external:better-sqlite3 --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" --outfile=dist/geoip-refresh.js && esbuild src/query/pool/worker.ts --bundle --platform=node --format=esm --target=node24 --external:better-sqlite3 --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" --outfile=dist/query-worker.js",
+    "dev": "NODE_ENV=${NODE_ENV:-development} DB_PATH=${DB_PATH:-data/dev.db} node --watch --experimental-transform-types --disable-warning=ExperimentalWarning src/main.ts",
+    "seed": "node --experimental-transform-types --disable-warning=ExperimentalWarning src/dev/seed.ts",
+    "import": "node --experimental-transform-types --disable-warning=ExperimentalWarning src/import/cli.ts",
+    "geoip-refresh": "node --experimental-transform-types --disable-warning=ExperimentalWarning src/jobs/geoip-refresh-cli.ts",
+    "build": "bun run src/build.ts",
     "start": "node dist/main.js"
   },
   "dependencies": {
+    "@featherstat/shared": "workspace:*",
     "@hono/node-server": "^2.0.12",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "better-sqlite3": "^13.0.1",

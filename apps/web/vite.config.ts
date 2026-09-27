@@ -1,21 +1,8 @@
-import { fileURLToPath } from 'node:url';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
   plugins: [svelte()],
-  resolve: {
-    // Order matters: the bare-specifier alias is a PREFIX match, so the
-    // subpath must resolve first or it would land inside index.ts.
-    alias: {
-      '@featherstat/shared/detail-templates': fileURLToPath(
-        new URL('../../packages/shared/src/templates/detail/index.ts', import.meta.url),
-      ),
-      '@featherstat/shared': fileURLToPath(
-        new URL('../../packages/shared/src/index.ts', import.meta.url),
-      ),
-    },
-  },
   server: {
     proxy: {
       '/api': process.env.API_PROXY ?? 'http://localhost:8080',

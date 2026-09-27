@@ -1,6 +1,6 @@
 import { serve } from '@hono/node-server';
 import { createSecuredApp } from './auth/app.ts';
-import { openDb } from './db/index.ts';
+import { DEV_DB_PATH, openDb } from './db/index.ts';
 import { DEFAULT_MMDB_PATH, startJobs } from './jobs/index.ts';
 import { readNtfySettings } from './notify/index.ts';
 import { startExclusionRefresh } from './pipeline/exclusions.ts';
@@ -13,7 +13,7 @@ import { createRealtimeHub } from './realtime/hub.ts';
 /** One path for both readers: the pipeline reads this file, the refresh job replaces it. */
 const mmdbPath = process.env.GEOIP_MMDB_PATH ?? DEFAULT_MMDB_PATH;
 
-const dbPath = process.env.DB_PATH ?? 'analytics.db';
+const dbPath = process.env.DB_PATH ?? DEV_DB_PATH;
 const db = openDb(dbPath);
 
 /**
@@ -80,8 +80,11 @@ if (notifications.url !== undefined) {
   console.log(`ntfy notifications configured: ${notifications.rules.length} rule(s)`);
 }
 
-const server = serve({ fetch: app.fetch, port });
-console.log(`analytics server listening on :${port}`);
+// The bound port, not the configured one: PORT=0 asks the OS for a free port,
+// and whoever spawned us learns which from this line.
+const server = serve({ fetch: app.fetch, port }, (info) => {
+  console.log(`analytics server listening on :${info.port}`);
+});
 
 /** In-flight queries get this long at shutdown — well inside Docker's 10 s stop grace. */
 const QUERY_DRAIN_MS = 3_000;

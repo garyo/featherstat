@@ -78,13 +78,7 @@ export async function startServer({ seed }: { seed: boolean }): Promise<Server> 
   const port = await freePort();
   const server = spawn(
     'node',
-    [
-      '--experimental-transform-types',
-      '--disable-warning=ExperimentalWarning',
-      '--import',
-      './test/replay/shared-alias.ts',
-      'src/main.ts',
-    ],
+    ['--experimental-transform-types', '--disable-warning=ExperimentalWarning', 'src/main.ts'],
     {
       cwd: join(ROOT, 'apps/server'),
       env: {

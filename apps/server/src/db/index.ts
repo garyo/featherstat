@@ -188,6 +188,12 @@ const SESSION_NULLS: NullFill<SessionRow> = {
 // Connection
 // ---------------------------------------------------------------------------
 
+/**
+ * Where every tool opens the database when `DB_PATH` is unset: the seeded dev
+ * file, relative to the working directory. The image always sets `DB_PATH`.
+ */
+export const DEV_DB_PATH = 'data/dev.db';
+
 /** Opens (creating if needed) and migrates the database. `path` may be ':memory:'. */
 export function openDb(path: string): Db {
   const db = new BetterSqlite3(path);

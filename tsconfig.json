@@ -7,17 +7,16 @@
     "lib": ["ES2023"],
     "strict": true,
     "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "types": ["node"],
-    "paths": {
-      "@featherstat/shared/detail-templates": ["./packages/shared/src/templates/detail/index.ts"],
-      "@featherstat/shared": ["./packages/shared/src/index.ts"]
-    }
+    "types": ["node"]
   },
   "include": ["apps/*/src", "apps/*/test", "packages/*/src", "test"],
-  "exclude": ["apps/web"]
+  "exclude": ["apps/web", "packages/tracker", "test/contract"]
 }

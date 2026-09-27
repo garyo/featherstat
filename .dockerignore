@@ -14,3 +14,9 @@ docs
 mockups
 Dockerfile
 .dockerignore
+# Tests, their outputs and agent worktrees: the build compiles only sources.
+**/test
+**/*.test.ts
+test-results
+playwright-report
+.claude

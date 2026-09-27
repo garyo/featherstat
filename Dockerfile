@@ -1,10 +1,17 @@
 # syntax=docker/dockerfile:1
-# Multi-stage build (docs/08 WP13): bun installs + builds, node:24-slim runs.
+# Multi-stage build (docs/08 WP13): bun installs + builds, Node 24 slim runs.
 # One container serves the SPA, the query/admin API and the tracking endpoints;
 # the SQLite file lives on the /data volume.
 
+# Pinned, not floating. Bun matches the version CI pins
+# (.github/workflows/ci.yml) — bump them together. Node is one image used twice:
+# the native stage compiles better-sqlite3 against the runtime's exact glibc and
+# ABI, so both stages must be the same tag, Debian release included.
+ARG BUN_IMAGE=oven/bun:1.3.4-slim
+ARG NODE_IMAGE=node:24.21.0-bookworm-slim
+
 # ----------------------------------------------------------------- deps ----
-FROM oven/bun:1-slim AS deps
+FROM ${BUN_IMAGE} AS deps
 # bun install runs better-sqlite3's gyp step, which needs python even when it
 # only detects prebuilds.
 RUN apt-get update \
@@ -43,8 +50,8 @@ RUN bun run build
 # ------------------------------------------------------------- native ------
 # Rebuild the one native module from source against the runtime image's exact
 # glibc and Node ABI. The shipped prebuilds want a newer glibc than
-# node:24-slim carries, so they are removed — the loader then uses this build.
-FROM node:24-slim AS native
+# the Node image carries, so they are removed — the loader then uses this build.
+FROM ${NODE_IMAGE} AS native
 RUN apt-get update \
  && apt-get install -y --no-install-recommends python3 make g++ \
  && rm -rf /var/lib/apt/lists/*
@@ -55,7 +62,7 @@ RUN rm -rf prebuilds build \
  && rm -rf build/Release/obj.target build/Release/.deps deps node_modules src
 
 # ------------------------------------------------------------- runtime -----
-FROM node:24-slim
+FROM ${NODE_IMAGE}
 ENV NODE_ENV=production \
     PORT=8080 \
     DB_PATH=/data/analytics.db \

@@ -250,7 +250,7 @@ export function createAuth(db: Db, options: AuthOptions = {}): Auth {
     if (principal === undefined || principal.kind !== 'admin') {
       return c.json({ error: 'admin only' }, 403);
     }
-    await next();
+    return next();
   };
 
   const requireManager: MiddlewareHandler<AuthEnv> = async (c, next) => {
@@ -258,7 +258,7 @@ export function createAuth(db: Db, options: AuthOptions = {}): Auth {
     if (principal === undefined || !isManager(principal)) {
       return c.json({ error: 'admin only' }, 403);
     }
-    await next();
+    return next();
   };
 
   return {

@@ -32,12 +32,8 @@ export const BUNDLES: readonly Bundle[] = [
 const PACKAGE_ROOT = fileURLToPath(new URL('../', import.meta.url));
 export const DIST_DIR = `${PACKAGE_ROOT}dist/`;
 
-/** esbuild is a devDependency of apps/server; bun links its binary into that workspace. */
-const ESBUILD_PATHS = [
-  'node_modules/.bin/esbuild',
-  '../../node_modules/.bin/esbuild',
-  '../../apps/server/node_modules/.bin/esbuild',
-];
+/** This package's own esbuild: linked beside it (isolated installs) or hoisted to the root. */
+const ESBUILD_PATHS = ['node_modules/.bin/esbuild', '../../node_modules/.bin/esbuild'];
 
 export function buildBundle(bundle: Bundle, dir: string = DIST_DIR): string {
   const outfile = join(dir, bundle.file);

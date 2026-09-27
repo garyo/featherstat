@@ -23,7 +23,7 @@ jobs:
       # Pinned to the version dev machines run: the workspace carries a
       # Bun-version-specific workaround (scripts that must use Node because
       # better-sqlite3 dies with a NAPI fatal error under Bun 1.3.4). Bump this
-      # deliberately, together with that note.
+      # deliberately, together with that note and the Dockerfile's BUN_IMAGE.
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.4
@@ -47,6 +47,56 @@ jobs:
       # check, build, test, bench — the same script the pre-push hook runs.
       - name: Gates
         run: bun run ci
+
+  # Playwright over the built app (test/e2e). Its own job, not a gate in
+  # scripts/ci.sh: the pre-push hook stays fast, and here it runs in parallel
+  # with the gates instead of after them.
+  e2e:
+    name: e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.4
+
+      # The harness seeds and serves with Node (better-sqlite3 under Bun, above).
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: Cache bun's install cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Install Chromium
+        run: bun run e2e:install --with-deps
+
+      # The harness serves apps/web/dist; the tracker bundles ride along.
+      - name: Build
+        run: bun run build
+
+      - name: E2E
+        run: bun run e2e --reporter=github,list,html
+
+      - name: Upload the report and traces
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 14
 
   # docs/08 WP1 also wants a bun-runtime job to keep the "server stays
   # bun-compatible" promise honest. It cannot exist while better-sqlite3 aborts

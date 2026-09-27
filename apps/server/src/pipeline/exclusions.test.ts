@@ -10,11 +10,21 @@ import {
 
 const rule = (value: string) => ({ value, note: '' });
 
+function address(value: string): Uint8Array {
+  const bytes = parseAddress(value);
+  if (bytes === undefined) throw new Error(`test address does not parse: ${value}`);
+  return bytes;
+}
+
+function contains(cidr: string, value: string): boolean {
+  const prefix = parsePrefix(cidr);
+  if (prefix === undefined) throw new Error(`test prefix does not parse: ${cidr}`);
+  return prefixContains(prefix, address(value));
+}
+
 describe('parseAddress', () => {
   it('normalizes IPv4 into its mapped form', () => {
-    const bytes = parseAddress('192.0.2.1');
-    expect(bytes).toBeDefined();
-    expect(formatAddress(bytes as Uint8Array)).toBe('192.0.2.1');
+    expect(formatAddress(address('192.0.2.1'))).toBe('192.0.2.1');
   });
 
   it('reads an IPv4-mapped IPv6 address as the same bytes as the bare IPv4', () => {
@@ -23,7 +33,7 @@ describe('parseAddress', () => {
 
   it('expands :: compression', () => {
     expect(parseAddress('2001:db8::1')).toEqual(parseAddress('2001:db8:0:0:0:0:0:1'));
-    expect(formatAddress(parseAddress('::1') as Uint8Array)).toBe('0:0:0:0:0:0:0:1');
+    expect(formatAddress(address('::1'))).toBe('0:0:0:0:0:0:0:1');
   });
 
   it('ignores a link-local zone index', () => {
@@ -70,24 +80,21 @@ describe('parsePrefix', () => {
 
 describe('prefixContains', () => {
   it('matches inside a byte-aligned prefix and rejects outside it', () => {
-    const prefix = parsePrefix('192.0.2.0/24');
-    expect(prefixContains(prefix!, parseAddress('192.0.2.77')!)).toBe(true);
-    expect(prefixContains(prefix!, parseAddress('192.0.3.77')!)).toBe(false);
+    expect(contains('192.0.2.0/24', '192.0.2.77')).toBe(true);
+    expect(contains('192.0.2.0/24', '192.0.3.77')).toBe(false);
   });
 
   it('honours the partial byte of a non-aligned prefix', () => {
     // /28 keeps the high nibble of the last octet: .16–.31 in, .32 out.
-    const prefix = parsePrefix('192.0.2.16/28');
-    expect(prefixContains(prefix!, parseAddress('192.0.2.16')!)).toBe(true);
-    expect(prefixContains(prefix!, parseAddress('192.0.2.31')!)).toBe(true);
-    expect(prefixContains(prefix!, parseAddress('192.0.2.32')!)).toBe(false);
-    expect(prefixContains(prefix!, parseAddress('192.0.2.15')!)).toBe(false);
+    expect(contains('192.0.2.16/28', '192.0.2.16')).toBe(true);
+    expect(contains('192.0.2.16/28', '192.0.2.31')).toBe(true);
+    expect(contains('192.0.2.16/28', '192.0.2.32')).toBe(false);
+    expect(contains('192.0.2.16/28', '192.0.2.15')).toBe(false);
   });
 
   it('matches an IPv6 prefix', () => {
-    const prefix = parsePrefix('2001:db8::/32');
-    expect(prefixContains(prefix!, parseAddress('2001:db8:abcd::1')!)).toBe(true);
-    expect(prefixContains(prefix!, parseAddress('2001:db9::1')!)).toBe(false);
+    expect(contains('2001:db8::/32', '2001:db8:abcd::1')).toBe(true);
+    expect(contains('2001:db8::/32', '2001:db9::1')).toBe(false);
   });
 });
 

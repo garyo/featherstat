@@ -9,5 +9,11 @@
   },
   "scripts": {
     "build": "bun run src/build.ts"
+  },
+  "dependencies": {
+    "@featherstat/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1"
   }
 }
