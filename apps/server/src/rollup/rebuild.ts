@@ -222,10 +222,7 @@ export async function rebuildAllRollups(
   options: RebuildAllOptions = {},
 ): Promise<RebuildResult> {
   const site = options.siteId ?? null;
-  const days = stmt<{ site_id: number; local_date: string }>(db, SQL_ROLLUP_DAYS).all(
-    site,
-    site,
-  ) as Array<{ site_id: number; local_date: string }>;
+  const days = stmt<{ site_id: number; local_date: string }>(db, SQL_ROLLUP_DAYS).all(site, site);
 
   let done = 0;
   for (const [index, { site_id, local_date }] of days.entries()) {

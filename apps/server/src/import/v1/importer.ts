@@ -257,16 +257,7 @@ function importSites(target: Db, source: Db, report: V1ImportReport, dryRun: boo
     domains: string;
     timezone: string;
     created_at: number;
-  }>(
-    source,
-    'SELECT id, name, domains, timezone, created_at FROM sites ORDER BY id',
-  ).all() as Array<{
-    id: number;
-    name: string;
-    domains: string;
-    timezone: string;
-    created_at: number;
-  }>;
+  }>(source, 'SELECT id, name, domains, timezone, created_at FROM sites ORDER BY id').all();
   const created = rows.filter((row) => !existing.has(row.id));
   report.sites = created.length;
   report.sitesSkipped = rows.length - created.length;
@@ -407,7 +398,7 @@ function importEvents(
 FROM events WHERE id > ? ORDER BY id LIMIT ?`;
   let cursor = dryRun ? 0 : watermark(target, 'events');
   for (;;) {
-    const rows = stmt<V1EventSourceRow>(source, sql).all(cursor, batchSize) as V1EventSourceRow[];
+    const rows = stmt<V1EventSourceRow>(source, sql).all(cursor, batchSize);
     const last = rows.at(-1);
     if (last === undefined) return;
     const mapped: EventRow[] = rows.map((row) => {
@@ -481,7 +472,7 @@ function sourceTimezones(source: Db): Map<number, string> {
   const rows = stmt<{ id: number; timezone: string }>(
     source,
     'SELECT id, timezone FROM sites',
-  ).all() as { id: number; timezone: string }[];
+  ).all();
   return new Map(rows.map((row) => [row.id, row.timezone]));
 }
 
@@ -500,10 +491,7 @@ function importSessions(
 FROM sessions WHERE rowid > ? ORDER BY rowid LIMIT ?`;
   let cursor = dryRun ? 0 : watermark(target, 'sessions');
   for (;;) {
-    const rows = stmt<V1SessionSourceRow>(source, sql).all(
-      cursor,
-      batchSize,
-    ) as V1SessionSourceRow[];
+    const rows = stmt<V1SessionSourceRow>(source, sql).all(cursor, batchSize);
     const last = rows.at(-1);
     if (last === undefined) return;
     const mapped: SessionRow[] = rows.map((row) => {
@@ -547,7 +535,7 @@ function importBotDrops(target: Db, source: Db, report: V1ImportReport, dryRun: 
   const rows = stmt<{ site_id: number; local_date: string; count: number }>(
     source,
     'SELECT site_id, local_date, count FROM bot_drops ORDER BY site_id, local_date',
-  ).all() as Array<{ site_id: number; local_date: string; count: number }>;
+  ).all();
   report.botDropRows = rows.length;
   if (dryRun || rows.length === 0) return;
   // The upsert REPLACES the count, so a resume re-run converges instead of doubling.
@@ -578,7 +566,7 @@ function importSettings(target: Db, source: Db, report: V1ImportReport, dryRun: 
   const rows = stmt<{ key: string; value: string | null }>(
     source,
     'SELECT key, value FROM settings ORDER BY key',
-  ).all() as Array<{ key: string; value: string | null }>;
+  ).all();
   const imported = rows.filter((row) => settingAllowed(row.key) && row.value !== null);
   report.settingsImported = imported.map((row) => row.key);
   report.settingsSkipped = rows.filter((row) => !settingAllowed(row.key)).map((row) => row.key);
@@ -603,13 +591,7 @@ function importDashboards(target: Db, source: Db, report: V1ImportReport, dryRun
   }>(
     source,
     'SELECT id, name, site_scope, layout, updated_at FROM dashboards WHERE id > ? ORDER BY id',
-  ).all(dryRun ? 0 : watermark(target, 'dashboards')) as Array<{
-    id: number;
-    name: string;
-    site_scope: string;
-    layout: string;
-    updated_at: number;
-  }>;
+  ).all(dryRun ? 0 : watermark(target, 'dashboards'));
   const last = rows.at(-1);
   if (last === undefined) return;
   const upgraded: Array<{ row: (typeof rows)[number]; layout: string }> = [];
@@ -754,7 +736,7 @@ function runSpotChecks(source: Db, target: Db, failures: string[]): void {
     source,
     `SELECT path, COUNT(*) AS n FROM events
 WHERE site_id = ? AND type = 'pageview' AND local_date BETWEEN ? AND ? GROUP BY path`,
-  ).all(site, range.from, range.to) as Array<{ path: string | null; n: number }>) {
+  ).all(site, range.from, range.to)) {
     const path = row.path === null ? null : cleanStoredPath(row.path);
     expectedPages.set(path, (expectedPages.get(path) ?? 0) + row.n);
   }
@@ -774,13 +756,13 @@ WHERE site_id = ? AND type = 'pageview' AND local_date BETWEEN ? AND ? GROUP BY 
   // 3 — a timeseries: visits per day. The bucket axis may be dense, so a
   // zero-valued row for a day the source has no sessions on is not a mismatch.
   const expectedDaily = new Map(
-    (
-      stmt<{ local_date: string; n: number }>(
-        source,
-        `SELECT local_date, COUNT(*) AS n FROM sessions
+    stmt<{ local_date: string; n: number }>(
+      source,
+      `SELECT local_date, COUNT(*) AS n FROM sessions
 WHERE site_id = ? AND local_date BETWEEN ? AND ? GROUP BY local_date`,
-      ).all(site, range.from, range.to) as Array<{ local_date: string; n: number }>
-    ).map((row) => [row.local_date, row.n]),
+    )
+      .all(site, range.from, range.to)
+      .map((row) => [row.local_date, row.n]),
   );
   for (const row of expectRows('daily')) {
     const expected = expectedDaily.get(row.bucket as string) ?? 0;
@@ -806,14 +788,14 @@ function runValidationGates(source: Db, target: Db): V1GateReport {
   }
   diffDayRows(
     'events per day',
-    stmt<GateRow>(source, GATE_EVENT_DAYS).all() as GateRow[],
-    stmt<GateRow>(target, GATE_EVENT_DAYS).all() as GateRow[],
+    stmt<GateRow>(source, GATE_EVENT_DAYS).all(),
+    stmt<GateRow>(target, GATE_EVENT_DAYS).all(),
     failures,
   );
   diffDayRows(
     'sessions per day',
-    stmt<GateRow>(source, GATE_SESSION_DAYS).all() as GateRow[],
-    stmt<GateRow>(target, GATE_SESSION_DAYS).all() as GateRow[],
+    stmt<GateRow>(source, GATE_SESSION_DAYS).all(),
+    stmt<GateRow>(target, GATE_SESSION_DAYS).all(),
     failures,
   );
   runSpotChecks(source, target, failures);

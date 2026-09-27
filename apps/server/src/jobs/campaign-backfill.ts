@@ -108,7 +108,7 @@ async function drain(db: Db, batchSize: number): Promise<CampaignBackfillResult>
     const update = stmt(db, updateRow(table));
     await inChunks(db, () => {
       const since = Number(getSetting(db, setting) ?? 0);
-      const rows = select.all(since, batchSize) as ChunkRow[];
+      const rows = select.all(since, batchSize);
       if (rows.length === 0) {
         deleteSetting(db, setting);
         return true;
@@ -118,7 +118,7 @@ async function drain(db: Db, batchSize: number): Promise<CampaignBackfillResult>
         let changed = false;
         for (const { field, column } of FIELDS) {
           const rawColumn = `${column}_raw` as keyof ChunkRow;
-          const current = row[column] as string | null;
+          const current = row[column];
           const storedRaw = row[rawColumn] as string | null;
           const base = storedRaw ?? current;
           if (base === null) {

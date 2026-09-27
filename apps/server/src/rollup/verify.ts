@@ -41,30 +41,30 @@ export function verifyRollupDay(db: Db, siteId: number, localDate: string): Roll
     out,
     'rollup_traffic_hour',
     ['local_hour'],
-    stmt<Row>(db, TRAFFIC_HOUR_SELECT).all(siteId, localDate) as Row[],
-    stmt<Row>(db, STORED_TRAFFIC).all(siteId, localDate) as Row[],
+    stmt<Row>(db, TRAFFIC_HOUR_SELECT).all(siteId, localDate),
+    stmt<Row>(db, STORED_TRAFFIC).all(siteId, localDate),
   );
 
-  const expectedDims = EVENT_DIM_SELECTS.flatMap(
-    ({ sql }) => stmt<Row>(db, sql).all(siteId, localDate) as Row[],
+  const expectedDims = EVENT_DIM_SELECTS.flatMap(({ sql }) =>
+    stmt<Row>(db, sql).all(siteId, localDate),
   );
   diff(
     out,
     'rollup_dim_day',
     ['dim_id', 'dim_value', 'dim_null'],
     expectedDims,
-    stmt<Row>(db, STORED_DIM_DAY).all(siteId, localDate) as Row[],
+    stmt<Row>(db, STORED_DIM_DAY).all(siteId, localDate),
   );
 
-  const expectedSessions = SESSION_DIM_SELECTS.flatMap(
-    ({ sql }) => stmt<Row>(db, sql).all(ENGAGEMENT_THRESHOLD_MS, siteId, localDate) as Row[],
+  const expectedSessions = SESSION_DIM_SELECTS.flatMap(({ sql }) =>
+    stmt<Row>(db, sql).all(ENGAGEMENT_THRESHOLD_MS, siteId, localDate),
   );
   diff(
     out,
     'rollup_sessions_day',
     ['dim_id', 'dim_value', 'dim_null'],
     expectedSessions,
-    stmt<Row>(db, STORED_SESSIONS_DAY).all(siteId, localDate) as Row[],
+    stmt<Row>(db, STORED_SESSIONS_DAY).all(siteId, localDate),
   );
 
   return out;

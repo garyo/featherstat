@@ -211,7 +211,7 @@ export async function importMatomo(
   // With --since the date bounds the scan instead of the watermark: sessions
   // upsert by deterministic id, so re-reading repairs visits Matomo mutated
   // in place after the previous run saw them.
-  for await (const batch of batches(
+  for await (const batch of batches<MatomoVisitRow>(
     source,
     visitsSql(hasSince, hasUntil, hasCampaign),
     'idvisit',
@@ -220,7 +220,7 @@ export async function importMatomo(
     batchSize,
   )) {
     const sessions: SessionRow[] = [];
-    for (const raw of batch.rows as unknown as MatomoVisitRow[]) {
+    for (const raw of batch.rows) {
       const target = targets.get(raw.idsite);
       const session =
         target === undefined ? null : mapVisit({ ...raw, idsite: target.id }, target.timezone);
@@ -244,7 +244,7 @@ export async function importMatomo(
 
   // -- actions → events -------------------------------------------------------
   const seqByVisit = new Map<number, number>();
-  for await (const batch of batches(
+  for await (const batch of batches<MatomoActionRow>(
     source,
     actionsSql(hasSince, hasUntil, hasCampaign),
     'idlink_va',
@@ -253,7 +253,7 @@ export async function importMatomo(
     batchSize,
   )) {
     const events: EventRow[] = [];
-    for (const raw of batch.rows as unknown as MatomoActionRow[]) {
+    for (const raw of batch.rows) {
       const target = targets.get(raw.idsite);
       const mapped =
         target === undefined ? null : mapAction({ ...raw, idsite: target.id }, target.timezone);
@@ -360,8 +360,14 @@ async function importSites(
   const created: NewSite[] = [];
   const problems: string[] = [];
 
-  for await (const batch of batches(source, SQL_SITES, 'idsite', 0, [], batchSize)) {
-    const rows = batch.rows as unknown as MatomoSiteRow[];
+  for await (const { rows } of batches<MatomoSiteRow>(
+    source,
+    SQL_SITES,
+    'idsite',
+    0,
+    [],
+    batchSize,
+  )) {
     const aliases = await siteAliases(
       source,
       rows.map((row) => row.idsite),
@@ -445,22 +451,26 @@ async function rebuildDirtyRollups(db: Db): Promise<number> {
 // Internals
 // ---------------------------------------------------------------------------
 
-/** Bounded keyset pagination: `WHERE id > cursor ORDER BY id LIMIT n`, repeated. */
-async function* batches(
+/**
+ * Bounded keyset pagination: `WHERE id > cursor ORDER BY id LIMIT n`, repeated.
+ * `Row` is the SELECT's column list: the source hands back untyped records, and
+ * the SQL each caller passes is the only thing that types them.
+ */
+async function* batches<Row extends object>(
   source: SourceQuery,
   sql: string,
-  idColumn: string,
+  idColumn: keyof Row & string,
   start: number,
   extraParams: readonly unknown[],
   batchSize: number,
-): AsyncGenerator<{ rows: Array<Record<string, unknown>>; last: number }> {
+): AsyncGenerator<{ rows: Row[]; last: number }> {
   let cursor = start;
   for (;;) {
     const rows = await source(sql, [cursor, ...extraParams, batchSize]);
     const lastRow = rows.at(-1);
     if (lastRow === undefined) return;
     const last = Number(lastRow[idColumn]);
-    yield { rows, last };
+    yield { rows: rows as unknown as Row[], last };
     if (rows.length < batchSize) return;
     cursor = last;
   }

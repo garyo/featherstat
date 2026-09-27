@@ -206,7 +206,7 @@ async function backfillSite(
  */
 async function clearOrphanDays(db: Db, siteId: number): Promise<void> {
   const horizon = rawHorizonTs(db) ?? Number.NEGATIVE_INFINITY;
-  const days = stmt<string>(db, SQL_ORPHAN_DAYS).pluck().all({ site: siteId }) as string[];
+  const days = stmt<string>(db, SQL_ORPHAN_DAYS).pluck().all({ site: siteId });
   for (const day of days) {
     if (Date.parse(`${day}T00:00:00Z`) - EARLIEST_DAY_START_MS <= horizon) continue;
     await new Promise((resolve) => setImmediate(resolve));

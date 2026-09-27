@@ -108,7 +108,7 @@ export async function runRetention(
     result.propDrops = stmt(db, SQL_DELETE_OLD_PROP_DROPS).run(cutoffDate).changes;
   });
 
-  const sites = stmt<RetentionSite>(db, SQL_SITES).all() as RetentionSite[];
+  const sites = stmt<RetentionSite>(db, SQL_SITES).all();
   let batches = 0;
   for (const site of sites) {
     const keepFrom = localClock(site.timezone, cutoff).date;
