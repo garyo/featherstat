@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
-import { openView } from '../pages.ts';
+import { stranger } from '../pages.ts';
+import { claimAccount, disableUser, inviteUser, logIn } from './accounts.ts';
 
 /**
  * Multi-user (docs/04 § 5), end to end: the admin invites a user with one
@@ -12,29 +13,11 @@ const USER_EMAIL = 'e2e-user@example.com';
 const USER_PASSWORD = 'e2e-user-password';
 
 test('an invited user sees and manages only their own site', async ({ page, browser }) => {
-  // --- admin: invite a user owning exactly the first seeded site ------------
-  await openView(page, { view: 'settings' });
-  await page.getByRole('button', { name: 'Users', exact: true }).click();
-  const usersCard = page.locator('.card').filter({ hasText: 'Invite user' });
-  await usersCard.getByLabel('Email').fill(USER_EMAIL);
-  await usersCard.locator('fieldset .check input[type=checkbox]').first().check();
-  const ownedSite = (
-    await usersCard.locator('fieldset .check').first().textContent()
-  )?.trim() as string;
-  await usersCard.getByRole('button', { name: 'Invite user' }).click();
-  const claimUrl = (await usersCard.locator('.secret code').textContent())?.trim() as string;
-  expect(claimUrl).toContain('/welcome/fsu_');
-
-  // --- invitee: claim the account in a fresh, sessionless context -----------
-  const userContext = await browser.newContext();
-  const userPage = await userContext.newPage();
-  await userPage.goto(claimUrl);
-  await userPage.getByLabel('Password', { exact: true }).fill(USER_PASSWORD);
-  await userPage.getByLabel('Confirm password').fill(USER_PASSWORD);
-  await userPage.getByRole('button', { name: 'Claim account' }).click();
+  const { claimUrl, site: ownedSite } = await inviteUser(page, USER_EMAIL);
 
   // The claim signs the user in and lands on the app.
-  await expect(userPage.locator('header.top')).toBeVisible();
+  const userPage = await stranger(browser);
+  await claimAccount(userPage, claimUrl, USER_PASSWORD);
 
   // The switcher offers "All sites" plus exactly the one owned site.
   const options = userPage.locator('header .site-switch').first().locator('option');
@@ -54,18 +37,9 @@ test('an invited user sees and manages only their own site', async ({ page, brow
 
   // And logging back in works with email + password.
   await userPage.getByRole('button', { name: 'Log out' }).click();
-  await userPage.getByLabel('Email').fill(USER_EMAIL);
-  await userPage.getByLabel('Password', { exact: true }).fill(USER_PASSWORD);
-  await userPage.getByRole('button', { name: 'Log in' }).click();
+  await logIn(userPage, USER_EMAIL, USER_PASSWORD);
   await expect(userPage.locator('header.top')).toBeVisible();
-  await userContext.close();
+  await userPage.context().close();
 
-  // --- cleanup: disable the user; the row leaves the active list ------------
-  await openView(page, { view: 'settings' });
-  await page.getByRole('button', { name: 'Users', exact: true }).click();
-  const row = page.locator('.prow').filter({ hasText: USER_EMAIL });
-  await expect(row).toHaveCount(1);
-  await row.getByRole('button', { name: 'Disable' }).click();
-  await row.getByRole('button', { name: /^Really disable/ }).click();
-  await expect(page.locator('.prow').filter({ hasText: USER_EMAIL })).toHaveCount(0);
+  await disableUser(page, USER_EMAIL);
 });

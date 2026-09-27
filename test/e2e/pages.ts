@@ -1,4 +1,4 @@
-import { expect, type Locator, type Page } from '@playwright/test';
+import { type Browser, expect, type Locator, type Page } from '@playwright/test';
 
 /**
  * The few helpers every spec wants, and nothing more. Not a page-object layer:
@@ -65,4 +65,14 @@ export const NONSENSE = /\[object |\bundefined\b|\bNaN\b|\bnull\b/;
 /** The visible text of the page, as a reader sees it. */
 export async function visibleText(page: Page): Promise<string> {
   return (await page.locator('body').innerText()).trim();
+}
+
+/**
+ * A browser with no session — someone opening a link they were sent. Said out
+ * loud because `browser.newContext()` inside a test inherits the project's
+ * `storageState`, which here is the admin's session.
+ */
+export async function stranger(browser: Browser): Promise<Page> {
+  const context = await browser.newContext({ storageState: { cookies: [], origins: [] } });
+  return context.newPage();
 }
