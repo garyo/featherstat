@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { event, openTestDb } from '../../test/rows.ts';
 import {
   type Db,
@@ -52,6 +52,24 @@ describe('runPropScrubs', () => {
     expect(result.rows).toBe(7);
     expect(propsOf()).toEqual(Array.from({ length: 7 }, () => null));
     expect(getSetting(db, 'prop_scrub:1:plan')).toBeUndefined();
+  });
+
+  it('bounds each transaction by rows examined, however sparse the key', async () => {
+    withWriteTransaction(db, () => {
+      insertEvents(db, [
+        ...Array.from({ length: 9 }, (_, i) => event({ seq: i + 1, props: '{"other":1}' })),
+        event({ seq: 10, props: '{"plan":"pro"}' }),
+      ]);
+      requestPropScrub(db, 1, 'plan');
+    });
+    const transaction = vi.spyOn(db, 'transaction');
+
+    expect(await runPropScrubs(db, { batchSize: 3 })).toEqual({ completed: 1, rows: 1 });
+
+    // Windows (0,3] (3,6] (6,9] (9,12], then the one that finds the walk done.
+    expect(transaction).toHaveBeenCalledTimes(5);
+    transaction.mockRestore();
+    expect(propsOf().at(-1)).toBeNull();
   });
 
   it('bumps the data epoch on completion — a history rewrite must expire every ETag', async () => {
