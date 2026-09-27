@@ -174,7 +174,7 @@ function buildServer(
       const response = await runBatch(
         expanded,
         resolveDerived(db, expanded),
-        resolveGoals(db, expanded),
+        resolveGoals(db, expanded, (siteId) => canReadSite(who, siteId)),
       );
       if ('refused' in response) return refusal(response.refused);
       // A token is never the admin: the instance-wide write counter stays

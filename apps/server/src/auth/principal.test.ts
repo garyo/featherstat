@@ -195,6 +195,48 @@ describe('token principals', () => {
     }
   });
 
+  it("answers another site's goal exactly like a nonexistent one", async () => {
+    const admin = await adminSession();
+    const created = await secured.app.request('/api/admin/goals?site=2', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        cookie: admin.cookie,
+        'x-csrf-token': admin.csrf,
+      },
+      body: JSON.stringify({
+        name: 'Signed up',
+        filters: [{ dim: 'path', op: 'eq', value: '/signup' }],
+      }),
+    });
+    expect(created.status).toBe(201);
+    const { id } = (await created.json()) as { id: number };
+
+    const errorFor = async (token: string, goalId: number): Promise<unknown> => {
+      const res = await bearerRequest(token, '/api/query', {
+        method: 'POST',
+        body: JSON.stringify({
+          site: 1,
+          range: { preset: '7d' },
+          queries: [{ id: 'g', metrics: [`goal:${goalId}:conversions`] }],
+        }),
+      });
+      return ((await res.json()) as { results: { g: unknown } }).results.g;
+    };
+    const scoped = await mintToken([1]);
+    expect(await errorFor(scoped.token, 9999)).toMatchObject({
+      error: { message: 'unknown goal 9999' },
+    });
+    expect(await errorFor(scoped.token, id)).toMatchObject({
+      error: { message: `unknown goal ${id}` },
+    });
+    // A principal that can read site 2 is told the truth about it.
+    const wide = await mintToken([1, 2]);
+    expect(await errorFor(wide.token, id)).toMatchObject({
+      error: { message: expect.stringContaining('another site') },
+    });
+  });
+
   it("never sees the instance-wide data version — other sites' traffic moves it", async () => {
     const hit = await secured.app.request(
       '/matomo.php?idsite=2&rec=1&send_image=0&url=https%3A%2F%2Ftwo.test%2F',

@@ -366,7 +366,9 @@ batch itself still succeeds, and never returns wrong numbers.
     (`entry_path`/`exit_path`) refuse too — goal statements aggregate the
     events table. All refusals, plus an unknown goal id, a goal of a site
     outside the request's scope, and an unreadable stored row, are honest
-    per-query `{error}` entries, never a 500.
+    per-query `{error}` entries, never a 500. A goal on a site the principal
+    cannot read is an unknown goal id, word for word — "another site" would
+    confirm it exists.
   - Goal metrics always route to **raw rows** (the planner treats any
     non-built-in metric as raw), and definitions resolve on the main thread
     and hash into the ETag — editing a goal expires every cached answer that
