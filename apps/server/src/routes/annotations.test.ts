@@ -1,4 +1,4 @@
-import type { AnnotationInfo, QueryResponse } from '@featherstat/shared';
+import { type AnnotationInfo, type QueryResponse, QueryResponseSchema } from '@featherstat/shared';
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { event, openTestDb, session, syncRollups, T0 } from '../../test/rows.ts';
@@ -190,9 +190,10 @@ describe('delivery on the query batch', () => {
     const plain = (await (await query(QUERY_BODY)).json()) as QueryResponse;
     expect(plain.meta.annotations).toBeUndefined();
 
-    const opted = (await (
-      await query({ ...QUERY_BODY, annotations: true })
-    ).json()) as QueryResponse;
+    const body: unknown = await (await query({ ...QUERY_BODY, annotations: true })).json();
+    // Through the schema the web reads it with, and back unchanged.
+    const opted = QueryResponseSchema.parse(body);
+    expect(opted).toEqual(body);
     expect(opted.meta.annotations).toMatchObject([{ ts: NOTE_TS, text: 'deployed', siteId: 1 }]);
   });
 
