@@ -69,7 +69,15 @@ describe('every guard binds', () => {
  * a CI ceiling somebody has to keep true.
  */
 const GUARDABLE = /(\.test\.ts|\.guard\.ts|bench[^/]*\.ts)$/;
-const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', 'fixtures', '.vite', 'brand']);
+const SKIP_DIRS = new Set([
+  'node_modules',
+  'dist',
+  '.git',
+  'fixtures',
+  '.vite',
+  'brand',
+  '.claude',
+]);
 
 /**
  * A named numeric ceiling — the shape every budget in this repo takes. Deliberately
