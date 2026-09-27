@@ -1,4 +1,4 @@
-import { MAX_COLLECT_HITS } from '@featherstat/shared';
+import { MAX_COLLECT_HITS, MAX_URL_CHARS } from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
 import { parseCollectRequest } from './native.ts';
 
@@ -151,6 +151,16 @@ describe('never rejects, only records less (invariant 4)', () => {
     const [hit] = one({ type: 'pageview', url: 'https://a.test/', title: 'x'.repeat(513) });
     expect(hit?.type).toBe('pageview');
     expect(hit?.title).toBeUndefined();
+  });
+
+  // An ad click with a long query used to arrive as a page view with no URL
+  // at all — no path, and the campaign it came from gone with it.
+  it('cuts an over-long URL to fit, keeping its campaign params', () => {
+    const long = `https://a.test/landing?ref=${'x'.repeat(3_000)}&utm_source=newsletter`;
+    const [hit] = one({ type: 'pageview', url: long, referrer: long });
+    expect(hit?.url).toBe('https://a.test/landing?utm_source=newsletter');
+    expect(hit?.referrer?.length).toBeLessThanOrEqual(MAX_URL_CHARS);
+    expect(hit?.referrer?.startsWith('https://a.test/landing?')).toBe(true);
   });
 
   it('truncates an oversized batch instead of refusing it', () => {

@@ -7,6 +7,7 @@ import {
   HitSchema,
   MAX_COLLECT_HITS,
 } from '@featherstat/shared';
+import { boundUrl } from '../pipeline/page-url.ts';
 
 /**
  * Normalize a `POST /api/collect` body into hits (docs/04 § 2).
@@ -59,10 +60,10 @@ function parseHit(site: number, entry: unknown): Hit | undefined {
   const hit = HitSchema.safeParse({
     siteId: site,
     type: raw.type,
-    url: stripFragment(raw.url),
+    url: receivedUrl(stripFragment(raw.url)),
     title: raw.title,
-    referrer: raw.referrer,
-    targetUrl: raw.targetUrl,
+    referrer: receivedUrl(raw.referrer),
+    targetUrl: receivedUrl(raw.targetUrl),
     event,
     screen: raw.screen,
     lang: raw.lang,
@@ -81,6 +82,11 @@ function parseEvent(raw: CollectHit): Hit['event'] {
     value: raw.value,
   });
   return event.success ? event.data : undefined;
+}
+
+/** An over-long URL is cut to fit rather than lost (`boundUrl`). */
+function receivedUrl(url: string | undefined): string | undefined {
+  return url === undefined ? undefined : boundUrl(url);
 }
 
 /** Query string is part of the page identity; the fragment never is (docs/04 § 1). */

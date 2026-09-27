@@ -1,4 +1,4 @@
-import type { CampaignField } from '@featherstat/shared';
+import { type CampaignField, MAX_URL_CHARS } from '@featherstat/shared';
 
 /**
  * Page identity vs. tracking identifiers (docs/03 § Page identity).
@@ -115,6 +115,29 @@ function paramName(pair: string): string {
   } catch {
     return name;
   }
+}
+
+/**
+ * A received URL (fragment already dropped) cut to `max` characters, keeping
+ * what a longer one is most worth: the tracking params go first, so a
+ * campaign-tagged link whose own query ran long still attributes, and the
+ * page's other params follow in order while they fit — a pair that does not
+ * fit is left out whole, never cut mid-value. A URL whose path alone is too
+ * long is simply sliced; there is no query left to save.
+ */
+export function boundUrl(raw: string, max: number = MAX_URL_CHARS): string {
+  if (raw.length <= max) return raw;
+  const cut = raw.indexOf('?');
+  if (cut === -1 || cut >= max) return raw.slice(0, max);
+  const pairs = raw.slice(cut + 1).split('&');
+  const tracking = pairs.filter((pair) => isTrackingParam(paramName(pair)));
+  const rest = pairs.filter((pair) => !isTrackingParam(paramName(pair)));
+  let bounded = raw.slice(0, cut);
+  for (const pair of [...tracking, ...rest]) {
+    if (pair === '' || bounded.length + 1 + pair.length > max) continue;
+    bounded += (bounded.length === cut ? '?' : '&') + pair;
+  }
+  return bounded;
 }
 
 /** The stored page identity of a parsed URL: pathname + cleaned query. */

@@ -20,8 +20,8 @@ import type { Hit } from '@featherstat/shared';
 
 export const CORPUS_DIR = fileURLToPath(new URL('./fixtures/matomo/', import.meta.url));
 
-/** Raised when cases are added; never lowered (invariant 6). 23 cases as of 2026-09-27. */
-export const MIN_CORPUS_CASES = 23;
+/** Raised when cases are added; never lowered (invariant 6). 24 cases as of 2026-09-27. */
+export const MIN_CORPUS_CASES = 24;
 
 export interface CorpusCase {
   name: string;

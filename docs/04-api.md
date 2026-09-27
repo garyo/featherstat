@@ -16,7 +16,7 @@ ignored, never errors — a tracker must be impossible to break from the tag sid
 | --- | --- | --- |
 | `idsite` | site id | `site_id` (unknown id → 204, dropped; never 4xx to a browser beacon) |
 | `rec=1` | "record this" | required, else ignored |
-| `url` | page URL | split → `hostname`, `path` (query string kept minus the closed tracking-param list, fragment dropped — docs/03 § Page identity) |
+| `url` | page URL | split → `hostname`, `path` (query string kept minus the closed tracking-param list, fragment dropped — docs/03 § Page identity). Past 2048 chars (`MAX_URL_CHARS`) it is **cut, not dropped**: tracking params first, so an ad click with a long query still attributes, then the page's own params while they fit, never a pair cut mid-value. `urlref`, `link` and `download` are bounded the same way |
 | `action_name` | page title | `title`; with no `url` it still records a pageview (Matomo title-only actions) |
 | `urlref` | referrer | attribution pipeline |
 | `e_c`,`e_a`,`e_n`,`e_v` | event cat/action/name/value | `type='event'` + fields |
@@ -202,7 +202,9 @@ Props are a native-collector feature only (§ 2).
   declare `visitorId`, `uid` or `clientIpOverride`, because identity and geo
   are the server's to decide (invariant 3).
 
-- **Degradation is per hit, never per request** (invariant 4). A malformed
+- **Degradation is per hit, never per request** (invariant 4). A URL
+  field past `MAX_URL_CHARS` is cut to fit exactly as on matomo.php (§ 1);
+  only past `MAX_RECEIVED_URL_CHARS` (16 KiB) is the field itself lost. A malformed
   entry is dropped and the rest of its batch recorded; an optional field the
   schema rejects costs itself and not the hit carrying it; a batch longer than
   `MAX_COLLECT_HITS` (50) is truncated rather than refused. The endpoint

@@ -1,5 +1,7 @@
+import { MAX_URL_CHARS } from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
 import {
+  boundUrl,
   CAMPAIGN_PARAMS,
   cleanPageUrl,
   cleanSearch,
@@ -146,5 +148,32 @@ describe('synthesizedCampaign', () => {
       utm_medium_raw: null,
       utm_campaign_raw: null,
     });
+  });
+});
+
+describe('boundUrl (an over-long URL is cut, never dropped)', () => {
+  const PAGE = 'https://pcons.org/search';
+
+  it('returns a URL that fits untouched', () => {
+    const url = `${PAGE}?q=owls&utm_source=hn`;
+    expect(boundUrl(url)).toBe(url);
+  });
+
+  it('keeps the attribution params first, then the page params that still fit', () => {
+    const url = `${PAGE}?q=${'o'.repeat(3_000)}&page=2&utm_source=hn&pk_cpn=launch`;
+    const bounded = boundUrl(url);
+    expect(bounded).toBe(`${PAGE}?utm_source=hn&pk_cpn=launch&page=2`);
+    expect(bounded.length).toBeLessThanOrEqual(MAX_URL_CHARS);
+  });
+
+  it('fills the room it has, and never cuts a pair mid-value', () => {
+    const fits = `a=${'x'.repeat(40)}`;
+    const bounded = boundUrl(`${PAGE}?${fits}&b=${'y'.repeat(80)}&c=1`, PAGE.length + 50);
+    expect(bounded).toBe(`${PAGE}?${fits}&c=1`);
+  });
+
+  it('slices a URL whose path alone is too long', () => {
+    const url = `https://pcons.org/${'p'.repeat(3_000)}?utm_source=hn`;
+    expect(boundUrl(url)).toBe(url.slice(0, MAX_URL_CHARS));
   });
 });
