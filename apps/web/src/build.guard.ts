@@ -72,7 +72,12 @@ function vitePath(): string {
 
 /** Chunk name prefix → gzipped ceiling. Every one must exist in the build. */
 export const CHUNK_MAX_GZIP: Readonly<Record<string, number>> = {
-  editor: 6_656,
+  /**
+   * Raised 6_656 → 7_168 on 2026-09-27 for the review fixes: AddWidget checks
+   * its limit inline and names vizzes in words, and the editor gained keyboard
+   * reordering and change tracking for its discard guards (~6.9 KB measured).
+   */
+  editor: 7_168,
   /**
    * Raised 6_656 → 20_480 on 2026-08-02, when Settings grew from four cards to
    * the whole v2 admin surface (tokens, viewers, segments, derived metrics,
