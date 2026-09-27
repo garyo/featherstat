@@ -1,6 +1,12 @@
 import type { Hit, HitContext } from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
-import { clientIp, createTrackRoutes, MAX_TRACK_BODY_BYTES, trustedProxyHops } from './track.ts';
+import {
+  clientIp,
+  createTrackRoutes,
+  MAX_TRACK_BODY_BYTES,
+  trustedProxyHops,
+  trustsRealIp,
+} from './track.ts';
 
 const QUERY = '/matomo.php?idsite=1&rec=1&url=https%3A%2F%2Fexample.com%2F';
 
@@ -24,11 +30,11 @@ describe('client IP resolution (feeds the visitor hash — invariant 3 material)
     expect(contexts[0]?.ip).toBe('203.0.113.9');
   });
 
-  it('falls back to x-real-ip when x-forwarded-for is absent, then to the socket/empty', async () => {
+  it('ignores a client-sent x-real-ip unless configured, then falls back to the socket/empty', async () => {
     const { app, contexts } = capture();
     await app.request(QUERY, { headers: { 'x-real-ip': '198.51.100.2' } });
     await app.request(QUERY);
-    expect(contexts[0]?.ip).toBe('198.51.100.2');
+    expect(contexts[0]?.ip).toBe('');
     expect(contexts[1]?.ip).toBe('');
   });
 
@@ -41,6 +47,18 @@ describe('client IP resolution (feeds the visitor hash — invariant 3 material)
     const c = fakeContext({ 'x-forwarded-for': 'fake, 203.0.113.9, 10.0.0.7' });
     expect(clientIp(c, 1)).toBe('10.0.0.7');
     expect(clientIp(c, 2)).toBe('203.0.113.9');
+  });
+
+  it('reads x-real-ip only when TRUST_X_REAL_IP says a proxy sets it, and never over XFF', () => {
+    const real = fakeContext({ 'x-real-ip': '198.51.100.2' });
+    expect(clientIp(real, 1, false)).toBe('');
+    expect(clientIp(real, 1, true)).toBe('198.51.100.2');
+    expect(clientIp(real, 0, true)).toBe(''); // no proxy, no forwarded header of any kind
+    const both = fakeContext({ 'x-forwarded-for': '203.0.113.9', 'x-real-ip': '6.6.6.7' });
+    expect(clientIp(both, 1, true)).toBe('203.0.113.9');
+    expect(trustsRealIp({})).toBe(false);
+    expect(trustsRealIp({ TRUST_X_REAL_IP: '1' })).toBe(true);
+    expect(trustsRealIp({ TRUST_X_REAL_IP: 'yes' })).toBe(false);
   });
 
   it('never trusts a header when fewer entries than hops arrived, or with hops=0', () => {

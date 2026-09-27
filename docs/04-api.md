@@ -989,7 +989,9 @@ one guess per address per minute. The claim routes use the same shape with no
 accounts (10 dead links per address, 60 across the door). The client
 address comes from the `TRUSTED_PROXY_HOPS`-th `X-Forwarded-For` entry from
 the end (default 1 — one trusted proxy); with `0`, forwarded headers are
-ignored entirely.
+ignored entirely. `X-Real-IP` is a single client-sendable value, so it is
+read only with `TRUST_X_REAL_IP=1` (a proxy that sets it), and only when no
+`X-Forwarded-For` arrived.
 
 ## 6. MCP — analysts hook up their LLM
 

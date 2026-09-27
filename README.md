@@ -153,8 +153,15 @@ One container: SPA + query/admin API + tracking endpoints, SQLite on a volume.
 ```bash
 docker build -t analytics .
 docker run -d --name analytics -p 8080:8080 -v analytics-data:/data \
-  -e METRICS_TOKEN=change-me analytics
+  -e TRUSTED_PROXY_HOPS=0 -e METRICS_TOKEN=change-me analytics
 ```
+
+`TRUSTED_PROXY_HOPS=0` is right **only** for this bare `docker run`, with
+nothing in front of the container. The image defaults to `1` for the Traefik
+setup below; left at `1` with no proxy, the last `X-Forwarded-For` entry a
+client sends is taken as its address — every visitor hash, login and claim
+rate limit then keys on whatever the client typed. Behind a proxy, set it to
+the number of proxies instead.
 
 First boot opens the setup screen: choose the admin password and enter the
 **setup token printed in the container log** (`docker logs analytics`) — proof
@@ -166,6 +173,7 @@ Tracking endpoints and `/healthz` are public, everything else needs the session.
 | `PORT` | `8080` | Listen port |
 | `DB_PATH` | `/data/analytics.db` | SQLite file (put it on the volume) |
 | `TRUSTED_PROXY_HOPS` | `1` | Reverse proxies in front (each appends one `X-Forwarded-For` entry). `1` fits the Traefik setup below; `0` = no proxy, forwarded headers are ignored |
+| `TRUST_X_REAL_IP` | unset | `1` = read `X-Real-IP` when a request carries no `X-Forwarded-For` — only if your proxy sets it (nginx `proxy_set_header X-Real-IP`); otherwise any client can send it |
 | `GEOIP_MMDB_PATH` | `/data/dbip-city-lite.mmdb` | GeoIP database the refresh job maintains |
 | `GEOIP_AUTO` | unset | `1` = download the GeoIP db when missing (a few hundred MB) |
 | `METRICS_TOKEN` | unset | Bearer token for `/metrics`; unset = endpoint is a 404 |
