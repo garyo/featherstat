@@ -58,5 +58,6 @@ test('a segment saved from the filter editor becomes usable on a dashboard', asy
   const seg = page.locator('.prow').filter({ hasText: SEGMENT_NAME });
   await expect(seg).toHaveCount(1);
   await seg.getByRole('button', { name: 'Delete' }).click();
+  await seg.getByRole('button', { name: /^Really delete/ }).click();
   await expect(page.locator('.prow').filter({ hasText: SEGMENT_NAME })).toHaveCount(0);
 });

@@ -66,5 +66,6 @@ test('an invited user sees and manages only their own site', async ({ page, brow
   const row = page.locator('.prow').filter({ hasText: USER_EMAIL });
   await expect(row).toHaveCount(1);
   await row.getByRole('button', { name: 'Disable' }).click();
+  await row.getByRole('button', { name: /^Really disable/ }).click();
   await expect(page.locator('.prow').filter({ hasText: USER_EMAIL })).toHaveCount(0);
 });
