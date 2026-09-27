@@ -48,7 +48,9 @@ export function createTrackRoutes(sink: HitSink): Hono {
       query: new URL(c.req.url).searchParams,
       body,
     });
-    if (hits.length > 0) sink(hits, hitContext(c));
+    // Hono answers HEAD from the GET route. A HEAD is a probe — an uptime check,
+    // a link unfurler — never a beacon: it gets the GET's answer and records nothing.
+    if (hits.length > 0 && c.req.method !== 'HEAD') sink(hits, hitContext(c));
     return sendImage ? c.body(TRACKING_GIF, 200, GIF_HEADERS) : c.body(null, 204, EMPTY_HEADERS);
   });
 

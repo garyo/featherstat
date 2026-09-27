@@ -94,6 +94,16 @@ describe('responses', () => {
     expect(empty.headers.get('cache-control')).toBe('no-store');
   });
 
+  it('answers a HEAD probe like the GET it mirrors, and records nothing', async () => {
+    const { app, batches } = capture();
+    for (const path of [QUERY, `${QUERY}&send_image=0`, QUERY.replace('matomo', 'piwik')]) {
+      const res = await app.request(path, { method: 'HEAD' });
+      expect(res.status, path).toBe(path.includes('send_image=0') ? 204 : 200);
+      expect(await res.text(), path).toBe('');
+    }
+    expect(batches).toHaveLength(0);
+  });
+
   it('never calls the sink when no hit was understood', async () => {
     const { app, batches } = capture();
     const res = await app.request('/matomo.php?idsite=1&url=https%3A%2F%2Fexample.com%2F'); // no rec=1

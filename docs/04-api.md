@@ -35,6 +35,10 @@ ignored, never errors — a tracker must be impossible to break from the tag sid
 Also honored: `POST` bodies in both form-encoded and Matomo's JSON bulk format
 (`{"requests": ["?idsite=1&…", …]}`), because `sendBeacon` and SDKs use them.
 
+A `HEAD` gets the answer its `GET` would, and records nothing: no beacon is
+ever sent as `HEAD`, so one is a probe — an uptime check, a link unfurler —
+and counting it would book a page view for a request nobody's browser made.
+
 Semantics: respond immediately after normalization; enrichment and storage are
 asynchronous (see 02). Any parse failure inside a hit degrades to "record what
 was understood" — beacons are fire-and-forget and must never bounce.
