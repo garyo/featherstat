@@ -45,7 +45,7 @@ export const RENDERINGS: readonly Rendering[] = [
   },
   {
     what: 'the modal overlay',
-    marks: ['class="modal"', 'class="back"'],
+    marks: ['showModal('],
     owners: ['lib/components/Modal.svelte'],
     instead: 'render <Modal> and pass it children',
   },

@@ -31,13 +31,14 @@ let { admin, store, layout, onclose }: Props = $props();
 interface MintedLink {
   token: string;
   url: string;
+  /** Copied at least once — a link that never was is lost when the dialog closes. */
+  copied: boolean;
 }
 
 let links = $state<MintedLink[]>([]);
 let busy = $state(false);
 let error = $state<string | undefined>(undefined);
 let revoked = $state<number | undefined>(undefined);
-let copied = $state<string | undefined>(undefined);
 /** Revoking is destructive and unenumerable — the armed button explains it first. */
 let confirmRevoke = $state(false);
 
@@ -48,7 +49,7 @@ async function mint(): Promise<void> {
   try {
     const id = await dashboardId();
     const { token } = await admin.createShareLink(id);
-    links = [{ token, url: shareLink(window.location.origin, token) }, ...links];
+    links = [{ token, url: shareLink(window.location.origin, token), copied: false }, ...links];
   } catch (failure) {
     error = failure instanceof Error ? failure.message : 'Creating the link failed — try again.';
   } finally {
@@ -81,20 +82,27 @@ async function dashboardId(): Promise<number> {
   return created;
 }
 
+/** A link is shown once: closing before it was copied loses it for good. */
+function mayClose(): boolean {
+  return (
+    links.every((link) => link.copied) ||
+    window.confirm('Close without copying the new share link? It cannot be shown again.')
+  );
+}
+
 async function copy(link: MintedLink): Promise<void> {
   try {
     await navigator.clipboard.writeText(link.url);
-    copied = link.token;
+    link.copied = true;
   } catch {
     // Clipboard needs a secure context (plain-http deploys reject) — say so
     // rather than failing silently; the link is selectable in the field.
-    copied = undefined;
     error = 'Copying failed — select the link and copy it manually.';
   }
 }
 </script>
 
-<Modal title="Share this dashboard" {onclose}>
+<Modal title="Share this dashboard" {onclose} onrequestclose={mayClose}>
   <p class="widget-note">
     A share link opens this dashboard read-only, without a login. It answers only this
     dashboard's own queries — never the rest of your data — and shows no live updates.
@@ -111,7 +119,7 @@ async function copy(link: MintedLink): Promise<void> {
     <div class="link">
       <input class="url" readonly value={link.url} aria-label="Share link" />
       <button class="btn" type="button" onclick={() => void copy(link)}>
-        {copied === link.token ? 'Copied ✓' : 'Copy'}
+        {link.copied ? 'Copied ✓' : 'Copy'}
       </button>
     </div>
   {:else}

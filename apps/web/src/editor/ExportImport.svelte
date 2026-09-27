@@ -19,7 +19,14 @@ let { draft, onapply, onclose }: Props = $props();
 // A snapshot at open is the point: applying re-opens from the applied draft.
 // svelte-ignore state_referenced_locally
 let text = $state(exportJson(draft));
+// svelte-ignore state_referenced_locally
+const exported = exportJson(draft);
 let errors = $state<string[]>([]);
+
+/** Pasted JSON that was never applied is lost on close; ask first. */
+function mayClose(): boolean {
+  return text === exported || window.confirm('Discard the JSON you have not applied?');
+}
 
 function apply(): void {
   const parsed = parseDashboardJson(text);
@@ -32,7 +39,7 @@ function apply(): void {
 }
 </script>
 
-<Modal title="Export / import JSON" {onclose}>
+<Modal title="Export / import JSON" {onclose} onrequestclose={mayClose}>
   <div class="form">
     <p class="hint">
       This dashboard as JSON — copy it out, or paste a dashboard in and apply it to the draft.
@@ -47,7 +54,7 @@ function apply(): void {
       </ul>
     {/if}
     <div class="actions">
-      <button class="btn" type="button" onclick={onclose}>Close</button>
+      <button class="btn" type="button" onclick={() => mayClose() && onclose()}>Close</button>
       <button class="btn primary" type="button" onclick={apply}>Apply to draft</button>
     </div>
   </div>

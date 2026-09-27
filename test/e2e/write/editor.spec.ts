@@ -17,7 +17,7 @@ test('the breakdown picker offers real dimension names', async ({ page }) => {
   await page.getByRole('button', { name: 'Customize' }).click();
   await page.getByRole('button', { name: 'Add widget' }).click();
 
-  const breakdown = page.locator('[role=dialog]').getByLabel('Breakdown');
+  const breakdown = page.locator('dialog').getByLabel('Breakdown');
   await expect(breakdown.locator('option')).toContainText([
     '(none)',
     'Page',
@@ -30,7 +30,7 @@ test('the breakdown picker offers real dimension names', async ({ page }) => {
   // 26 dimensions plus "(none)": the union bug offered three entries in total.
   await expect(breakdown.locator('option')).toHaveCount(27);
 
-  await page.locator('[role=dialog]').getByRole('button', { name: 'Close' }).click();
+  await page.locator('dialog').getByRole('button', { name: 'Close' }).click();
 });
 
 test('a widget can be added, survives a reload, and can be removed', async ({ page }) => {
@@ -39,7 +39,7 @@ test('a widget can be added, survives a reload, and can be removed', async ({ pa
   await page.getByRole('button', { name: 'Customize' }).click();
   await page.getByRole('button', { name: 'Add widget' }).click();
 
-  const dialog = page.locator('[role=dialog]');
+  const dialog = page.locator('dialog');
   await dialog.getByLabel('Visualization').selectOption('bar-list');
   // By role, not by label: the Breakdown select's accessible name contains
   // "Title" too, since one of its options is the Title dimension.
@@ -47,7 +47,7 @@ test('a widget can be added, survives a reload, and can be removed', async ({ pa
   await dialog.getByRole('checkbox', { name: 'Visits', exact: true }).check();
   await dialog.getByLabel('Breakdown').selectOption('ref_type');
   await dialog.getByRole('button', { name: 'Add widget' }).click();
-  await expect(page.locator('[role=dialog]')).toHaveCount(0);
+  await expect(page.locator('dialog')).toHaveCount(0);
 
   const added = card(page, WIDGET_TITLE);
   await expect(added).toBeVisible();
@@ -65,7 +65,7 @@ test('a widget can be added, survives a reload, and can be removed', async ({ pa
   // copy itself has to go, or the next run opens a dashboard this one made and
   // the button it looks for reads "Edit" instead of "Customize".
   await page.getByLabel('Dashboard').selectOption({ label: 'Manage dashboards…' });
-  const manage = page.locator('[role=dialog]');
+  const manage = page.locator('dialog');
   // Only a stored dashboard offers Delete; the built-ins offer Open alone. So
   // this finds the copy without depending on what it got named.
   const remove = manage
