@@ -1,5 +1,7 @@
 <script lang="ts">
 import type { WidgetSpec } from '@featherstat/shared';
+import { tick } from 'svelte';
+import { keyStep } from '../lib/keys.ts';
 import type { GridEnv, WidgetData } from '../widgets/types.ts';
 import WidgetGrid from '../widgets/WidgetGrid.svelte';
 import { dropIndex, type Rect } from './drag.ts';
@@ -11,7 +13,8 @@ import { allowedWidths } from './model.ts';
  * itself is never re-implemented here (CLAUDE.md invariant 7). Drag-reorder is
  * native pointer events + CSS transforms (docs/05): rects are measured once at
  * pointerdown, the grabbed card follows via transform, the drop target only
- * changes a class — nothing reflows until the drop commits the new order.
+ * changes a class — nothing reflows until the drop commits the new order. The
+ * handle also moves its card with the arrow keys, announcing where it landed.
  */
 interface Props {
   grid: readonly WidgetSpec[];
@@ -54,6 +57,21 @@ function moveDrag(event: PointerEvent): void {
   dragTo = dropIndex(rects, event.clientX, event.clientY, dragFrom);
 }
 
+/** What the last keyboard move did, for the live region. */
+let announcement = $state('');
+
+async function keyMove(event: KeyboardEvent, spec: WidgetSpec, index: number): Promise<void> {
+  const to = keyStep(event.key, index, grid.length);
+  if (to === undefined) return;
+  event.preventDefault();
+  if (to === index) return;
+  onreorder(index, to);
+  announcement = `${spec.title ?? spec.viz} moved to position ${to + 1} of ${grid.length}`;
+  // The keyed card moved in the DOM, and a moved node loses focus.
+  await tick();
+  gridEl?.querySelectorAll<HTMLElement>('.drag')[to]?.focus();
+}
+
 function endDrag(): void {
   if (dragFrom < 0) return;
   const from = dragFrom;
@@ -78,8 +96,10 @@ function endDrag(): void {
         <button
           class="tool drag"
           type="button"
-          title="Drag to reorder"
+          title="Drag to reorder, or use the arrow keys"
+          aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown Home End"
           aria-label="Reorder {spec.title ?? spec.viz}"
+          onkeydown={(event) => void keyMove(event, spec, index)}
           onpointerdown={(event) => startDrag(event, index)}
           onpointermove={moveDrag}
           onpointerup={endDrag}
@@ -112,6 +132,7 @@ function endDrag(): void {
     </div>
   {/snippet}
 </WidgetGrid>
+<p class="sr-only" aria-live="polite">{announcement}</p>
 
 <style>
   .ew {

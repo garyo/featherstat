@@ -1,6 +1,8 @@
 <script lang="ts">
 import { elapsedThrough } from '@featherstat/shared';
+import { keyStep } from '../lib/keys.ts';
 import { resultAxes, sharedKeys } from './axis.ts';
+import DataTable from './DataTable.svelte';
 import { bucketLabel, bucketTitle, exactNumber, metricLabel } from './format.ts';
 import { num, seriesOf } from './series.ts';
 import { sliceOf, type WidgetProps } from './types.ts';
@@ -105,6 +107,26 @@ function onPointerMove(event: PointerEvent): void {
 
 const clamp = (value: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, value));
 
+/** The keyboard's crosshair: arrows step a bucket, Home/End jump to the ends. */
+function onKeydown(event: KeyboardEvent): void {
+  const next = keyStep(event.key, hover ?? points.length - 1, points.length);
+  if (next === undefined) return;
+  event.preventDefault();
+  hover = next;
+}
+
+const title = $derived(spec.title ?? metrics.map((m) => metricLabel(m)).join(' and '));
+
+/** One bucket as a sentence — what the keyboard's crosshair announces. */
+function pointText(i: number): string {
+  const point = points[i];
+  if (point === undefined) return '';
+  const values = metrics.map(
+    (metric) => `${exactNumber(num(point.values[metric]))} ${metricLabel(metric).toLowerCase()}`,
+  );
+  return `${bucketTitle(point.bucket)}: ${values.join(', ')}`;
+}
+
 const hoverPoint = $derived(hover === undefined ? undefined : points[hover]);
 
 // Measured, so wide values clamp correctly and the flip below knows its height.
@@ -149,13 +171,25 @@ const tipPos = $derived.by(() => {
   {:else if points.length === 0}
     <p class="widget-note">No data in this range.</p>
   {:else if geom !== undefined}
+    <!-- Focusable, stepping bucket by bucket (docs/05 § Accessibility: every
+         mark reachable, with the same tooltip a pointer gets); the exact
+         values are also in the table below it. -->
     <svg
       bind:this={svgEl}
       {width}
       height={HEIGHT}
       viewBox="0 0 {width} {HEIGHT}"
-      role="img"
-      aria-label="{spec.title ?? metrics.map((m) => metricLabel(m)).join(' and ')}, per bucket"
+      class="plot"
+      role="slider"
+      tabindex="0"
+      aria-label="{title}, per bucket"
+      aria-valuemin={0}
+      aria-valuemax={geom.n - 1}
+      aria-valuenow={hover ?? geom.n - 1}
+      aria-valuetext={pointText(hover ?? geom.n - 1)}
+      onkeydown={onKeydown}
+      onfocus={() => (hover ??= geom === undefined ? undefined : geom.n - 1)}
+      onblur={() => (hover = undefined)}
     >
       {#each geom.ticks as tick (tick)}
         <line
@@ -235,8 +269,28 @@ const tipPos = $derived.by(() => {
     {/if}
   {/if}
 </div>
+{#if points.length > 0}
+  <DataTable
+    caption="{title} — exact values per bucket"
+    head={['Bucket', ...metrics.map((metric) => metricLabel(metric)), ...(noted.size > 0 ? ['Notes'] : [])]}
+    rows={points.map((point, i) => ({
+      key: point.bucket,
+      label: bucketTitle(point.bucket),
+      cells: [
+        ...metrics.map((metric) => exactNumber(num(point.values[metric]))),
+        ...(noted.size > 0 ? [(noted.get(i) ?? []).join('; ')] : []),
+      ],
+    }))}
+  />
+{/if}
 
 <style>
+  .plot:focus-visible {
+    outline: 2px solid var(--s1);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
   .gridline {
     stroke: var(--grid);
     stroke-width: 1;

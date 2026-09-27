@@ -103,6 +103,12 @@ export const RENDERINGS: readonly Rendering[] = [
     owners: ['widgets/VisitorTally.svelte'],
     instead: 'render <VisitorTally>, which a page arranges but never re-implements',
   },
+  {
+    what: "a chart's visually-hidden table of its values",
+    marks: ['class="sr-only"', '<table'],
+    owners: ['widgets/DataTable.svelte'],
+    instead: 'render <DataTable> with the rows the chart draws',
+  },
 ];
 
 /** The guard is worth exactly what it reads; below this the walk broke. */

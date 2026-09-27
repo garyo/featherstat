@@ -1,4 +1,5 @@
 <script lang="ts">
+import DataTable from './DataTable.svelte';
 import { exactNumber } from './format.ts';
 import { histogramBars } from './histogram.ts';
 import { sliceOf, type WidgetProps } from './types.ts';
@@ -44,6 +45,11 @@ const empty = $derived(bars.every((bar) => bar.value === 0));
         </div>
       {/each}
     </div>
+    <DataTable
+      caption="{spec.title ?? spec.id} — measured views per band"
+      head={['Band', 'Views']}
+      rows={bars.map((bar) => ({ key: bar.label, label: bar.label, cells: [exactNumber(bar.value)] }))}
+    />
   {/if}
 </div>
 
