@@ -363,6 +363,12 @@ buckets rather than the top groups; the schema refuses that combination with a
   - **`cr`** = conversions / `visits`, declared as a proper `ratio`
     (`of: {numerator, denominator: "visits"}`); the denominator joins the
     compiled set and rides in the rows like a derived metric's components.
+    A goal belongs to one site, so under `site: "all"` the denominator is
+    that site's visits alone: an extra `goal:<id>:visits` column (the ordinary
+    `visits` statement plus `site = <goal's site>`), identified by `of.denominator`
+    so a client re-aggregating buckets divides by the same population. Grouped
+    by `site`, every aspect of the goal reads `null` on another site's row —
+    the goal does not exist there, which is not the same as zero.
   - **`value`** follows the goal's `valueExpr`: `SUM(event_value)` over the
     matching events (`aggregate: "sum"`), fixed × conversions
     (`aggregate: "computed"` — no lawful total), or `null` when the goal
@@ -702,7 +708,8 @@ buckets rather than the top groups; the schema refuses that combination with a
   - **Columns**: the group keys as the compiler orders them (`bucket`, then
     `dim`, `dim2`), headed by the vocabulary words themselves, then one column
     per metric in request order; anything else the rows carry (a derived
-    metric's components, a goal `cr`'s `visits` denominator) follows sorted.
+    metric's components, a goal `cr`'s `visits` or `goal:<id>:visits`
+    denominator) follows sorted.
     Sequence kinds use their natural columns — `flows` joins its signature
     with `" > "` into a `steps` column beside its counts; `transitions` is
     `step`, `from`, `to`, `sessions`; `dwell`/`adjacency`/`distribution`

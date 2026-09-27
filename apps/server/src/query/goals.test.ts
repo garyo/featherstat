@@ -1,4 +1,4 @@
-import { isQueryError, type QueryRequest } from '@featherstat/shared';
+import { type GoalMetricRef, isQueryError, type QueryRequest } from '@featherstat/shared';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { binId, event, openTestDb, resultOf, session } from '../../test/rows.ts';
 import {
@@ -30,14 +30,16 @@ let otherSiteGoal: number;
 
 interface Seed {
   sess: number;
+  site?: number;
   date?: string;
   pages: readonly string[];
   purchases?: readonly number[];
 }
 
-function seedVisit({ sess, date = DAY, pages, purchases = [] }: Seed): void {
+function seedVisit({ sess, site = 1, date = DAY, pages, purchases = [] }: Seed): void {
   withWriteTransaction(db, () => {
     const base = {
+      site_id: site,
       session_id: binId(sess),
       visitor_id: binId(sess),
       local_date: date,
@@ -60,6 +62,7 @@ function seedVisit({ sess, date = DAY, pages, purchases = [] }: Seed): void {
     upsertSessions(db, [
       session({
         id: binId(sess),
+        site_id: site,
         visitor_id: binId(sess),
         local_date: date,
         started_at: base.ts,
@@ -259,5 +262,56 @@ describe('goal metrics', () => {
       executeQueryRequest(db, request, { now: NOW, goals: resolveGoals(db, request) }),
     );
     expect(rows[0]?.[`goal:${otherSiteGoal}:conversions`]).toBe(0);
+  });
+
+  /**
+   * A goal converts on its own site only, so under `site: 'all'` its cr must
+   * divide by that site's visits — not every site's. Reproduced before the
+   * fix: site 1 alone read cr 1.0 while 'all' read 0.2016.
+   */
+  it("divides a goal's cr by its own site's visits under site:'all'", () => {
+    seedVisit({ sess: 40, site: 2, pages: ['/signup'] }); // a look-alike on another site
+    seedVisit({ sess: 41, site: 2, pages: ['/b'] });
+    const conversions: GoalMetricRef = `goal:${signupGoal}:conversions`;
+    const cr: GoalMetricRef = `goal:${signupGoal}:cr`;
+    const denominator = `goal:${signupGoal}:visits`;
+    const askScoped = (site: 1 | 'all', query: Record<string, unknown>) => {
+      const request: QueryRequest = {
+        site,
+        range: { from: DAY, to: DAY2 },
+        queries: [{ id: 'q', metrics: [conversions, cr], ...query }],
+      };
+      return resultOfQ(
+        executeQueryRequest(db, request, { now: NOW, goals: resolveGoals(db, request) }),
+      );
+    };
+
+    const ownResult = askScoped(1, {});
+    const own = ownResult.rows[0];
+    const all = askScoped('all', {});
+    expect(own?.[cr]).toBeGreaterThan(0);
+    expect(all.rows[0]?.[conversions]).toBe(own?.[conversions]);
+    expect(all.rows[0]?.[cr]).toBe(own?.[cr]);
+    expect(all.rows[0]?.[denominator]).toBe(own?.visits);
+    // The ratio's declared denominator is the column it divided by, so a
+    // client re-aggregating buckets recombines the same population.
+    expect(all.measures?.[cr]?.of).toEqual({ numerator: conversions, denominator });
+    expect(all.measures?.[denominator]).toEqual(ownResult.measures?.visits);
+
+    // Grouped by site, the goal's own site reads its rate; another site has no
+    // such goal, so every aspect there is unknown rather than 0.
+    const bySite = new Map(
+      askScoped('all', { dim: 'site', metrics: [conversions, cr, 'visits'] }).rows.map((row) => [
+        row.site,
+        row,
+      ]),
+    );
+    expect(bySite.get(1)).toMatchObject({ [conversions]: own?.[conversions], [cr]: own?.[cr] });
+    expect(bySite.get(2)).toMatchObject({ [conversions]: null, [cr]: null });
+
+    // Bucketed, each day divides by that day's own-site visits.
+    const byDay = askScoped('all', { bucket: 'day' }).rows;
+    const ownByDay = askScoped(1, { bucket: 'day' }).rows;
+    expect(byDay.map((row) => row[cr])).toEqual(ownByDay.map((row) => row[cr]));
   });
 });

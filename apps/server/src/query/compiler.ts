@@ -373,10 +373,11 @@ function tableOrder(spec: MetricSpec): readonly Table[] {
 export function queryMeasures(compiled: CompiledQuery): Measures {
   const measures: Measures = {};
   for (const statement of compiled.statements) {
-    for (const metric of statement.metrics) {
+    for (const column of statement.metrics) {
       // Goal statements carry `goal:` keys, whose measures the executor
       // declares itself (query/goals.ts) — only built-ins are described here.
-      if (isBuiltinMetric(metric)) measures[metric] = measureOf(metric, statement.table);
+      const metric = statement.sources?.[column] ?? column;
+      if (isBuiltinMetric(metric)) measures[column] = measureOf(metric, statement.table);
     }
   }
   return measures;
@@ -494,6 +495,8 @@ export interface CompiledStatement {
   /** The result columns this statement answers, each aliased to its own name in
    * the row: built-in metrics, or `goal:` keys on a goal statement. */
   metrics: readonly string[];
+  /** Columns that answer a built-in metric under another key, by column. */
+  sources?: Readonly<Record<string, Metric>>;
   /** The routing decision: which table this statement aggregates over. */
   table: Table;
 }
@@ -692,6 +695,38 @@ export function compileGoalStatement(
   return { sql: lines.join('\n'), params, metrics, table: 'events' };
 }
 
+/**
+ * A goal's `cr` denominator under a multi-site scope (docs/04 § 3): the
+ * query's ordinary `visits`, restricted to the goal's own site and answered
+ * as `key`. Conversions only ever come from that site, so dividing them by
+ * every site's visits would report a fraction of a rate.
+ */
+export function compileSiteVisits(
+  key: string,
+  siteId: number,
+  query: Pick<CompilableMetricQuery, 'dim' | 'dim2' | 'bucket' | 'filters'>,
+  requestFilters: readonly FilterNode[],
+  windows: readonly SiteWindow[],
+): CompiledStatement | CompileError {
+  const siteLeaf: FilterLeaf = { dim: 'site', op: 'eq', value: String(siteId) };
+  const filters = [...requestFilters, ...(query.filters ?? []), siteLeaf];
+  const invalid = invalidLeaf(filters.flatMap(filterLeaves));
+  if (invalid !== undefined) return invalid;
+  const table = routeTable('visits', tableBlockers(query, filters));
+  if (table === null) {
+    return unsupported("a goal's cr divides by visits, which this query's shape cannot answer");
+  }
+  return buildStatement(
+    table,
+    ['visits'],
+    queryGroups(query),
+    filters,
+    windows,
+    { orderAndLimit: false, firstMetric: undefined, limit: undefined },
+    { visits: key },
+  );
+}
+
 function pickTable(spec: MetricSpec, sessionsUsable: boolean, eventsUsable: boolean): Table | null {
   for (const table of tableOrder(spec)) {
     if (spec[table] === undefined) continue;
@@ -765,7 +800,10 @@ function buildStatement(
   filters: readonly FilterNode[],
   windows: readonly SiteWindow[],
   options: StatementOptions,
+  /** Result columns answered under a key other than the metric's own. */
+  renamed: Partial<Record<Metric, string>> = {},
 ): CompiledStatement {
+  const columnOf = (metric: Metric): string => renamed[metric] ?? metric;
   const alias = table === 'events' ? 'e' : 's';
   const params: (string | number)[] = [];
 
@@ -781,7 +819,7 @@ function buildStatement(
     const spec = METRICS[metric][table];
     if (spec === undefined) throw new Error(`'${metric}' was routed to a table it cannot answer`);
     const expr = metricSql(spec, alias);
-    select.push(`${expr.sql} AS "${metric}"`);
+    select.push(`${expr.sql} AS "${columnOf(metric)}"`);
     params.push(...expr.params);
   }
 
@@ -805,7 +843,16 @@ function buildStatement(
       params.push(options.limit);
     }
   }
-  return { sql: lines.join('\n'), params, metrics, table };
+  const sources = metrics
+    .filter((metric) => renamed[metric] !== undefined)
+    .map((metric) => [columnOf(metric), metric] as const);
+  return {
+    sql: lines.join('\n'),
+    params,
+    metrics: metrics.map(columnOf),
+    table,
+    ...(sources.length > 0 ? { sources: Object.fromEntries(sources) } : {}),
+  };
 }
 
 /** Buckets read in time order; breakdowns lead with the first metric, ties in group order.
