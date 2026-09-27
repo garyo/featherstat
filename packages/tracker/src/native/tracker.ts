@@ -64,6 +64,8 @@ interface Runtime {
   read: boolean;
   /** Heartbeats this page view has held the reader through; reset by `page()`. */
   beats: number;
+  /** Restart the heartbeat, so a page view's first beat is a whole interval after it. */
+  rearm: () => void;
   stop: () => void;
 }
 
@@ -199,7 +201,7 @@ export function init(config: TrackerConfig): () => void {
     }
   };
 
-  const heartbeat = setInterval(() => {
+  const beat = (): void => {
     if (runtime && focused && visible && Date.now() - lastInput < idleMs) {
       runtime.beats += 1;
       // Measure first: a page that grew after load — lazy images, deferred
@@ -208,7 +210,8 @@ export function init(config: TrackerConfig): () => void {
       measure();
       emit({ type: 'ping', url: viewUrl(), scroll: reading() });
     }
-  }, heartbeatMs);
+  };
+  let heartbeat = setInterval(beat, heartbeatMs);
 
   window.addEventListener('focus', onFocus);
   window.addEventListener('blur', onBlur);
@@ -232,6 +235,10 @@ export function init(config: TrackerConfig): () => void {
     maxScroll: 0,
     read: false,
     beats: 0,
+    rearm: () => {
+      clearInterval(heartbeat);
+      heartbeat = setInterval(beat, heartbeatMs);
+    },
     stop: () => {
       clearInterval(heartbeat);
       window.removeEventListener('focus', onFocus);
@@ -293,6 +300,9 @@ export function page(
   runtime.maxScroll = 0;
   runtime.read = false;
   runtime.beats = 0;
+  // An SPA route announced just before a tick would otherwise earn its "beat"
+  // a second after it began.
+  runtime.rearm();
   emit({
     type: 'pageview',
     url,

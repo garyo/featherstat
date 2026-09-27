@@ -158,7 +158,9 @@ shows in the live feed — for a milestone that is exactly an event.
 A read is **depth and attention**, not depth alone: the milestone waits until
 the page view has held the reader through at least one heartbeat (which is
 itself focus- and idle-gated), then fires on the first reading at or past
-90 % — a heartbeat's or a scroll's. A page that fits the viewport is 100 % the
+90 % — a heartbeat's or a scroll's. Every page view restarts the heartbeat,
+so that first beat is a whole interval after the view even when an SPA route
+lands a second before the old cycle's next tick. A page that fits the viewport is 100 % the
 moment it loads, and firing then made every visit to a short page "read" before
 anyone had looked at it. `page()` takes no reading of its own for the same
 reason on an SPA route change: until the router has swapped the document and

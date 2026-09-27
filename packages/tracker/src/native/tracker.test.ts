@@ -535,6 +535,19 @@ describe('scroll depth', () => {
     expect(reads()).toHaveLength(1);
   });
 
+  it('asks a whole heartbeat of every page view, however late in the cycle it began', () => {
+    layout(1_000, 1_000);
+    start();
+    vi.advanceTimersByTime(14_000);
+    page('https://deep-timeline.org/era/silurian'); // a second before the next tick
+    vi.advanceTimersByTime(1_000);
+    expect(reads()).toEqual([]);
+    vi.advanceTimersByTime(14_000);
+    expect(reads()).toEqual([
+      expect.objectContaining({ url: 'https://deep-timeline.org/era/silurian' }),
+    ]);
+  });
+
   // The router announces the route while the old page is still on screen,
   // scrolled to its end; the swap and the scroll to the top come after.
   it("never credits a new route with the old page's scroll position", () => {
