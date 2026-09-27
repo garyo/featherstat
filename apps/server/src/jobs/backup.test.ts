@@ -1,8 +1,8 @@
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { event, openTestDb } from '../../test/rows.ts';
 import { type Db, insertEvents, setSetting, withWriteTransaction } from '../db/index.ts';
 import {
@@ -86,6 +86,31 @@ describe('runBackup', () => {
       'analytics-2026-08-01.db',
       'notes.txt',
     ]);
+  });
+});
+
+describe('a backup that fails', () => {
+  it('keeps the last good copy, leaves no partial file and prunes nothing', () => {
+    configure(1);
+    writeFileSync(join(dir, 'analytics-2026-07-31.db'), 'yesterday');
+    writeFileSync(join(dir, 'analytics-2026-08-01.db'), 'this morning');
+    const prepare = db.prepare.bind(db);
+    const failing = vi.spyOn(db, 'prepare').mockImplementation((sql: string) => {
+      if (!sql.startsWith('VACUUM')) return prepare(sql);
+      return {
+        run: (target: string) => {
+          writeFileSync(target, 'torn'); // what a disk-full VACUUM leaves behind
+          throw new Error('disk full');
+        },
+      } as unknown as ReturnType<Db['prepare']>;
+    });
+
+    expect(() => runBackup(db, { now: () => NOW })).toThrow('disk full');
+    failing.mockRestore();
+
+    expect(readdirSync(dir).sort()).toEqual(['analytics-2026-07-31.db', 'analytics-2026-08-01.db']);
+    expect(readFileSync(join(dir, 'analytics-2026-08-01.db'), 'utf8')).toBe('this morning');
+    expect(backupLastRunAt(db)).toBeUndefined();
   });
 });
 

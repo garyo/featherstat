@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { mkdirSync, readdirSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { type Db, getSetting, setSetting, withWriteTransaction } from '../db/index.ts';
 
@@ -60,10 +60,19 @@ export function runBackup(db: Db, options: BackupOptions = {}): BackupResult {
   const now = options.now?.() ?? Date.now();
   const name = `analytics-${new Date(now).toISOString().slice(0, 10)}.db`;
   const file = join(dir, name);
+  // Written under a name the keep-N prune never matches, then renamed over the
+  // day's copy: a failed or torn VACUUM leaves the last good copy standing and
+  // counts toward nothing. A same-day re-run replaces its own copy that way too.
+  const partial = `${file}.partial`;
   mkdirSync(dir, { recursive: true });
-  // A same-day re-run replaces its own copy: VACUUM INTO refuses an existing target.
-  if (existsSync(file)) rmSync(file);
-  db.prepare('VACUUM INTO ?').run(file);
+  rmSync(partial, { force: true }); // VACUUM INTO refuses an existing target
+  try {
+    db.prepare('VACUUM INTO ?').run(partial);
+    renameSync(partial, file);
+  } catch (error) {
+    rmSync(partial, { force: true });
+    throw error;
+  }
 
   const pruned = readdirSync(dir)
     .filter((entry) => BACKUP_FILE.test(entry))

@@ -137,8 +137,10 @@ site's version moves, and the ETag machinery makes a no-op revalidation free.
   registry with the rows, and never touches rollups — nor lets a rollup rebuild
   reach a day at the floor (docs/03 § Size & retention).
 - **Backup** — nightly `VACUUM INTO '<dir>/analytics-<date>.db'`, on when
-  Settings → Data names a directory; pruned to the newest N copies
-  (`backup_keep`, default 7). `VACUUM INTO` writes a compacted, consistent
+  Settings → Data names a directory; written under a `.partial` name and
+  renamed into place, so a failed copy never replaces a good one, and pruned
+  to the newest N copies only after it succeeds (`backup_keep`, default 7).
+  `VACUUM INTO` writes a compacted, consistent
   snapshot from one read transaction — the only safe way to copy a live WAL
   file (docs/09) — and runs outside the write transaction discipline because it
   makes no writes. better-sqlite3 is synchronous, so the copy blocks the
