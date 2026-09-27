@@ -26,7 +26,7 @@ import {
   rowsOfNodes,
 } from '../../lib/filter-builder.ts';
 import { createLoader } from '../../lib/loader.svelte.ts';
-import { edited } from '../../lib/settings.ts';
+import { edited } from '../../lib/unsaved.ts';
 import FilterBuilder from './FilterBuilder.svelte';
 import LoadState from './LoadState.svelte';
 import PanelError from './PanelError.svelte';

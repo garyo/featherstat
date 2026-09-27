@@ -9,7 +9,8 @@ import {
   type WidgetSpec,
   widgetQueries,
 } from '@featherstat/shared';
-import { canonicalJson, type QueryClient } from '../lib/api.ts';
+import type { QueryClient } from '../lib/api.ts';
+import { edited } from '../lib/unsaved.ts';
 import { widgetData } from '../views/batch.ts';
 import { gridEnv } from '../widgets/env.ts';
 import type { ViewEnv, WidgetData } from '../widgets/types.ts';
@@ -74,9 +75,9 @@ const saved = collectBatch(initial);
 // svelte-ignore state_referenced_locally
 const savedSpecs = new Map(initial.grid.map((spec) => [spec.id, JSON.stringify(spec)]));
 // svelte-ignore state_referenced_locally
-const pristine = canonicalJson($state.snapshot(initial));
+const opened = $state.snapshot(initial);
 
-const dirty = $derived(canonicalJson($state.snapshot(draft)) !== pristine);
+const dirty = $derived(edited($state.snapshot(draft), opened));
 $effect(() => ondirty(dirty));
 
 // The view batch's own windows. A preview re-runs the SAME range and scope

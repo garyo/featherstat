@@ -14,7 +14,7 @@ import { loadChunk, onChunkFailure } from '../lib/chunks.ts';
 import Header from '../lib/components/Header.svelte';
 import StaleBuild from '../lib/components/StaleBuild.svelte';
 import { createDashboardStore } from '../lib/dashboards.svelte.ts';
-import { confirmDashboardSwitch, createEditorMode } from '../lib/editor-mode.svelte.ts';
+import { createEditorMode } from '../lib/editor-mode.svelte.ts';
 import { createLiveStream } from '../lib/live.ts';
 import { pushFeed, seedFeed } from '../lib/realtime.ts';
 import { createSegmentDirectory } from '../lib/segments.svelte.ts';
@@ -34,6 +34,7 @@ import {
   type ViewStatePatch,
 } from '../lib/state.ts';
 import { toggleTheme } from '../lib/theme.ts';
+import { confirmDiscard } from '../lib/unsaved.ts';
 import type { AppEnv, RealtimeEnv } from '../widgets/types.ts';
 import AllSitesView from './AllSitesView.svelte';
 import JourneysView from './JourneysView.svelte';
@@ -147,7 +148,7 @@ $effect(() => {
 
 /** Asks before a move would discard a changed draft; a yes closes the editor. */
 function guardEdit(): boolean {
-  const ok = confirmDashboardSwitch(mode.dirty, dashboards.selection?.name, (message) =>
+  const ok = confirmDiscard(mode.dirty, dashboards.selection?.name ?? 'this dashboard', (message) =>
     window.confirm(message),
   );
   if (ok && mode.editing) mode.close();
