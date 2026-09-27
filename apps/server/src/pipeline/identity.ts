@@ -102,13 +102,7 @@ export class Identity {
     const existing = getSetting(this.db, key);
     if (existing !== undefined) return Buffer.from(existing, 'hex');
     const salt = randomBytes(16);
-    const zone = zoneSaltPrefix(timezone);
-    // Within a zone, ISO dates sort lexicographically, so `< key` spares that
-    // zone's newer salt (still current for a restart whose clock regressed across
-    // midnight); every other zone's salt is left alone.
-    const stale = settingKeysWithPrefix(this.db, DAY_SALT_PREFIX).filter((old) =>
-      old.startsWith(zone) ? old < key : isZonelessSaltKey(old),
-    );
+    const stale = supersededSalts(this.db, timezone, key);
     withWriteTransaction(this.db, () => {
       for (const old of stale) deleteSetting(this.db, old);
       setSetting(this.db, key, salt.toString('hex'));
@@ -141,6 +135,35 @@ export class Identity {
     }
     return salt;
   }
+}
+
+/**
+ * Every salt `key` supersedes. Within a zone, ISO dates sort lexicographically,
+ * so `< key` spares that zone's newer salt (still current for a restart whose
+ * clock regressed across midnight); every other zone's salt is left alone.
+ */
+function supersededSalts(db: Db, timezone: string, key: string): string[] {
+  const zone = zoneSaltPrefix(timezone);
+  return settingKeysWithPrefix(db, DAY_SALT_PREFIX).filter((old) =>
+    old.startsWith(zone) ? old < key : isZonelessSaltKey(old),
+  );
+}
+
+/**
+ * A site moving zones would re-key every visitor it has already seen today: its
+ * next hit hashes under the new zone's salt. When the new zone has not minted a
+ * salt for its current date, seed it with the old zone's live one, so those
+ * visitors keep their ids until the new zone's next local midnight (docs/03
+ * § Timezones). A salt the new zone already has is never replaced — another
+ * site's visitors hold ids under it. Runs inside the PATCH's write transaction.
+ */
+export function carryDaySalt(db: Db, from: string, to: string, now: number): void {
+  const live = getSetting(db, daySaltKey(from, localClock(from, now).date));
+  if (live === undefined) return;
+  const key = daySaltKey(to, localClock(to, now).date);
+  if (getSetting(db, key) !== undefined) return;
+  for (const old of supersededSalts(db, to, key)) deleteSetting(db, old);
+  setSetting(db, key, live);
 }
 
 function hash8(salt: Uint8Array, input: string): Uint8Array {

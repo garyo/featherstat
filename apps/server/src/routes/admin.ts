@@ -48,6 +48,7 @@ import {
   deleteSiteConfigRows,
   deleteUserSessions,
   getSetting,
+  getSite,
   getUser,
   getUserByEmail,
   insertApiToken,
@@ -76,9 +77,11 @@ import {
 import { requestPropScrub, runPropScrubs } from '../jobs/prop-scrub.ts';
 import { RETENTION_DAYS_KEY, retentionDays } from '../jobs/retention.ts';
 import { requestSitePurge, runSitePurges } from '../jobs/site-purge.ts';
+import { requestTimezoneBackfill, runTimezoneBackfills } from '../jobs/timezone-backfill.ts';
 import type { AliasCache } from '../pipeline/campaigns.ts';
 import type { ExclusionMatcher } from '../pipeline/exclusions.ts';
 import { readExclusionRules, writeExclusionRules } from '../pipeline/exclusions.ts';
+import { carryDaySalt } from '../pipeline/identity.ts';
 import type { PropRegistry } from '../pipeline/props.ts';
 import { clientIp } from './track.ts';
 
@@ -264,8 +267,26 @@ export function createAdminRoutes(
     if (!canManageSite(c.get('principal'), id)) return c.json({ error: `unknown site ${id}` }, 404);
     const body = await parseBody(c, AdminSitePatchSchema);
     if (body.ok === false) return body.response;
-    const site = withWriteTransaction(db, () => updateSite(db, id, body.data));
+    // A new zone re-dates the site's history (docs/03 § Timezones): the salt
+    // carry and the backfill's enqueue commit with the change itself.
+    const { site, rezoned } = withWriteTransaction(db, () => {
+      const before = getSite(db, id);
+      const after = updateSite(db, id, body.data);
+      const moved =
+        before !== undefined && after !== undefined && after.timezone !== before.timezone;
+      if (moved) {
+        carryDaySalt(db, before.timezone, after.timezone, auth.now());
+        requestTimezoneBackfill(db, id);
+      }
+      return { site: after, rezoned: moved };
+    });
     if (site === undefined) return c.json({ error: `unknown site ${id}` }, 404);
+    if (rezoned) {
+      // Kick the backfill now; the scheduler's job resumes it after a crash.
+      void runTimezoneBackfills(db, { now: () => auth.now() }).catch((error) =>
+        console.error('timezone backfill failed:', error),
+      );
+    }
     return c.json(toSiteInfo(site));
   });
 

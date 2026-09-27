@@ -58,6 +58,7 @@ export const REWRITERS = [
   'prop-scrub.ts',
   'site-purge.ts',
   'reconcile.ts',
+  'timezone-backfill.ts',
 ] as const;
 
 /**
