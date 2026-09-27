@@ -14,6 +14,7 @@ import {
   atWidgetCap,
   buildWidget,
   exportJson,
+  limitProblem,
   nextWidgetId,
   parseDashboardJson,
   removeWidget,
@@ -88,6 +89,18 @@ describe('nextWidgetId', () => {
     ];
     expect(nextWidgetId(taken)).toBe('w3');
     expect(nextWidgetId([])).toBe('w1');
+  });
+});
+
+describe('limitProblem', () => {
+  it('takes a whole number inside the query schema’s bounds', () => {
+    for (const limit of [1, 8, 1000]) expect(limitProblem(limit)).toBeUndefined();
+  });
+
+  // Each of these reached buildWidget, whose parse threw a ZodError into the
+  // console while the Add button did nothing.
+  it.each([null, 0, 1001, 2.5])('refuses %s, saying what it takes', (limit) => {
+    expect(limitProblem(limit)).toBe('Limit must be a whole number from 1 to 1000.');
   });
 });
 

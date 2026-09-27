@@ -355,6 +355,37 @@ describe('detail views in the URL (docs/05 § Detail views)', () => {
   });
 });
 
+describe('the Settings section in the URL (docs/05 § Settings)', () => {
+  // A reload used to land on "Sites & tracking" whatever was open, and Back
+  // left Settings instead of returning to the previous section.
+  it('reads ?view=settings&section=<id> and round-trips it', () => {
+    const state = parseViewState('/?view=settings&section=campaigns');
+    expect(state).toEqual(at({ view: 'settings', section: 'campaigns' }));
+    expect(applyViewState(state, '/')).toBe('/?view=settings&section=campaigns');
+  });
+
+  it('opens the first section for an unknown or missing one', () => {
+    expect(parseViewState('/?view=settings&section=secrets').section).toBeUndefined();
+    expect(parseViewState('/?view=settings').section).toBeUndefined();
+  });
+
+  it('means nothing outside Settings, in either direction', () => {
+    expect(parseViewState('/?section=access').section).toBeUndefined();
+    expect(applyViewState(at({ section: 'access' }), '/')).toBe('/');
+  });
+
+  it('tells two sections apart, so choosing one is a history entry', () => {
+    const access = at({ view: 'settings', section: 'access' });
+    expect(sameViewState(access, at({ view: 'settings', section: 'data' }))).toBe(false);
+  });
+
+  it('is forgotten on leaving Settings', () => {
+    const on = at({ view: 'settings', section: 'data' });
+    const away = resolveNav(on, { view: 'dash' }, 4);
+    expect({ ...on, ...away }.section).toBeUndefined();
+  });
+});
+
 describe('pivots in the URL (docs/05 § Pivots)', () => {
   it('reads repeatable pv=<widget>:<dim> params, junk dropped, last pick winning', () => {
     expect(parseViewState('/?pv=refs:country&pv=pages:ref_domain').pivots).toEqual([

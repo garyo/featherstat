@@ -1122,7 +1122,23 @@ export const DashboardSchema = z.object({
   version: z.number().int().min(1).catch(1),
   name: z.string().min(1).max(200),
   site: z.union([z.number().int().positive(), z.literal('all')]),
-  grid: z.array(WidgetSpecSchema).max(MAX_WIDGETS_PER_DASHBOARD),
+  /** Widget ids are unique: a view routes each answer back to its card by id. */
+  grid: z
+    .array(WidgetSpecSchema)
+    .max(MAX_WIDGETS_PER_DASHBOARD)
+    .superRefine((grid, ctx) => {
+      const seen = new Set<string>();
+      grid.forEach((spec, index) => {
+        if (seen.has(spec.id)) {
+          ctx.addIssue({
+            code: 'custom',
+            path: [index, 'id'],
+            message: `duplicate widget id '${spec.id}' — every widget needs its own`,
+          });
+        }
+        seen.add(spec.id);
+      });
+    }),
 });
 export type Dashboard = z.infer<typeof DashboardSchema>;
 

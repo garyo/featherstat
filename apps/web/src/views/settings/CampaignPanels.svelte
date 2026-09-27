@@ -4,6 +4,9 @@ import type { AdminClient } from '../../lib/admin.ts';
 import { type PanelFailure, panelFailure } from '../../lib/admin-failure.ts';
 import { adminObjects } from '../../lib/admin-objects.ts';
 import type { AuthRole } from '../../lib/auth.svelte.ts';
+import ConfirmButton from '../../lib/components/ConfirmButton.svelte';
+import { createLoader } from '../../lib/loader.svelte.ts';
+import { edited } from '../../lib/settings.ts';
 import {
   buildUtmUrl,
   emptyUtmDraft,
@@ -11,6 +14,7 @@ import {
   normalizationWarnings,
   type UtmDraft,
 } from '../../lib/utm-builder.ts';
+import LoadState from './LoadState.svelte';
 import PanelError from './PanelError.svelte';
 
 /**
@@ -33,8 +37,7 @@ const api = adminObjects(admin);
 // ---------- registry ----------
 let regSite = $state<number | undefined>(undefined);
 const regSiteId = $derived(regSite ?? sites?.[0]?.id);
-let campaigns = $state<CampaignInfo[] | undefined>(undefined);
-let regFailed = $state(false);
+const campaigns = createLoader((site: number) => api.listCampaigns(site));
 let regOpen = $state(false);
 let regEditing = $state<number | undefined>(undefined);
 let regDraft = $state({ name: '', sources: '', mediums: '', startsAt: '', endsAt: '', notes: '' });
@@ -44,16 +47,7 @@ let regError = $state<PanelFailure | undefined>(undefined);
 let regRowError = $state<PanelFailure | undefined>(undefined);
 
 $effect(() => {
-  if (regSiteId === undefined) return;
-  campaigns = undefined;
-  void api
-    .listCampaigns(regSiteId)
-    .then((list) => {
-      campaigns = list;
-    })
-    .catch(() => {
-      regFailed = true;
-    });
+  if (regSiteId !== undefined) void campaigns.load(regSiteId);
 });
 
 const csv = (list: string[] | null): string => (list === null ? '' : list.join(', '));
@@ -64,6 +58,8 @@ const listOf = (text: string): string[] | null => {
     .filter((entry) => entry !== '');
   return entries.length === 0 ? null : entries;
 };
+
+let regOpened: unknown;
 
 function openCampaign(info?: CampaignInfo): void {
   regOpen = true;
@@ -77,6 +73,7 @@ function openCampaign(info?: CampaignInfo): void {
     endsAt: info?.endsAt ?? '',
     notes: info?.notes ?? '',
   };
+  regOpened = $state.snapshot(regDraft);
 }
 
 async function saveCampaign(event: SubmitEvent): Promise<void> {
@@ -96,7 +93,7 @@ async function saveCampaign(event: SubmitEvent): Promise<void> {
     if (regEditing === undefined) await api.createCampaign(regSiteId, body);
     else await api.updateCampaign(regEditing, body);
     regOpen = false;
-    campaigns = await api.listCampaigns(regSiteId);
+    await campaigns.reload();
   } catch (failure) {
     regError = panelFailure(failure, 'Saving failed — try again.');
   } finally {
@@ -105,59 +102,61 @@ async function saveCampaign(event: SubmitEvent): Promise<void> {
 }
 
 async function deleteCampaign(id: number): Promise<void> {
-  if (regSiteId === undefined) return;
   regRowError = undefined;
   try {
     await api.deleteCampaign(id);
-    campaigns = await api.listCampaigns(regSiteId);
+    await campaigns.reload();
   } catch (failure) {
     regRowError = panelFailure(failure, 'Deleting failed — try again.');
   }
 }
 
 // ---------- aliases ----------
-/** '' in the select means the install-wide list (site 0). */
+/** '0' in the select means the install-wide list (site 0). */
 let aliasSite = $state('0');
 const aliasSiteId = $derived(Number(aliasSite));
-let aliases = $state<CampaignAlias[] | undefined>(undefined);
-let aliasFailed = $state(false);
+/** The rows being edited — saving is a full-list replace of the stored ones. */
+let aliasDraft = $state<CampaignAlias[]>([]);
+const aliases = createLoader((site: number) => api.listCampaignAliases(site), {
+  onload: (list) => {
+    aliasDraft = list.map((row) => ({ ...row }));
+  },
+});
 let aliasBusy = $state(false);
 let aliasError = $state<PanelFailure | undefined>(undefined);
 let aliasSaved = $state(false);
 
 $effect(() => {
-  aliases = undefined;
   aliasSaved = false;
-  void api
-    .listCampaignAliases(aliasSiteId)
-    .then((list) => {
-      aliases = list;
-    })
-    .catch(() => {
-      aliasFailed = true;
-    });
+  void aliases.load(aliasSiteId);
 });
 
 function addAlias(): void {
-  if (aliases === undefined) return;
-  aliases = [...aliases, { field: 'source', alias: '', canonical: '' }];
+  aliasDraft = [...aliasDraft, { field: 'source', alias: '', canonical: '' }];
 }
 
 async function saveAliases(event: SubmitEvent): Promise<void> {
   event.preventDefault();
-  if (aliases === undefined) return;
   aliasBusy = true;
   aliasError = undefined;
   aliasSaved = false;
-  const rows = aliases.filter((row) => row.alias.trim() !== '' && row.canonical.trim() !== '');
+  const rows = aliasDraft.filter((row) => row.alias.trim() !== '' && row.canonical.trim() !== '');
   try {
-    aliases = await api.saveCampaignAliases(aliasSiteId, rows);
+    aliases.set(await api.saveCampaignAliases(aliasSiteId, rows));
     aliasSaved = true;
   } catch (failure) {
     aliasError = panelFailure(failure, 'Saving failed — try again.');
   } finally {
     aliasBusy = false;
   }
+}
+
+/** Edits a Settings section switch would discard; the link builder stores nothing. */
+export function unsaved(): boolean {
+  return (
+    (regOpen && edited(regDraft, regOpened)) ||
+    (aliases.value !== undefined && edited(aliasDraft, aliases.value))
+  );
 }
 
 // ---------- UTM link builder (client-only) ----------
@@ -204,78 +203,79 @@ async function copyUtm(): Promise<void> {
       {/each}
     </select>
   </label>
-  {#if regFailed}
-    <p class="widget-note">Campaigns unavailable.</p>
-  {:else if campaigns === undefined}
-    <p class="widget-note">Loading…</p>
-  {:else}
-    {#each campaigns as info (info.id)}
-      <div class="prow">
-        <div class="pmeta">
-          <span class="pname">{info.name}</span>
-          <span class="psub">
-            {info.expectedSources === null ? 'any source' : info.expectedSources.join(', ')}
-            · {info.expectedMediums === null ? 'any medium' : info.expectedMediums.join(', ')}
-            {info.startsAt === null && info.endsAt === null
-              ? ''
-              : ` · ${info.startsAt ?? '…'} → ${info.endsAt ?? '…'}`}
-          </span>
+  <LoadState of={campaigns} what="Campaigns">
+    {#snippet children(list)}
+      {#each list as info (info.id)}
+        <div class="prow">
+          <div class="pmeta">
+            <span class="pname">{info.name}</span>
+            <span class="psub">
+              {info.expectedSources === null ? 'any source' : info.expectedSources.join(', ')}
+              · {info.expectedMediums === null ? 'any medium' : info.expectedMediums.join(', ')}
+              {info.startsAt === null && info.endsAt === null
+                ? ''
+                : ` · ${info.startsAt ?? '…'} → ${info.endsAt ?? '…'}`}
+            </span>
+          </div>
+          <button class="btn subtle" type="button" onclick={() => openCampaign(info)}>Edit</button>
+          <ConfirmButton
+            label="Delete"
+            confirm="Really delete? Its traffic will read as unregistered."
+            pending="Deleting…"
+            onconfirm={() => deleteCampaign(info.id)}
+          />
         </div>
-        <button class="btn subtle" type="button" onclick={() => openCampaign(info)}>Edit</button>
-        <button class="btn subtle" type="button" onclick={() => void deleteCampaign(info.id)}>
-          Delete
-        </button>
-      </div>
-    {:else}
-      <p class="widget-note">No registered campaigns for this site.</p>
-    {/each}
-    <PanelError failure={regRowError} />
-    {#if regOpen}
-      <form class="oform" onsubmit={saveCampaign}>
-        <div class="wrap">
-          <label class="field">
-            Campaign (the canonical utm_campaign value)
-            <input bind:value={regDraft.name} maxlength="200" required />
-          </label>
-          <label class="field">
-            Expected sources (comma-separated; blank = any)
-            <input bind:value={regDraft.sources} placeholder="newsletter, mastodon" />
-          </label>
-          <label class="field">
-            Expected mediums (blank = any)
-            <input bind:value={regDraft.mediums} placeholder="email, social" />
-          </label>
-        </div>
-        <div class="wrap">
-          <label class="field">
-            Starts
-            <input type="date" bind:value={regDraft.startsAt} />
-          </label>
-          <label class="field">
-            Ends
-            <input type="date" bind:value={regDraft.endsAt} />
-          </label>
-          <label class="field notes">
-            Notes
-            <input bind:value={regDraft.notes} maxlength="2000" />
-          </label>
-        </div>
-        <PanelError failure={regError} />
-        <div class="row">
-          <button
-            class="btn primary"
-            type="submit"
-            disabled={regBusy || regDraft.name.trim() === ''}
-          >
-            {regBusy ? 'Saving…' : 'Save campaign'}
-          </button>
-          <button class="btn" type="button" onclick={() => (regOpen = false)}>Cancel</button>
-        </div>
-      </form>
-    {:else}
-      <button class="btn addv" type="button" onclick={() => openCampaign()}>New campaign</button>
-    {/if}
-  {/if}
+      {:else}
+        <p class="widget-note">No registered campaigns for this site.</p>
+      {/each}
+      <PanelError failure={regRowError} />
+      {#if regOpen}
+        <form class="oform" onsubmit={saveCampaign}>
+          <div class="wrap">
+            <label class="field">
+              Campaign (the canonical utm_campaign value)
+              <input bind:value={regDraft.name} maxlength="200" required />
+            </label>
+            <label class="field">
+              Expected sources (comma-separated; blank = any)
+              <input bind:value={regDraft.sources} placeholder="newsletter, mastodon" />
+            </label>
+            <label class="field">
+              Expected mediums (blank = any)
+              <input bind:value={regDraft.mediums} placeholder="email, social" />
+            </label>
+          </div>
+          <div class="wrap">
+            <label class="field">
+              Starts
+              <input type="date" bind:value={regDraft.startsAt} />
+            </label>
+            <label class="field">
+              Ends
+              <input type="date" bind:value={regDraft.endsAt} />
+            </label>
+            <label class="field notes">
+              Notes
+              <input bind:value={regDraft.notes} maxlength="2000" />
+            </label>
+          </div>
+          <PanelError failure={regError} />
+          <div class="row">
+            <button
+              class="btn primary"
+              type="submit"
+              disabled={regBusy || regDraft.name.trim() === ''}
+            >
+              {regBusy ? 'Saving…' : 'Save campaign'}
+            </button>
+            <button class="btn" type="button" onclick={() => (regOpen = false)}>Cancel</button>
+          </div>
+        </form>
+      {:else}
+        <button class="btn addv" type="button" onclick={() => openCampaign()}>New campaign</button>
+      {/if}
+    {/snippet}
+  </LoadState>
 </div>
 
 {#if role === 'admin'}
@@ -294,54 +294,52 @@ async function copyUtm(): Promise<void> {
       {/each}
     </select>
   </label>
-  {#if aliasFailed}
-    <p class="widget-note">Aliases unavailable.</p>
-  {:else if aliases === undefined}
-    <p class="widget-note">Loading…</p>
-  {:else}
-    <form class="oform" onsubmit={saveAliases}>
-      {#each aliases as row, index (index)}
-        <div class="arow">
-          <span class="field">
-            <select bind:value={row.field} aria-label="Field {index + 1}">
-              <option value="source">source</option>
-              <option value="medium">medium</option>
-              <option value="campaign">campaign</option>
-            </select>
-          </span>
-          <span class="field aval">
-            <input bind:value={row.alias} placeholder="tw" aria-label="Alias {index + 1}" />
-          </span>
-          <span class="arrow">→</span>
-          <span class="field aval">
-            <input
-              bind:value={row.canonical}
-              placeholder="twitter"
-              aria-label="Canonical {index + 1}"
-            />
-          </span>
-          <button
-            class="btn subtle"
-            type="button"
-            aria-label="Remove alias {index + 1}"
-            onclick={() => (aliases = aliases?.filter((_, i) => i !== index))}>×</button
-          >
+  <LoadState of={aliases} what="Aliases">
+    {#snippet children()}
+      <form class="oform" onsubmit={saveAliases}>
+        {#each aliasDraft as row, index (index)}
+          <div class="arow">
+            <span class="field">
+              <select bind:value={row.field} aria-label="Field {index + 1}">
+                <option value="source">source</option>
+                <option value="medium">medium</option>
+                <option value="campaign">campaign</option>
+              </select>
+            </span>
+            <span class="field aval">
+              <input bind:value={row.alias} placeholder="tw" aria-label="Alias {index + 1}" />
+            </span>
+            <span class="arrow">→</span>
+            <span class="field aval">
+              <input
+                bind:value={row.canonical}
+                placeholder="twitter"
+                aria-label="Canonical {index + 1}"
+              />
+            </span>
+            <button
+              class="btn subtle"
+              type="button"
+              aria-label="Remove alias {index + 1}"
+              onclick={() => (aliasDraft = aliasDraft.filter((_, i) => i !== index))}>×</button
+            >
+          </div>
+        {:else}
+          <p class="widget-note">No aliases here yet.</p>
+        {/each}
+        <button class="btn addv" type="button" onclick={addAlias}>Add alias</button>
+        <PanelError failure={aliasError} />
+        {#if aliasSaved}
+          <p class="form-ok" role="status">Aliases saved — stored history is being rewritten.</p>
+        {/if}
+        <div class="row">
+          <button class="btn primary" type="submit" disabled={aliasBusy}>
+            {aliasBusy ? 'Saving…' : 'Save aliases'}
+          </button>
         </div>
-      {:else}
-        <p class="widget-note">No aliases here yet.</p>
-      {/each}
-      <button class="btn addv" type="button" onclick={addAlias}>Add alias</button>
-      <PanelError failure={aliasError} />
-      {#if aliasSaved}
-        <p class="form-ok" role="status">Aliases saved — stored history is being rewritten.</p>
-      {/if}
-      <div class="row">
-        <button class="btn primary" type="submit" disabled={aliasBusy}>
-          {aliasBusy ? 'Saving…' : 'Save aliases'}
-        </button>
-      </div>
-    </form>
-  {/if}
+      </form>
+    {/snippet}
+  </LoadState>
 </div>
 
 {/if}
@@ -383,14 +381,14 @@ async function copyUtm(): Promise<void> {
       </label>
     </div>
     <datalist id="utm-campaigns">
-      {#each campaigns ?? [] as info (info.id)}<option value={info.name}></option>{/each}
+      {#each campaigns.value ?? [] as info (info.id)}<option value={info.name}></option>{/each}
     </datalist>
     {#each utmWarnings as warning (warning.field)}
       <p class="form-error" role="alert">
         The {warning.field} will be stored as '{warning.stored}' — consider typing it that way.
       </p>
     {/each}
-    {#if utmUrl !== undefined && campaigns !== undefined && !campaigns.some((c) => c.name === utm.campaign.trim().toLowerCase())}
+    {#if utmUrl !== undefined && campaigns.value !== undefined && !campaigns.value.some((c) => c.name === utm.campaign.trim().toLowerCase())}
       <p class="widget-note">
         This campaign is not in the registry above — its traffic will read as
         <code>unregistered</code>. That is a label, not a loss: the tag is recorded either way.

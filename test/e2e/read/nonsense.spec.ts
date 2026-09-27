@@ -43,13 +43,13 @@ test('no panel that opens renders one either', async ({ page }) => {
   await dashboardReady(page);
 
   await page.getByRole('button', { name: '+ Filter' }).click();
-  const dialog = page.locator('[role=dialog]');
+  const dialog = page.locator('dialog');
   await clean(page, 'the filter editor, empty');
 
   // Text mode first: an unfinished condition disables it on purpose, so this
   // order is the app's rule rather than a workaround for it.
   await dialog.getByRole('button', { name: 'Edit as text' }).click();
-  await page.locator('[role=dialog] .vocab summary').click();
+  await page.locator('dialog .vocab summary').click();
   await clean(page, 'the filter editor, text mode');
 
   await dialog.getByRole('button', { name: 'Edit as conditions' }).click();
@@ -64,7 +64,7 @@ test('no panel that opens renders one either', async ({ page }) => {
   await page.getByRole('button', { name: 'Customize' }).click();
   await page.getByRole('button', { name: 'Add widget' }).click();
   await clean(page, 'add widget');
-  await page.locator('[role=dialog]').getByRole('button', { name: 'Close' }).click();
+  await page.locator('dialog').getByRole('button', { name: 'Close' }).click();
 });
 
 test('no settings panel renders one', async ({ page }) => {

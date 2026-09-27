@@ -33,7 +33,7 @@ test('a segment saved from the filter editor becomes usable on a dashboard', asy
   await openView(page, { site: 2, range: '90d' });
   await page.getByRole('button', { name: '+ Filter' }).click();
 
-  const dialog = page.locator('[role=dialog]');
+  const dialog = page.locator('dialog');
   await dialog.getByRole('button', { name: '+ condition' }).click();
   const row = dialog.locator('.cond-row').first();
   await row.getByLabel('Dimension').fill('path');
@@ -49,7 +49,7 @@ test('a segment saved from the filter editor becomes usable on a dashboard', asy
   await page.reload();
   await page.getByRole('button', { name: '+ Filter' }).click();
   await expect(
-    page.locator('[role=dialog]').getByRole('button', { name: '+ saved segment' }),
+    page.locator('dialog').getByRole('button', { name: '+ saved segment' }),
   ).toBeVisible();
 
   // Clean up through Settings, where segments are managed.

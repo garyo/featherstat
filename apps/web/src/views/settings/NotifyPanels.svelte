@@ -4,7 +4,10 @@ import type { AdminClient } from '../../lib/admin.ts';
 import { type PanelFailure, panelFailure } from '../../lib/admin-failure.ts';
 import { adminObjects } from '../../lib/admin-objects.ts';
 import { type AlertDraft, draftsOf, emptyAlert, rulesOf } from '../../lib/alerts.ts';
+import { createLoader } from '../../lib/loader.svelte.ts';
+import { edited } from '../../lib/settings.ts';
 import NtfyPanel from '../NtfyPanel.svelte';
+import LoadState from './LoadState.svelte';
 import PanelError from './PanelError.svelte';
 
 /**
@@ -22,27 +25,21 @@ let { admin, sites }: Props = $props();
 // svelte-ignore state_referenced_locally
 const api = adminObjects(admin);
 
-let drafts = $state<AlertDraft[] | undefined>(undefined);
-let loadFailed = $state(false);
+let drafts = $state<AlertDraft[]>([]);
+let ntfy = $state<ReturnType<typeof NtfyPanel> | undefined>(undefined);
+const rules = createLoader(() => api.alertRules(), {
+  onload: (stored) => {
+    drafts = draftsOf(stored);
+  },
+});
+void rules.load();
 let busy = $state(false);
 let saved = $state(false);
 /** `row` points the message at the rule that caused it; the rest is a panel failure. */
 let error = $state<(PanelFailure & { row?: number }) | undefined>(undefined);
 
-$effect(() => {
-  void api
-    .alertRules()
-    .then((rules) => {
-      drafts = draftsOf(rules);
-    })
-    .catch(() => {
-      loadFailed = true;
-    });
-});
-
 async function save(event: SubmitEvent): Promise<void> {
   event.preventDefault();
-  if (drafts === undefined) return;
   error = undefined;
   saved = false;
   const parsed = rulesOf(drafts);
@@ -52,7 +49,7 @@ async function save(event: SubmitEvent): Promise<void> {
   }
   busy = true;
   try {
-    drafts = draftsOf(await api.saveAlertRules(parsed.rules));
+    rules.set(await api.saveAlertRules(parsed.rules));
     saved = true;
   } catch (failure) {
     error = panelFailure(failure, 'Saving failed — try again.');
@@ -60,9 +57,15 @@ async function save(event: SubmitEvent): Promise<void> {
     busy = false;
   }
 }
+
+/** Edits a Settings section switch would discard — here or in the ntfy card. */
+export function unsaved(): boolean {
+  const stored = rules.value;
+  return (ntfy?.unsaved() ?? false) || (stored !== undefined && edited(drafts, draftsOf(stored)));
+}
 </script>
 
-<NtfyPanel {admin} {sites} />
+<NtfyPanel bind:this={ntfy} {admin} {sites} />
 
 <div class="card c12">
   <h2>Alert rules</h2>
@@ -71,92 +74,90 @@ async function save(event: SubmitEvent): Promise<void> {
     above, so configure that first. <code>moves more than</code> compares percent change against
     the same-length previous window.
   </p>
-  {#if loadFailed}
-    <p class="widget-note">Alert rules unavailable.</p>
-  {:else if drafts === undefined}
-    <p class="widget-note">Loading…</p>
-  {:else}
-    <form class="oform" onsubmit={save}>
-      {#each drafts as draft, index (index)}
-        <div class="arow">
-          <label class="field">
-            Site
-            <select bind:value={draft.site}>
-              <option value="" disabled>pick one</option>
-              {#each sites ?? [] as site (site.id)}
-                <option value={String(site.id)}>{site.name}</option>
-              {/each}
-            </select>
-          </label>
-          <label class="field">
-            Metric
-            <select bind:value={draft.metric}>
-              {#each MetricSchema.options as metric (metric)}
-                <option value={metric}>{metric}</option>
-              {/each}
-            </select>
-          </label>
-          <label class="field">
-            Where (optional)
-            <input bind:value={draft.dim} list="alert-dims" placeholder="dimension" />
-          </label>
-          <label class="field">
-            equals
-            <input bind:value={draft.value} placeholder="value" />
-          </label>
-          <label class="field">
-            Condition
-            <select bind:value={draft.condition}>
-              <option value="above">above</option>
-              <option value="below">below</option>
-              <option value="delta_pct">moves more than %</option>
-            </select>
-          </label>
-          <label class="field thr">
-            Threshold
-            <input bind:value={draft.threshold} inputmode="decimal" placeholder="100" />
-          </label>
-          <label class="field">
-            Window
-            <select bind:value={draft.window}>
-              <option value="day">today so far</option>
-              <option value="hour">last 24 hours</option>
-            </select>
-          </label>
-          <button
-            class="btn subtle drop"
-            type="button"
-            aria-label="Remove alert rule {index + 1}"
-            onclick={() => (drafts = drafts?.filter((_, i) => i !== index))}>×</button
-          >
-        </div>
-        {#if error?.row === index}
-          <p class="form-error" role="alert">Rule {index + 1}: {error.message}</p>
-        {/if}
-      {:else}
-        <p class="widget-note">No alert rules — nothing is watched.</p>
-      {/each}
-      <datalist id="alert-dims">
-        {#each BaseDimensionSchema.options as dim (dim)}<option value={dim}></option>{/each}
-      </datalist>
-      <button
-        class="btn addv"
-        type="button"
-        onclick={() => (drafts = [...(drafts ?? []), emptyAlert(sites?.[0]?.id)])}
-      >
-        Add alert rule
-      </button>
-      {#if error?.row === undefined}
-        <PanelError failure={error} />
-      {/if}
-      {#if saved}<p class="form-ok" role="status">Alert rules saved.</p>{/if}
-      <div class="row">
-        <button class="btn primary" type="submit" disabled={busy}>
-          {busy ? 'Saving…' : 'Save alert rules'}
+  <LoadState of={rules} what="Alert rules">
+    {#snippet children()}
+      <form class="oform" onsubmit={save}>
+        {#each drafts as draft, index (index)}
+          <div class="arow">
+            <label class="field">
+              Site
+              <select bind:value={draft.site}>
+                <option value="" disabled>pick one</option>
+                {#each sites ?? [] as site (site.id)}
+                  <option value={String(site.id)}>{site.name}</option>
+                {/each}
+              </select>
+            </label>
+            <label class="field">
+              Metric
+              <select bind:value={draft.metric}>
+                {#each MetricSchema.options as metric (metric)}
+                  <option value={metric}>{metric}</option>
+                {/each}
+              </select>
+            </label>
+            <label class="field">
+              Where (optional)
+              <input bind:value={draft.dim} list="alert-dims" placeholder="dimension" />
+            </label>
+            <label class="field">
+              equals
+              <input bind:value={draft.value} placeholder="value" />
+            </label>
+            <label class="field">
+              Condition
+              <select bind:value={draft.condition}>
+                <option value="above">above</option>
+                <option value="below">below</option>
+                <option value="delta_pct">moves more than %</option>
+              </select>
+            </label>
+            <label class="field thr">
+              Threshold
+              <input bind:value={draft.threshold} inputmode="decimal" placeholder="100" />
+            </label>
+            <label class="field">
+              Window
+              <select bind:value={draft.window}>
+                <option value="day">today so far</option>
+                <option value="hour">last 24 hours</option>
+              </select>
+            </label>
+            <button
+              class="btn subtle drop"
+              type="button"
+              aria-label="Remove alert rule {index + 1}"
+              onclick={() => (drafts = drafts.filter((_, i) => i !== index))}>×</button
+            >
+          </div>
+          {#if error?.row === index}
+            <p class="form-error" role="alert">Rule {index + 1}: {error.message}</p>
+          {/if}
+        {:else}
+          <p class="widget-note">No alert rules — nothing is watched.</p>
+        {/each}
+        <datalist id="alert-dims">
+          {#each BaseDimensionSchema.options as dim (dim)}<option value={dim}></option>{/each}
+        </datalist>
+        <button
+          class="btn addv"
+          type="button"
+          onclick={() => (drafts = [...drafts, emptyAlert(sites?.[0]?.id)])}
+        >
+          Add alert rule
         </button>
-      </div>
-    </form>
-  {/if}
+        {#if error?.row === undefined}
+          <PanelError failure={error} />
+        {/if}
+        {#if saved}<p class="form-ok" role="status">Alert rules saved.</p>{/if}
+        <div class="row">
+          <button class="btn primary" type="submit" disabled={busy}>
+            {busy ? 'Saving…' : 'Save alert rules'}
+          </button>
+        </div>
+      </form>
+    {/snippet}
+  </LoadState>
 </div>
 
 <style>

@@ -16,7 +16,7 @@ async function condition(
   op: string,
   value: string,
 ): Promise<void> {
-  const row = page.locator('[role=dialog] .cond-row').nth(index);
+  const row = page.locator('dialog .cond-row').nth(index);
   await row.getByLabel('Dimension').fill(dim);
   await row.getByLabel('Operator').selectOption(op);
   await row.getByLabel('Value').fill(value);
@@ -49,7 +49,7 @@ test('the editor builds a nested expression and reads it back unambiguously', as
   await dashboardReady(page);
   await page.getByRole('button', { name: '+ Filter' }).click();
 
-  const dialog = page.locator('[role=dialog]');
+  const dialog = page.locator('dialog');
   await dialog.getByRole('button', { name: '+ condition' }).click();
   await condition(page, 0, 'country', 'neq', 'SG');
   // The race: three fields set in sequence must not overwrite each other.
@@ -66,7 +66,7 @@ test('the editor builds a nested expression and reads it back unambiguously', as
   );
 
   await dialog.getByRole('button', { name: 'Apply' }).click();
-  await expect(page.locator('[role=dialog]')).toHaveCount(0);
+  await expect(page.locator('dialog')).toHaveCount(0);
   await expect(page).toHaveURL(/f=country%3Aneq%3ASG/);
   await expect(page).toHaveURL(/f=%7E/); // the group takes the base64url spelling
   expect(await chips(page)).toEqual([
@@ -87,7 +87,7 @@ test('text mode round-trips with the visual editor', async ({ page }) => {
   await openView(page, { site: 2, range: '90d', filters: ['country:neq:SG'] });
   await page.getByRole('button', { name: 'Edit filter' }).click();
 
-  const dialog = page.locator('[role=dialog]');
+  const dialog = page.locator('dialog');
   await dialog.getByRole('button', { name: 'Edit as text' }).click();
   const box = dialog.getByLabel('Filter expression');
   await expect(box).toHaveValue('country != "SG"');
@@ -107,7 +107,7 @@ test('a typo is refused with its position, and the text is kept', async ({ page 
   await openView(page, { site: 2, range: '90d' });
   await page.getByRole('button', { name: '+ Filter' }).click();
 
-  const dialog = page.locator('[role=dialog]');
+  const dialog = page.locator('dialog');
   await dialog.getByRole('button', { name: 'Edit as text' }).click();
   const typed = 'country != SG and nonsense = 1';
   await dialog.getByLabel('Filter expression').fill(typed);
@@ -122,7 +122,7 @@ test('a typo is refused with its position, and the text is kept', async ({ page 
 test('the whole-visit box is offered only where it changes the answer', async ({ page }) => {
   await openView(page, { site: 2, range: '90d' });
   await page.getByRole('button', { name: '+ Filter' }).click();
-  const dialog = page.locator('[role=dialog]');
+  const dialog = page.locator('dialog');
   await dialog.getByRole('button', { name: '+ condition' }).click();
   const row = dialog.locator('.cond-row').first();
 

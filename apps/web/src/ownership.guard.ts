@@ -45,7 +45,7 @@ export const RENDERINGS: readonly Rendering[] = [
   },
   {
     what: 'the modal overlay',
-    marks: ['class="modal"', 'class="back"'],
+    marks: ['showModal('],
     owners: ['lib/components/Modal.svelte'],
     instead: 'render <Modal> and pass it children',
   },
@@ -96,6 +96,12 @@ export const RENDERINGS: readonly Rendering[] = [
     marks: ['class:urgent'],
     owners: ['views/settings/PanelError.svelte'],
     instead: 'render <PanelError> with the panelFailure() of whatever was thrown',
+  },
+  {
+    what: "a settings card's loading / unavailable state",
+    marks: [' unavailable.'],
+    owners: ['views/settings/LoadState.svelte'],
+    instead: 'read through createLoader() and render <LoadState>, which offers the Retry',
   },
   {
     what: 'the per-visitor tally row',

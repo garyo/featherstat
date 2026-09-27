@@ -12,6 +12,7 @@ import type { AdminClient } from '../../lib/admin.ts';
 import { type PanelFailure, panelFailure } from '../../lib/admin-failure.ts';
 import { adminObjects } from '../../lib/admin-objects.ts';
 import type { AuthRole } from '../../lib/auth.svelte.ts';
+import ConfirmButton from '../../lib/components/ConfirmButton.svelte';
 import FilterEditor from '../../lib/components/FilterEditor.svelte';
 import {
   describeFilter,
@@ -24,7 +25,10 @@ import {
   rowsOf,
   rowsOfNodes,
 } from '../../lib/filter-builder.ts';
+import { createLoader } from '../../lib/loader.svelte.ts';
+import { edited } from '../../lib/settings.ts';
 import FilterBuilder from './FilterBuilder.svelte';
+import LoadState from './LoadState.svelte';
 import PanelError from './PanelError.svelte';
 
 /**
@@ -131,8 +135,8 @@ function storable(nodes: readonly FilterNode[]): SegmentFilterNode[] | undefined
 }
 
 // ---------- segments ----------
-let segments = $state<SegmentInfo[] | undefined>(undefined);
-let segmentsFailed = $state(false);
+const segments = createLoader(() => api.listSegments());
+void segments.load();
 let segName = $state('');
 let segEditing = $state<number | undefined>(undefined);
 let segOpen = $state(false);
@@ -143,32 +147,23 @@ let segBusy = $state(false);
 let segError = $state<PanelFailure | undefined>(undefined);
 let segRowError = $state<PanelFailure | undefined>(undefined);
 
-const loadSegments = (): Promise<void> =>
-  api
-    .listSegments()
-    .then((list) => {
-      segments = list;
-    })
-    .catch(() => {
-      segmentsFailed = true;
-    });
-$effect(() => {
-  void loadSegments();
-});
+/** What an open form would save, and what it held when it opened. */
+const segForm = () => ({ name: segName, rows: seg.rows, json: seg.json });
+let segOpened: unknown;
 
 function openSegment(info?: SegmentInfo): void {
   segOpen = true;
   segEditing = info?.id;
   segName = info?.name ?? '';
   seg = freshFilter();
-  if (info === undefined) return;
-  const rows = rowsOf(info.filter);
-  if (rows === undefined || rows.length === 0) {
+  const rows = info === undefined ? undefined : rowsOf(info.filter);
+  if (info !== undefined && (rows === undefined || rows.length === 0)) {
     seg.advanced = true;
     seg.json = JSON.stringify(info.filter, null, 2);
-  } else {
+  } else if (rows !== undefined) {
     seg.rows = rows;
   }
+  segOpened = $state.snapshot(segForm());
 }
 
 function toggleSegmentEditor(): void {
@@ -218,7 +213,7 @@ async function saveSegment(event: SubmitEvent): Promise<void> {
     if (segEditing === undefined) await api.createSegment(body);
     else await api.updateSegment(segEditing, body);
     segOpen = false;
-    await loadSegments();
+    await segments.reload();
   } catch (failure) {
     segError = panelFailure(failure, 'Saving failed — try again.');
   } finally {
@@ -230,15 +225,15 @@ async function deleteSegment(id: number): Promise<void> {
   segRowError = undefined;
   try {
     await api.deleteSegment(id);
-    await loadSegments();
+    await segments.reload();
   } catch (failure) {
     segRowError = panelFailure(failure, 'Deleting failed — try again.');
   }
 }
 
 // ---------- derived metrics ----------
-let metrics = $state<DerivedMetricInfo[] | undefined>(undefined);
-let derivedFailed = $state(false);
+const metrics = createLoader(() => api.listDerivedMetrics());
+void metrics.load();
 let dmName = $state('');
 let dmExpr = $state('');
 let dmEditing = $state<number | undefined>(undefined);
@@ -247,18 +242,8 @@ let dmBusy = $state(false);
 let dmError = $state<PanelFailure | undefined>(undefined);
 let dmRowError = $state<PanelFailure | undefined>(undefined);
 
-const loadDerived = (): Promise<void> =>
-  api
-    .listDerivedMetrics()
-    .then((list) => {
-      metrics = list;
-    })
-    .catch(() => {
-      derivedFailed = true;
-    });
-$effect(() => {
-  void loadDerived();
-});
+const dmForm = () => ({ name: dmName, expr: dmExpr });
+let dmOpened: unknown;
 
 function openDerived(info?: DerivedMetricInfo): void {
   dmOpen = true;
@@ -266,6 +251,7 @@ function openDerived(info?: DerivedMetricInfo): void {
   dmName = info?.name ?? '';
   dmExpr = info?.expr ?? '';
   dmError = undefined;
+  dmOpened = dmForm();
 }
 
 async function saveDerived(event: SubmitEvent): Promise<void> {
@@ -277,7 +263,7 @@ async function saveDerived(event: SubmitEvent): Promise<void> {
     if (dmEditing === undefined) await api.createDerivedMetric(body);
     else await api.updateDerivedMetric(dmEditing, body);
     dmOpen = false;
-    await loadDerived();
+    await metrics.reload();
   } catch (failure) {
     dmError = panelFailure(failure, 'Saving failed — try again.');
   } finally {
@@ -289,7 +275,7 @@ async function deleteDerived(id: number): Promise<void> {
   dmRowError = undefined;
   try {
     await api.deleteDerivedMetric(id);
-    await loadDerived();
+    await metrics.reload();
   } catch (failure) {
     dmRowError = panelFailure(failure, 'Deleting failed — try again.');
   }
@@ -298,8 +284,7 @@ async function deleteDerived(id: number): Promise<void> {
 // ---------- goals ----------
 let goalSite = $state<number | undefined>(undefined);
 const goalSiteId = $derived(goalSite ?? sites?.[0]?.id);
-let goals = $state<GoalInfo[] | undefined>(undefined);
-let goalsFailed = $state(false);
+const goals = createLoader((site: number) => api.listGoals(site));
 let goalName = $state('');
 let goalEditing = $state<number | undefined>(undefined);
 let goalOpen = $state(false);
@@ -312,17 +297,18 @@ let goalError = $state<PanelFailure | undefined>(undefined);
 let goalRowError = $state<PanelFailure | undefined>(undefined);
 
 $effect(() => {
-  if (goalSiteId === undefined) return;
-  goals = undefined;
-  void api
-    .listGoals(goalSiteId)
-    .then((list) => {
-      goals = list;
-    })
-    .catch(() => {
-      goalsFailed = true;
-    });
+  if (goalSiteId !== undefined) void goals.load(goalSiteId);
 });
+
+const goalForm = () => ({
+  name: goalName,
+  rows: goal.rows,
+  json: goal.json,
+  value: goalValueKind,
+  fixed: goalFixed,
+  target: goalTarget,
+});
+let goalOpened: unknown;
 
 function openGoal(info?: GoalInfo): void {
   goalOpen = true;
@@ -334,14 +320,23 @@ function openGoal(info?: GoalInfo): void {
   goalFixed =
     info?.valueExpr != null && info.valueExpr !== 'event_value' ? String(info.valueExpr.fixed) : '';
   goalTarget = info?.target == null ? '' : String(info.target);
-  if (info === undefined) return;
-  const rows = rowsOfNodes(info.filters);
-  if (rows === undefined || rows.length === 0) {
+  const rows = info === undefined ? undefined : rowsOfNodes(info.filters);
+  if (info !== undefined && (rows === undefined || rows.length === 0)) {
     goal.advanced = true;
     goal.json = JSON.stringify(info.filters, null, 2);
-  } else {
+  } else if (rows !== undefined) {
     goal.rows = rows;
   }
+  goalOpened = $state.snapshot(goalForm());
+}
+
+/** An open form holding edits — what a Settings section switch would discard. */
+export function unsaved(): boolean {
+  return (
+    (segOpen && edited(segForm(), segOpened)) ||
+    (dmOpen && edited(dmForm(), dmOpened)) ||
+    (goalOpen && edited(goalForm(), goalOpened))
+  );
 }
 
 function toggleGoalEditor(): void {
@@ -412,7 +407,7 @@ async function saveGoal(event: SubmitEvent): Promise<void> {
     if (goalEditing === undefined) await api.createGoal(goalSiteId, body);
     else await api.updateGoal(goalEditing, body);
     goalOpen = false;
-    goals = await api.listGoals(goalSiteId);
+    await goals.reload();
   } catch (failure) {
     goalError = panelFailure(failure, 'Saving failed — try again.');
   } finally {
@@ -421,11 +416,10 @@ async function saveGoal(event: SubmitEvent): Promise<void> {
 }
 
 async function deleteGoal(id: number): Promise<void> {
-  if (goalSiteId === undefined) return;
   goalRowError = undefined;
   try {
     await api.deleteGoal(id);
-    goals = await api.listGoals(goalSiteId);
+    await goals.reload();
   } catch (failure) {
     goalRowError = panelFailure(failure, 'Deleting failed — try again.');
   }
@@ -439,54 +433,55 @@ async function deleteGoal(id: number): Promise<void> {
     Named filter trees any query can reference. Deleting one makes the queries that name it answer
     with an error instead of silently widening.
   </p>
-  {#if segmentsFailed}
-    <p class="widget-note">Segments unavailable.</p>
-  {:else if segments === undefined}
-    <p class="widget-note">Loading…</p>
-  {:else}
-    {#each segments as info (info.id)}
-      <div class="prow">
-        <div class="pmeta">
-          <span class="pname">{info.name}</span>
-          <span class="psub">{describeFilter(info.filter)}</span>
+  <LoadState of={segments} what="Segments">
+    {#snippet children(list)}
+      {#each list as info (info.id)}
+        <div class="prow">
+          <div class="pmeta">
+            <span class="pname">{info.name}</span>
+            <span class="psub">{describeFilter(info.filter)}</span>
+          </div>
+          <button class="btn subtle" type="button" onclick={() => openSegment(info)}>Edit</button>
+          <ConfirmButton
+            label="Delete"
+            confirm="Really delete? Queries naming it will fail."
+            pending="Deleting…"
+            onconfirm={() => deleteSegment(info.id)}
+          />
         </div>
-        <button class="btn subtle" type="button" onclick={() => openSegment(info)}>Edit</button>
-        <button class="btn subtle" type="button" onclick={() => void deleteSegment(info.id)}>
-          Delete
-        </button>
-      </div>
-    {:else}
-      <p class="widget-note">No segments yet.</p>
-    {/each}
-    <PanelError failure={segRowError} />
-    {#if segOpen}
-      <form class="oform" onsubmit={saveSegment}>
-        <label class="field">
-          Name
-          <input bind:value={segName} maxlength="64" required />
-        </label>
-        <FilterBuilder
-          bind:rows={seg.rows}
-          bind:json={seg.json}
-          bind:advanced={seg.advanced}
-          error={seg.error}
-          ontoggle={toggleSegmentEditor}
-        />
-        <button class="btn subtle" type="button" onclick={() => openVisual('segment')}>
-          Build visually…
-        </button>
-        <PanelError failure={segError} />
-        <div class="row">
-          <button class="btn primary" type="submit" disabled={segBusy || segName.trim() === ''}>
-            {segBusy ? 'Saving…' : 'Save segment'}
+      {:else}
+        <p class="widget-note">No segments yet.</p>
+      {/each}
+      <PanelError failure={segRowError} />
+      {#if segOpen}
+        <form class="oform" onsubmit={saveSegment}>
+          <label class="field">
+            Name
+            <input bind:value={segName} maxlength="64" required />
+          </label>
+          <FilterBuilder
+            bind:rows={seg.rows}
+            bind:json={seg.json}
+            bind:advanced={seg.advanced}
+            error={seg.error}
+            ontoggle={toggleSegmentEditor}
+          />
+          <button class="btn subtle" type="button" onclick={() => openVisual('segment')}>
+            Build visually…
           </button>
-          <button class="btn" type="button" onclick={() => (segOpen = false)}>Cancel</button>
-        </div>
-      </form>
-    {:else}
-      <button class="btn addv" type="button" onclick={() => openSegment()}>New segment</button>
-    {/if}
-  {/if}
+          <PanelError failure={segError} />
+          <div class="row">
+            <button class="btn primary" type="submit" disabled={segBusy || segName.trim() === ''}>
+              {segBusy ? 'Saving…' : 'Save segment'}
+            </button>
+            <button class="btn" type="button" onclick={() => (segOpen = false)}>Cancel</button>
+          </div>
+        </form>
+      {:else}
+        <button class="btn addv" type="button" onclick={() => openSegment()}>New segment</button>
+      {/if}
+    {/snippet}
+  </LoadState>
 </div>
 
 <div class="card c6">
@@ -495,52 +490,53 @@ async function deleteGoal(id: number): Promise<void> {
     Arithmetic over the built-in metrics, usable in any query as <code>d:&lt;name&gt;</code> — e.g.
     <code>pageviews / visits</code>.
   </p>
-  {#if derivedFailed}
-    <p class="widget-note">Derived metrics unavailable.</p>
-  {:else if metrics === undefined}
-    <p class="widget-note">Loading…</p>
-  {:else}
-    {#each metrics as info (info.id)}
-      <div class="prow">
-        <div class="pmeta">
-          <span class="pname">d:{info.name}</span>
-          <span class="psub">{info.expr}</span>
+  <LoadState of={metrics} what="Derived metrics">
+    {#snippet children(list)}
+      {#each list as info (info.id)}
+        <div class="prow">
+          <div class="pmeta">
+            <span class="pname">d:{info.name}</span>
+            <span class="psub">{info.expr}</span>
+          </div>
+          <button class="btn subtle" type="button" onclick={() => openDerived(info)}>Edit</button>
+          <ConfirmButton
+            label="Delete"
+            confirm="Really delete? Queries naming it will fail."
+            pending="Deleting…"
+            onconfirm={() => deleteDerived(info.id)}
+          />
         </div>
-        <button class="btn subtle" type="button" onclick={() => openDerived(info)}>Edit</button>
-        <button class="btn subtle" type="button" onclick={() => void deleteDerived(info.id)}>
-          Delete
-        </button>
-      </div>
-    {:else}
-      <p class="widget-note">No derived metrics yet.</p>
-    {/each}
-    <PanelError failure={dmRowError} />
-    {#if dmOpen}
-      <form class="oform" onsubmit={saveDerived}>
-        <label class="field">
-          Name (lowercase, digits, underscores)
-          <input bind:value={dmName} maxlength="32" required />
-        </label>
-        <label class="field">
-          Expression
-          <input bind:value={dmExpr} maxlength="200" placeholder="events / visits" required />
-        </label>
-        <PanelError failure={dmError} />
-        <div class="row">
-          <button
-            class="btn primary"
-            type="submit"
-            disabled={dmBusy || dmName.trim() === '' || dmExpr.trim() === ''}
-          >
-            {dmBusy ? 'Saving…' : 'Save metric'}
-          </button>
-          <button class="btn" type="button" onclick={() => (dmOpen = false)}>Cancel</button>
-        </div>
-      </form>
-    {:else}
-      <button class="btn addv" type="button" onclick={() => openDerived()}>New derived metric</button>
-    {/if}
-  {/if}
+      {:else}
+        <p class="widget-note">No derived metrics yet.</p>
+      {/each}
+      <PanelError failure={dmRowError} />
+      {#if dmOpen}
+        <form class="oform" onsubmit={saveDerived}>
+          <label class="field">
+            Name (lowercase, digits, underscores)
+            <input bind:value={dmName} maxlength="32" required />
+          </label>
+          <label class="field">
+            Expression
+            <input bind:value={dmExpr} maxlength="200" placeholder="events / visits" required />
+          </label>
+          <PanelError failure={dmError} />
+          <div class="row">
+            <button
+              class="btn primary"
+              type="submit"
+              disabled={dmBusy || dmName.trim() === '' || dmExpr.trim() === ''}
+            >
+              {dmBusy ? 'Saving…' : 'Save metric'}
+            </button>
+            <button class="btn" type="button" onclick={() => (dmOpen = false)}>Cancel</button>
+          </div>
+        </form>
+      {:else}
+        <button class="btn addv" type="button" onclick={() => openDerived()}>New derived metric</button>
+      {/if}
+    {/snippet}
+  </LoadState>
 </div>
 
 {/if}
@@ -562,77 +558,78 @@ async function deleteGoal(id: number): Promise<void> {
       {/each}
     </select>
   </label>
-  {#if goalsFailed}
-    <p class="widget-note">Goals unavailable.</p>
-  {:else if goals === undefined}
-    <p class="widget-note">Loading…</p>
-  {:else}
-    {#each goals as info (info.id)}
-      <div class="prow">
-        <div class="pmeta">
-          <span class="pname">{info.name}</span>
-          <span class="psub">
-            {info.filters.map(describeFilter).join(' and ')}
-            {info.target === null ? '' : ` · target ${info.target}`}
-          </span>
+  <LoadState of={goals} what="Goals">
+    {#snippet children(list)}
+      {#each list as info (info.id)}
+        <div class="prow">
+          <div class="pmeta">
+            <span class="pname">{info.name}</span>
+            <span class="psub">
+              {info.filters.map(describeFilter).join(' and ')}
+              {info.target === null ? '' : ` · target ${info.target}`}
+            </span>
+          </div>
+          <button class="btn subtle" type="button" onclick={() => openGoal(info)}>Edit</button>
+          <ConfirmButton
+            label="Delete"
+            confirm="Really delete? Widgets showing it will fail."
+            pending="Deleting…"
+            onconfirm={() => deleteGoal(info.id)}
+          />
         </div>
-        <button class="btn subtle" type="button" onclick={() => openGoal(info)}>Edit</button>
-        <button class="btn subtle" type="button" onclick={() => void deleteGoal(info.id)}>
-          Delete
-        </button>
-      </div>
-    {:else}
-      <p class="widget-note">No goals for this site yet.</p>
-    {/each}
-    <PanelError failure={goalRowError} />
-    {#if goalOpen}
-      <form class="oform" onsubmit={saveGoal}>
-        <label class="field">
-          Name
-          <input bind:value={goalName} maxlength="64" required />
-        </label>
-        <FilterBuilder
-          bind:rows={goal.rows}
-          bind:json={goal.json}
-          bind:advanced={goal.advanced}
-          error={goal.error}
-          ontoggle={toggleGoalEditor}
-        />
-        <button class="btn subtle" type="button" onclick={() => openVisual('goal')}>
-          Build visually…
-        </button>
-        <div class="grow">
+      {:else}
+        <p class="widget-note">No goals for this site yet.</p>
+      {/each}
+      <PanelError failure={goalRowError} />
+      {#if goalOpen}
+        <form class="oform" onsubmit={saveGoal}>
           <label class="field">
-            Value per conversion
-            <select bind:value={goalValueKind}>
-              <option value="none">none</option>
-              <option value="event_value">the matching event's value</option>
-              <option value="fixed">a fixed amount</option>
-            </select>
+            Name
+            <input bind:value={goalName} maxlength="64" required />
           </label>
-          {#if goalValueKind === 'fixed'}
-            <label class="field">
-              Amount
-              <input bind:value={goalFixed} inputmode="decimal" placeholder="25" />
-            </label>
-          {/if}
-          <label class="field">
-            Target (display only)
-            <input bind:value={goalTarget} inputmode="numeric" placeholder="100" />
-          </label>
-        </div>
-        <PanelError failure={goalError} />
-        <div class="row">
-          <button class="btn primary" type="submit" disabled={goalBusy || goalName.trim() === ''}>
-            {goalBusy ? 'Saving…' : 'Save goal'}
+          <FilterBuilder
+            bind:rows={goal.rows}
+            bind:json={goal.json}
+            bind:advanced={goal.advanced}
+            error={goal.error}
+            ontoggle={toggleGoalEditor}
+          />
+          <button class="btn subtle" type="button" onclick={() => openVisual('goal')}>
+            Build visually…
           </button>
-          <button class="btn" type="button" onclick={() => (goalOpen = false)}>Cancel</button>
-        </div>
-      </form>
-    {:else}
-      <button class="btn addv" type="button" onclick={() => openGoal()}>New goal</button>
-    {/if}
-  {/if}
+          <div class="grow">
+            <label class="field">
+              Value per conversion
+              <select bind:value={goalValueKind}>
+                <option value="none">none</option>
+                <option value="event_value">the matching event's value</option>
+                <option value="fixed">a fixed amount</option>
+              </select>
+            </label>
+            {#if goalValueKind === 'fixed'}
+              <label class="field">
+                Amount
+                <input bind:value={goalFixed} inputmode="decimal" placeholder="25" />
+              </label>
+            {/if}
+            <label class="field">
+              Target (display only)
+              <input bind:value={goalTarget} inputmode="numeric" placeholder="100" />
+            </label>
+          </div>
+          <PanelError failure={goalError} />
+          <div class="row">
+            <button class="btn primary" type="submit" disabled={goalBusy || goalName.trim() === ''}>
+              {goalBusy ? 'Saving…' : 'Save goal'}
+            </button>
+            <button class="btn" type="button" onclick={() => (goalOpen = false)}>Cancel</button>
+          </div>
+        </form>
+      {:else}
+        <button class="btn addv" type="button" onclick={() => openGoal()}>New goal</button>
+      {/if}
+    {/snippet}
+  </LoadState>
 </div>
 
 <!-- One mount for both panels. No `segments` prop: a stored segment may not

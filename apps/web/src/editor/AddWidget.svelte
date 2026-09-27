@@ -10,9 +10,10 @@ import {
 } from '@featherstat/shared';
 import Modal from '../lib/components/Modal.svelte';
 import { DIMENSION_CHOICES } from '../lib/filters.ts';
+import { VIZ_LABELS } from '../lib/viz-labels.ts';
 import { METRIC_LABELS } from '../widgets/format.ts';
 import { REGISTRY } from '../widgets/registry.ts';
-import { buildWidget } from './model.ts';
+import { buildWidget, limitProblem } from './model.ts';
 
 /**
  * The add-widget picker (docs/05: pick query + viz from the same vocabulary the
@@ -38,12 +39,14 @@ let viz = $state<VizType>('bar-list');
 let title = $state('');
 let metrics = $state<Metric[]>(['visitors']);
 let dim = $state<Dimension | ''>('path');
-let limit = $state(8);
+/** A number box binds null while it is empty. */
+let limit = $state<number | null>(8);
 
 /** Free-form vizzes take the picked breakdown; the rest pin their own query shape. */
 const freeForm = $derived(viz === 'bar-list' || viz === 'table' || viz === 'map');
 /** Feed has no query, but its row count is a real knob. */
 const pickLimit = $derived(freeForm || viz === 'feed');
+const limitError = $derived(pickLimit ? limitProblem(limit) : undefined);
 /** The realtime family reads the stream: no query, no knobs beyond a title. */
 /** Vizzes whose pinned query answers no metric pick — site cards, and dwell's own kind. */
 const METRICLESS = new Set<VizType>([
@@ -62,9 +65,16 @@ function toggleMetric(metric: Metric): void {
 }
 
 function add(): void {
+  if (limitError !== undefined) return;
   onadd(
     buildWidget(
-      { viz, title, metrics, dim: freeForm ? dim : '', limit: pickLimit ? limit : undefined },
+      {
+        viz,
+        title,
+        metrics,
+        dim: freeForm ? dim : '',
+        limit: pickLimit ? (limit ?? undefined) : undefined,
+      },
       id,
     ),
   );
@@ -77,7 +87,9 @@ function add(): void {
       Visualization
       <select bind:value={viz}>
         {#each vizOptions as type (type)}
-          <option value={type}>{type}{REGISTRY[type] === undefined ? ' (placeholder)' : ''}</option>
+          <option value={type}>
+            {VIZ_LABELS[type]}{REGISTRY[type] === undefined ? ' (placeholder)' : ''}
+          </option>
         {/each}
       </select>
     </label>
@@ -114,15 +126,25 @@ function add(): void {
     {#if pickLimit}
       <label class="field">
         Limit
-        <input type="number" bind:value={limit} min="1" max="1000" />
+        <input
+          type="number"
+          bind:value={limit}
+          min="1"
+          max="1000"
+          aria-invalid={limitError !== undefined}
+          aria-describedby={limitError === undefined ? undefined : 'add-widget-limit'}
+        />
       </label>
+      {#if limitError !== undefined}
+        <p class="form-error" id="add-widget-limit" role="alert">{limitError}</p>
+      {/if}
     {/if}
     <div class="actions">
       <button class="btn" type="button" onclick={onclose}>Cancel</button>
       <button
         class="btn primary"
         type="button"
-        disabled={pickMetrics && metrics.length === 0}
+        disabled={(pickMetrics && metrics.length === 0) || limitError !== undefined}
         onclick={add}>Add widget</button
       >
     </div>

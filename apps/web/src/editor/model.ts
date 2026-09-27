@@ -5,6 +5,7 @@ import {
   dashboardBatchIssue,
   MAX_WIDGETS_PER_DASHBOARD,
   type Metric,
+  MetricQuerySchema,
   upgradeDashboard,
   type VizType,
   type WidgetSpec,
@@ -17,6 +18,16 @@ import {
  * import parser. All immutable — the Svelte components own the draft `$state`
  * and replace it with what these return.
  */
+
+/** The row-count bounds, read off the query schema so the form and the server agree. */
+const LIMIT = MetricQuerySchema.shape.limit.unwrap();
+
+/** Why a typed row count cannot be used, or undefined when it can. */
+export function limitProblem(limit: number | null): string | undefined {
+  return limit !== null && LIMIT.safeParse(limit).success
+    ? undefined
+    : `Limit must be a whole number from ${LIMIT.minValue} to ${LIMIT.maxValue}.`;
+}
 
 /** The resize vocabulary — grid spans the layout CSS actually distinguishes. */
 export const WIDTH_PRESETS = [4, 6, 12] as const;

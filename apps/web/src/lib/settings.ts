@@ -1,4 +1,4 @@
-import type { AdminBotDrops } from '@featherstat/shared';
+import type { AdminBotDrops, AdminDataSettings } from '@featherstat/shared';
 
 /** Pure helpers behind the settings view — kept out of the component for tests. */
 
@@ -60,4 +60,49 @@ export function dropTotals(drops: readonly AdminBotDrops[]): Array<[number, numb
   const totals = new Map<number, number>();
   for (const drop of drops) totals.set(drop.siteId, (totals.get(drop.siteId) ?? 0) + drop.count);
   return [...totals.entries()].sort((a, b) => b[1] - a[1]);
+}
+
+/**
+ * The retention/backup form as its inputs hold it. The two counts are
+ * `type="number"` inputs, whose binding yields a number — or null once cleared —
+ * never a string.
+ */
+export interface DataSettingsDraft {
+  /** Null keeps raw events forever. */
+  retention: number | null;
+  backupDir: string;
+  /** Null only while the box is empty — there is no "forever" for backups. */
+  backupKeep: number | null;
+}
+
+export function dataSettingsDraft(settings: AdminDataSettings): DataSettingsDraft {
+  return {
+    retention: settings.retentionDays,
+    backupDir: settings.backupDir ?? '',
+    backupKeep: settings.backupKeep,
+  };
+}
+
+/** The PUT body for a draft, or what is missing from it. */
+export function dataSettingsBody(
+  draft: DataSettingsDraft,
+): { body: AdminDataSettings } | { error: string } {
+  if (draft.backupKeep === null) return { error: 'say how many backups to keep' };
+  const dir = draft.backupDir.trim();
+  return {
+    body: {
+      retentionDays: draft.retention,
+      backupDir: dir === '' ? null : dir,
+      backupKeep: draft.backupKeep,
+    },
+  };
+}
+
+/**
+ * Whether a form's draft differs from what it was opened on — the question a
+ * Settings section switch asks before it discards a panel. Compared as the JSON
+ * each would send, so an edit typed and then undone reads as no edit at all.
+ */
+export function edited(draft: unknown, opened: unknown): boolean {
+  return JSON.stringify(draft) !== JSON.stringify(opened);
 }

@@ -154,6 +154,27 @@ describe('DashboardSchema', () => {
     });
     expect(dash.grid[0]?.options).toEqual({});
   });
+
+  // Two cards sharing an id share one entry in the batch's slot map, so the
+  // second widget's answer was drawn in both.
+  it('refuses two widgets with the same id, naming the second', () => {
+    const parsed = DashboardSchema.safeParse({
+      name: 'twins',
+      site: 1,
+      grid: [
+        { id: 'feed', viz: 'feed', w: 6, h: 2 },
+        { id: 'pages', viz: 'feed', w: 6, h: 2 },
+        { id: 'feed', viz: 'active-now', w: 6, h: 2 },
+      ],
+    });
+    expect(parsed.success).toBe(false);
+    expect(parsed.error?.issues).toEqual([
+      expect.objectContaining({
+        path: ['grid', 2, 'id'],
+        message: "duplicate widget id 'feed' — every widget needs its own",
+      }),
+    ]);
+  });
 });
 
 describe('isValidTimezone', () => {

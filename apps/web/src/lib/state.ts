@@ -20,7 +20,8 @@ import { parseFilters, sameFilters, serializeFilter } from './filters.ts';
  *
  * The full docs/05 state: site + range (preset or explicit dates) + compare
  * mode + which dashboard from the library (`dash`) + filter chips (`f` params,
- * see filters.ts) + which top-level view is up (`view=realtime`).
+ * see filters.ts) + which top-level view is up (`view=realtime`) + which
+ * Settings section is open (`section=access`).
  */
 
 /** `all` is the overview; a number is one site — the same scope the query API takes. */
@@ -46,6 +47,18 @@ export type DashRef = number | `t:${string}`;
  * entity's drill-in (docs/05 § Detail views), named by the `d` param. */
 export type ViewName = 'dash' | 'journeys' | 'realtime' | 'settings' | 'detail';
 
+/** The Settings view's sections (docs/05 § Settings), in nav order. */
+export const SETTINGS_SECTIONS = [
+  'sites',
+  'access',
+  'users',
+  'query',
+  'campaigns',
+  'notify',
+  'data',
+] as const;
+export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
+
 /** The entity a detail view is about: a drillable dimension and its value. */
 export interface DetailRef {
   dim: DetailDimension;
@@ -68,6 +81,8 @@ export interface ViewState {
   view: ViewName;
   /** The entity on screen when `view` is `detail`; undefined everywhere else. */
   detail: DetailRef | undefined;
+  /** The open Settings section when `view` is `settings`; undefined = the first. */
+  section: SettingsSection | undefined;
   filters: FilterNode[];
   /** Transient per-widget breakdown overrides; they name widgets of `dash`. */
   pivots: PivotChoice[];
@@ -85,7 +100,7 @@ export type ViewStatePatch = Partial<ViewState>;
  * also drops the library selection (`dash` names a dashboard of the OLD
  * scope), and a scope or library change drops the pivots, which name widgets
  * of the old document. Naming an entity IS entering its detail view; leaving
- * the detail view forgets the entity.
+ * the detail view forgets the entity, as leaving Settings forgets its section.
  */
 export function resolveNav(
   current: ViewState,
@@ -117,6 +132,13 @@ export function resolveNav(
     current.detail !== undefined
   ) {
     next.detail = undefined;
+  }
+  if (
+    (next.view ?? current.view) !== 'settings' &&
+    !('section' in next) &&
+    current.section !== undefined
+  ) {
+    next.section = undefined;
   }
   return next;
 }
@@ -166,6 +188,7 @@ export const DEFAULT_VIEW_STATE: ViewState = {
   dash: undefined,
   view: 'dash',
   detail: undefined,
+  section: undefined,
   filters: [],
   pivots: [],
 };
@@ -285,6 +308,7 @@ export function parseViewState(href: string): ViewState {
     // A detail view without its entity is nothing to show — open the dashboard.
     view: view === 'detail' && detail === undefined ? 'dash' : view,
     detail: view === 'detail' ? detail : undefined,
+    section: view === 'settings' ? parseSection(params.get('section')) : undefined,
     filters: parseFilters(params.getAll('f')),
     pivots: parsePivots(params.getAll('pv')),
   };
@@ -317,6 +341,7 @@ export function applyViewState(state: ViewState, href: string): string {
       ? serializeDetailRef(state.detail)
       : undefined,
   );
+  set(url.searchParams, 'section', state.view === 'settings' ? state.section : undefined);
   url.searchParams.delete('f');
   for (const filter of state.filters) url.searchParams.append('f', serializeFilter(filter));
   url.searchParams.delete('pv');
@@ -334,6 +359,7 @@ export function sameViewState(a: ViewState, b: ViewState): boolean {
     a.dash === b.dash &&
     a.view === b.view &&
     sameDetailRef(a.detail, b.detail) &&
+    a.section === b.section &&
     sameFilters(a.filters, b.filters) &&
     a.pivots.length === b.pivots.length &&
     a.pivots.every((p, i) => p.widget === b.pivots[i]?.widget && p.dim === b.pivots[i]?.dim)
@@ -399,6 +425,10 @@ function parseView(raw: string | null): ViewName {
   return raw === 'journeys' || raw === 'realtime' || raw === 'settings' || raw === 'detail'
     ? raw
     : DEFAULT_VIEW_STATE.view;
+}
+
+function parseSection(raw: string | null): SettingsSection | undefined {
+  return SETTINGS_SECTIONS.find((section) => section === raw);
 }
 
 /**

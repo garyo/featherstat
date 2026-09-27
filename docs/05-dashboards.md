@@ -36,7 +36,12 @@ so the admin surfaces stay small panels instead of one wall. The nav is
 role-filtered: a user (R23) gets the per-site sections (Sites & tracking,
 Access, Query objects, Campaigns — minus the admin-only cards: segments,
 derived metrics, campaign aliases); Users, Notifications and Data are the
-admin's alone, and a viewer gets no ⚙ at all:
+admin's alone, and a viewer gets no ⚙ at all. The open section is view state
+like any other — `?view=settings&section=access` — so a reload stays put and
+Back returns to the previous section; choosing another section while a panel
+holds unsaved edits asks first. Every irreversible row verb (revoke, delete,
+disable, reset) takes a second click on the same button, which lapses after a
+few seconds:
 
 | Section | Panels |
 | --- | --- |

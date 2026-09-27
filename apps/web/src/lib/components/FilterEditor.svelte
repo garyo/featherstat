@@ -103,6 +103,19 @@ function toVisual(): void {
 
 const converted = $derived(nodesOf(root));
 const error = $derived('error' in converted ? converted.error : undefined);
+
+/** The expression as opened, round-tripped the way Apply would send it — "unchanged". */
+// svelte-ignore state_referenced_locally
+const openedAs = nodesOf(draftOfNodes(filters));
+const opened = 'nodes' in openedAs ? JSON.stringify(openedAs.nodes) : undefined;
+
+/** Closing without Apply loses whatever differs from what was opened; ask first. */
+function mayClose(): boolean {
+  const now = asText ? parseFilterText(text, segmentIds) : converted;
+  const unchanged = 'nodes' in now && JSON.stringify(now.nodes) === opened;
+  return unchanged || window.confirm('Discard the filter changes you have not applied?');
+}
+
 /**
  * The whole expression as ONE node before labelling. Labelling each top-level
  * node separately and joining on " and " loses the parentheses — "A and B or C"
@@ -191,7 +204,7 @@ async function saveSegment(): Promise<void> {
 }
 </script>
 
-<Modal {title} size="wide" {onclose}>
+<Modal {title} size="wide" {onclose} onrequestclose={mayClose}>
   {#if asText}
     <textarea
       class="filter-text"

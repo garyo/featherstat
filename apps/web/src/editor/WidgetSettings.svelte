@@ -2,6 +2,7 @@
 import type { WidgetSpec } from '@featherstat/shared';
 import Modal from '../lib/components/Modal.svelte';
 import { DIMENSION_CHOICES } from '../lib/filters.ts';
+import { VIZ_LABELS } from '../lib/viz-labels.ts';
 import { type SiteSort, siteSortOf } from '../widgets/site-stats.ts';
 
 /**
@@ -70,14 +71,14 @@ function setSort(sort: string): void {
 }
 </script>
 
-<Modal title="Widget settings — {spec.title ?? spec.viz}" {onclose}>
+<Modal title="Widget settings — {spec.title ?? VIZ_LABELS[spec.viz]}" {onclose}>
   <div class="form">
     <label class="field">
       Title
       <input
         type="text"
         value={spec.title ?? ''}
-        placeholder={spec.viz}
+        placeholder={VIZ_LABELS[spec.viz]}
         maxlength="200"
         oninput={(event) => setTitle(event.currentTarget.value)}
       />
