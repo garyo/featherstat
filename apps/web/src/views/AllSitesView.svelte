@@ -73,6 +73,8 @@ const siteKey = $derived(app.sites === null ? '' : [...app.sites.keys()].join(',
 const siteIds = $derived(siteKey === '' ? [] : siteKey.split(',').map(Number));
 /** The batch waits for the directory AND the dashboard lookup. */
 const ready = $derived(app.sites !== null && store.ready);
+/** On screen but not this state's: in flight, or held back until the lookup answers. */
+const refetching = $derived(runner.refetching || (!ready && runner.response !== undefined));
 const dashboard = $derived(
   withLiveSiteIds(
     store.stored ??
@@ -199,7 +201,7 @@ const note = $derived.by(() => {
     {dashboard}
     response={runner.response}
     error={runner.error}
-    refetching={runner.refetching}
+    {refetching}
     {env}
   />
 {/if}

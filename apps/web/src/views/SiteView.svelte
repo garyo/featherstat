@@ -182,6 +182,8 @@ function removeFilter(index: number): void {
 }
 
 const failed = $derived(runner.error !== undefined && runner.response !== undefined);
+/** On screen but not this state's: in flight, or held back until the lookup answers. */
+const refetching = $derived(runner.refetching || (!store.ready && runner.response !== undefined));
 /** The range actually on screen — while refetching, the held response's, not the pill's. */
 const heldRange = $derived.by<ViewRange>(() => {
   if (runner.held === undefined) return range;
@@ -276,7 +278,7 @@ const note = $derived.by(() => {
     {dashboard}
     response={runner.response}
     error={runner.error}
-    refetching={runner.refetching}
+    {refetching}
     {env}
   />
 {/if}

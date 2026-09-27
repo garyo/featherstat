@@ -260,3 +260,23 @@ describe('the live stream and the clock reach only the widgets that read them', 
     expect(routed.mock.calls.length).toBe(before);
   });
 });
+
+describe('a site switch never shows the previous site at full strength', () => {
+  it('dims the held response while the new dashboard lookup runs', async () => {
+    const lookup = new SvelteMap([['ready', true]]);
+    const store: DashboardStore = {
+      ...templateStore(async () => false),
+      get ready() {
+        return lookup.get('ready') ?? true;
+      },
+    };
+    const root = render({ store });
+    await vi.waitFor(() => expect(root.querySelector('.grid:not(.refetching)')).not.toBeNull());
+
+    // The Shell reloads the library for the new scope: no batch runs yet, and
+    // what is on screen is still the old site's answer.
+    lookup.set('ready', false);
+    flushSync();
+    expect(root.querySelector('.grid')?.classList.contains('refetching')).toBe(true);
+  });
+});
