@@ -29,11 +29,11 @@ describe('MmdbProvider', () => {
     let clock = 1_000_000;
     const provider = new MmdbProvider(path, () => clock);
     try {
-      expect(provider.lookup('8.8.8.8')).toBeNull(); // hit arrives before the download lands
+      expect(provider.lookup('203.0.113.8')).toBeNull(); // hit arrives before the download lands
       writeFileSync(path, buildMmdb('Boston'));
-      expect(provider.lookup('8.8.8.8')).toBeNull(); // within the recheck window: still degraded
+      expect(provider.lookup('203.0.113.8')).toBeNull(); // within the recheck window: still degraded
       clock += 61_000;
-      expect(provider.lookup('8.8.8.8')?.city).toBe('Boston'); // healed, no restart
+      expect(provider.lookup('203.0.113.8')?.city).toBe('Boston'); // healed, no restart
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -46,12 +46,12 @@ describe('MmdbProvider', () => {
     const provider = new MmdbProvider(path, () => clock);
     try {
       writeFileSync(path, buildMmdb('Boston'));
-      expect(provider.lookup('8.8.8.8')?.city).toBe('Boston');
+      expect(provider.lookup('203.0.113.8')?.city).toBe('Boston');
       writeFileSync(path, buildMmdb('Cambridge'));
       utimesSync(path, new Date(), new Date(Date.now() + 5_000)); // distinct mtime
-      expect(provider.lookup('8.8.8.8')?.city).toBe('Boston'); // old edition until the recheck
+      expect(provider.lookup('203.0.113.8')?.city).toBe('Boston'); // old edition until the recheck
       clock += 61_000;
-      expect(provider.lookup('8.8.8.8')?.city).toBe('Cambridge');
+      expect(provider.lookup('203.0.113.8')?.city).toBe('Cambridge');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
