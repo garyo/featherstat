@@ -98,6 +98,12 @@ export const RENDERINGS: readonly Rendering[] = [
     instead: 'render <PanelError> with the panelFailure() of whatever was thrown',
   },
   {
+    what: "a settings card's loading / unavailable state",
+    marks: [' unavailable.'],
+    owners: ['views/settings/LoadState.svelte'],
+    instead: 'read through createLoader() and render <LoadState>, which offers the Retry',
+  },
+  {
     what: 'the per-visitor tally row',
     marks: ['class="visitor-row"'],
     owners: ['widgets/VisitorTally.svelte'],

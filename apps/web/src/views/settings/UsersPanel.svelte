@@ -5,6 +5,8 @@ import type { AdminClient } from '../../lib/admin.ts';
 import { type PanelFailure, panelFailure } from '../../lib/admin-failure.ts';
 import { adminObjects } from '../../lib/admin-objects.ts';
 import ConfirmButton from '../../lib/components/ConfirmButton.svelte';
+import { createLoader } from '../../lib/loader.svelte.ts';
+import LoadState from './LoadState.svelte';
 import PanelError from './PanelError.svelte';
 
 /**
@@ -24,8 +26,8 @@ const api = adminObjects(admin);
 const nameOf = (id: number): string => sites?.find((s) => s.id === id)?.name ?? `Site ${id}`;
 const day = (ms: number): string => new Date(ms).toLocaleDateString();
 
-let users = $state<UserInfo[] | undefined>(undefined);
-let usersFailed = $state(false);
+const users = createLoader(() => api.listUsers());
+void users.load();
 let email = $state('');
 let inviteSites = $state<number[]>([]);
 let inviteBusy = $state(false);
@@ -35,19 +37,6 @@ let rowError = $state<PanelFailure | undefined>(undefined);
 let invite = $state<{ email: string; url: string } | undefined>(undefined);
 /** The user whose site assignment is being edited, with the draft set. */
 let assigning = $state<{ id: number; sites: number[] } | undefined>(undefined);
-
-const load = (): Promise<void> =>
-  api
-    .listUsers()
-    .then((list) => {
-      users = list;
-    })
-    .catch(() => {
-      usersFailed = true;
-    });
-$effect(() => {
-  void load();
-});
 
 const inviteUrl = (path: string): string => new URL(path, window.location.origin).toString();
 
@@ -62,7 +51,7 @@ async function createUser(event: SubmitEvent): Promise<void> {
     invite = { email: address, url: inviteUrl(link.url) };
     email = '';
     inviteSites = [];
-    await load();
+    await users.reload();
   } catch (failure) {
     inviteError = panelFailure(failure, 'Inviting failed — try again.');
   } finally {
@@ -84,7 +73,7 @@ async function disable(id: number): Promise<void> {
   rowError = undefined;
   try {
     await api.disableUser(id);
-    await load();
+    await users.reload();
   } catch (failure) {
     rowError = panelFailure(failure, 'Disabling failed — try again.');
   }
@@ -96,7 +85,7 @@ async function saveAssignment(): Promise<void> {
   try {
     await api.setUserSites(assigning.id, assigning.sites);
     assigning = undefined;
-    await load();
+    await users.reload();
   } catch (failure) {
     rowError = panelFailure(failure, 'Saving failed — try again.');
   }
@@ -127,105 +116,103 @@ async function copySecret(secret: string): Promise<void> {
     (valid 7 days) yourself — there is no email server here. Sites a user creates are theirs
     automatically.
   </p>
-  {#if usersFailed}
-    <p class="widget-note">Users unavailable.</p>
-  {:else if users === undefined}
-    <p class="widget-note">Loading…</p>
-  {:else}
-    {#each users.filter((u) => u.disabledAt === null) as user (user.id)}
-      <div class="prow">
-        <div class="pmeta">
-          <span class="pname">{user.email}</span>
-          <span class="psub">
-            {sitesLabel(user)} · added {day(user.createdAt)} ·
-            {user.hasPassword ? 'active' : 'invite not yet claimed'}
-          </span>
+  <LoadState of={users} what="Users">
+    {#snippet children(list)}
+      {#each list.filter((u) => u.disabledAt === null) as user (user.id)}
+        <div class="prow">
+          <div class="pmeta">
+            <span class="pname">{user.email}</span>
+            <span class="psub">
+              {sitesLabel(user)} · added {day(user.createdAt)} ·
+              {user.hasPassword ? 'active' : 'invite not yet claimed'}
+            </span>
+          </div>
+          <button
+            class="btn subtle"
+            type="button"
+            onclick={() => (assigning = { id: user.id, sites: [...user.sites] })}
+          >
+            Sites…
+          </button>
+          <button class="btn subtle" type="button" onclick={() => void reinvite(user)}>
+            New link
+          </button>
+          <ConfirmButton
+            label="Disable"
+            confirm="Really disable? They are signed out now."
+            pending="Disabling…"
+            onconfirm={() => disable(user.id)}
+          />
         </div>
-        <button
-          class="btn subtle"
-          type="button"
-          onclick={() => (assigning = { id: user.id, sites: [...user.sites] })}
-        >
-          Sites…
-        </button>
-        <button class="btn subtle" type="button" onclick={() => void reinvite(user)}>
-          New link
-        </button>
-        <ConfirmButton
-          label="Disable"
-          confirm="Really disable? They are signed out now."
-          pending="Disabling…"
-          onconfirm={() => disable(user.id)}
-        />
-      </div>
-      {#if assigning?.id === user.id}
+        {#if assigning?.id === user.id}
+          <fieldset class="scope">
+            <legend>Owns and manages</legend>
+            {#each sites ?? [] as site (site.id)}
+              <label class="check">
+                <input
+                  type="checkbox"
+                  checked={assigning.sites.includes(site.id)}
+                  onchange={() => {
+                    if (assigning) assigning.sites = toggleSite(assigning.sites, site.id);
+                  }}
+                />
+                {site.name}
+              </label>
+            {/each}
+            <div class="row">
+              <button class="btn primary" type="button" onclick={() => void saveAssignment()}>
+                Save sites
+              </button>
+              <button class="btn" type="button" onclick={() => (assigning = undefined)}>
+                Cancel
+              </button>
+            </div>
+          </fieldset>
+        {/if}
+      {:else}
+        <p class="widget-note">No users yet — this instance is single-operator.</p>
+      {/each}
+      <PanelError failure={rowError} />
+      {#if invite !== undefined}
+        <div class="secret" role="status">
+          <code>{invite.url}</code>
+          <div class="row">
+            <button class="btn" type="button" onclick={() => invite && void copySecret(invite.url)}>
+              {copied ? 'Copied ✓' : 'Copy'}
+            </button>
+            <span class="widget-note">
+              Send it to {invite.email} yourself. You will not see this again.
+            </span>
+          </div>
+        </div>
+      {/if}
+      <form class="mint" onsubmit={createUser}>
+        <label class="field">
+          Email
+          <input type="email" bind:value={email} maxlength="254" required />
+        </label>
         <fieldset class="scope">
-          <legend>Owns and manages</legend>
+          <legend>Starts with</legend>
           {#each sites ?? [] as site (site.id)}
             <label class="check">
               <input
                 type="checkbox"
-                checked={assigning.sites.includes(site.id)}
-                onchange={() => {
-                  if (assigning) assigning.sites = toggleSite(assigning.sites, site.id);
-                }}
+                checked={inviteSites.includes(site.id)}
+                onchange={() => (inviteSites = toggleSite(inviteSites, site.id))}
               />
               {site.name}
             </label>
+          {:else}
+            <p class="widget-note">No sites yet — the user can create their own.</p>
           {/each}
-          <div class="row">
-            <button class="btn primary" type="button" onclick={() => void saveAssignment()}>
-              Save sites
-            </button>
-            <button class="btn" type="button" onclick={() => (assigning = undefined)}>
-              Cancel
-            </button>
-          </div>
         </fieldset>
-      {/if}
-    {:else}
-      <p class="widget-note">No users yet — this instance is single-operator.</p>
-    {/each}
-    <PanelError failure={rowError} />
-    {#if invite !== undefined}
-      <div class="secret" role="status">
-        <code>{invite.url}</code>
-        <div class="row">
-          <button class="btn" type="button" onclick={() => invite && void copySecret(invite.url)}>
-            {copied ? 'Copied ✓' : 'Copy'}
-          </button>
-          <span class="widget-note">
-            Send it to {invite.email} yourself. You will not see this again.
-          </span>
-        </div>
-      </div>
-    {/if}
-    <form class="mint" onsubmit={createUser}>
-      <label class="field">
-        Email
-        <input type="email" bind:value={email} maxlength="254" required />
-      </label>
-      <fieldset class="scope">
-        <legend>Starts with</legend>
-        {#each sites ?? [] as site (site.id)}
-          <label class="check">
-            <input
-              type="checkbox"
-              checked={inviteSites.includes(site.id)}
-              onchange={() => (inviteSites = toggleSite(inviteSites, site.id))}
-            />
-            {site.name}
-          </label>
-        {:else}
-          <p class="widget-note">No sites yet — the user can create their own.</p>
-        {/each}
-      </fieldset>
-      <PanelError failure={inviteError} />
-      <button class="btn primary" type="submit" disabled={inviteBusy || email.trim() === ''}>
-        {inviteBusy ? 'Minting…' : 'Invite user'}
-      </button>
-    </form>
-  {/if}
+        <PanelError failure={inviteError} />
+        <button class="btn primary" type="submit" disabled={inviteBusy || email.trim() === ''}>
+          {inviteBusy ? 'Minting…' : 'Invite user'}
+        </button>
+      </form>
+    {/snippet}
+  </LoadState>
 </div>
 
 <style>
