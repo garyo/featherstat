@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  dataSettingsBody,
+  dataSettingsDraft,
   dropTotals,
   formatBytes,
   localInputToMs,
@@ -82,5 +84,24 @@ describe('datetime-local round trip', () => {
   it('answers undefined for blank or partial input', () => {
     expect(localInputToMs('')).toBeUndefined();
     expect(localInputToMs('2026-07-')).toBeUndefined();
+  });
+});
+
+describe('dataSettingsBody', () => {
+  it('round-trips what the server stored', () => {
+    const stored = { retentionDays: 90, backupDir: '/data/backups', backupKeep: 7 };
+    expect(dataSettingsBody(dataSettingsDraft(stored))).toEqual({ body: stored });
+  });
+
+  it('sends a blank directory as backups-off and a cleared retention as forever', () => {
+    expect(dataSettingsBody({ retention: null, backupDir: '  ', backupKeep: 3 })).toEqual({
+      body: { retentionDays: null, backupDir: null, backupKeep: 3 },
+    });
+  });
+
+  it('refuses an empty backup count rather than inventing one', () => {
+    expect(dataSettingsBody({ retention: 30, backupDir: '', backupKeep: null })).toEqual({
+      error: 'say how many backups to keep',
+    });
   });
 });

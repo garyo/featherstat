@@ -10,7 +10,15 @@ import type {
 import type { AdminClient } from '../../lib/admin.ts';
 import { type PanelFailure, panelFailure } from '../../lib/admin-failure.ts';
 import { adminObjects } from '../../lib/admin-objects.ts';
-import { dropTotals, formatBytes, localInputToMs, msToLocalInput } from '../../lib/settings.ts';
+import {
+  type DataSettingsDraft,
+  dataSettingsBody,
+  dataSettingsDraft,
+  dropTotals,
+  formatBytes,
+  localInputToMs,
+  msToLocalInput,
+} from '../../lib/settings.ts';
 import { exactNumber } from '../../widgets/format.ts';
 import PanelError from './PanelError.svelte';
 
@@ -144,7 +152,7 @@ async function deleteAnnotation(id: number): Promise<void> {
 // ---------- data settings (retention + backup) ----------
 let dsLoaded = $state(false);
 let dsFailed = $state(false);
-let dsDraft = $state({ retention: '', backupDir: '', backupKeep: '7' });
+let dsDraft = $state<DataSettingsDraft>({ retention: null, backupDir: '', backupKeep: null });
 let dsBusy = $state(false);
 let dsSaved = $state(false);
 let dsError = $state<PanelFailure | undefined>(undefined);
@@ -153,11 +161,7 @@ $effect(() => {
   void api
     .dataSettings()
     .then((settings) => {
-      dsDraft = {
-        retention: settings.retentionDays === null ? '' : String(settings.retentionDays),
-        backupDir: settings.backupDir ?? '',
-        backupKeep: String(settings.backupKeep),
-      };
+      dsDraft = dataSettingsDraft(settings);
       dsLoaded = true;
     })
     .catch(() => {
@@ -167,20 +171,16 @@ $effect(() => {
 
 async function saveDataSettings(event: SubmitEvent): Promise<void> {
   event.preventDefault();
-  dsBusy = true;
   dsError = undefined;
   dsSaved = false;
+  const parsed = dataSettingsBody(dsDraft);
+  if ('error' in parsed) {
+    dsError = { message: parsed.error, urgent: false };
+    return;
+  }
+  dsBusy = true;
   try {
-    const saved = await api.saveDataSettings({
-      retentionDays: dsDraft.retention.trim() === '' ? null : Number(dsDraft.retention),
-      backupDir: dsDraft.backupDir.trim() === '' ? null : dsDraft.backupDir.trim(),
-      backupKeep: dsDraft.backupKeep.trim() === '' ? 7 : Number(dsDraft.backupKeep),
-    });
-    dsDraft = {
-      retention: saved.retentionDays === null ? '' : String(saved.retentionDays),
-      backupDir: saved.backupDir ?? '',
-      backupKeep: String(saved.backupKeep),
-    };
+    dsDraft = dataSettingsDraft(await api.saveDataSettings(parsed.body));
     dsSaved = true;
   } catch (failure) {
     dsError = panelFailure(failure, 'Saving failed — try again.');
@@ -397,7 +397,7 @@ async function saveExclusions(): Promise<void> {
       </label>
       <label class="field">
         Backups to keep
-        <input type="number" min="1" max="365" bind:value={dsDraft.backupKeep} />
+        <input type="number" min="1" max="365" bind:value={dsDraft.backupKeep} required />
       </label>
       <PanelError failure={dsError} />
       {#if dsSaved}<p class="form-ok">Saved.</p>{/if}
