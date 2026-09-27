@@ -35,10 +35,28 @@ export interface Rendering {
   instead: string;
 }
 
+/**
+ * A file puts `name` on an element — in a quoted `class` attribute of either
+ * quote, among other classes, in a `class={…}` expression, or as a
+ * `class:name` directive. Any of them draws the thing, so any of them counts.
+ */
+export function classMark(name: string): RegExp {
+  const token = `(?<![\\w-])${name}(?![\\w-])`;
+  const attribute = '(?<![\\w-])class';
+  return new RegExp(
+    [
+      `${attribute}\\s*=\\s*"[^"]*${token}[^"]*"`,
+      `${attribute}\\s*=\\s*'[^']*${token}[^']*'`,
+      `${attribute}\\s*=\\s*\\{[^\\n]*?${token}`,
+      `${attribute}:${name}(?![\\w-])`,
+    ].join('|'),
+  );
+}
+
 export const RENDERINGS: readonly Rendering[] = [
   {
     what: 'a filter condition row',
-    marks: ['class="cond-row"'],
+    marks: [classMark('cond-row')],
     owners: ['lib/components/FilterGroup.svelte'],
     instead:
       'render <FilterEditor>, which renders <FilterGroup> — a second dim/op/value row is a second filter grammar',
@@ -51,13 +69,13 @@ export const RENDERINGS: readonly Rendering[] = [
   },
   {
     what: 'a live-feed row',
-    marks: ['class="feed-row"'],
+    marks: [classMark('feed-row')],
     owners: ['widgets/FeedRows.svelte'],
     instead: 'render <FeedRows> and decorate it',
   },
   {
     what: 'a ranked bar row',
-    marks: ['class="bar-row"'],
+    marks: [classMark('bar-row')],
     owners: ['widgets/BarRows.svelte'],
     instead: 'render <BarRows>; a row that needs another number states `text`/`sub`/`tips`',
   },
@@ -87,13 +105,13 @@ export const RENDERINGS: readonly Rendering[] = [
   },
   {
     what: 'a what-changed mover row',
-    marks: ['class="chg-row"'],
+    marks: [classMark('chg-row')],
     owners: ['widgets/Changes.svelte'],
     instead: 'render the changes viz; sections and rows come from widgets/changes.ts',
   },
   {
     what: "a settings panel's report that a mutation failed",
-    marks: ['class:urgent'],
+    marks: [classMark('urgent')],
     owners: ['views/settings/PanelError.svelte'],
     instead: 'render <PanelError> with the panelFailure() of whatever was thrown',
   },
@@ -105,13 +123,13 @@ export const RENDERINGS: readonly Rendering[] = [
   },
   {
     what: 'the per-visitor tally row',
-    marks: ['class="visitor-row"'],
+    marks: [classMark('visitor-row')],
     owners: ['widgets/VisitorTally.svelte'],
     instead: 'render <VisitorTally>, which a page arranges but never re-implements',
   },
   {
     what: "a chart's visually-hidden table of its values",
-    marks: ['class="sr-only"', '<table'],
+    marks: [classMark('sr-only'), '<table'],
     owners: ['widgets/DataTable.svelte'],
     instead: 'render <DataTable> with the rows the chart draws',
   },

@@ -339,6 +339,16 @@ const markupOwnership = defineGuard<SourceFile[]>({
     'a second file grows the ranked-bar markup': (files) => {
       files.push({ name: 'widgets/Forked.svelte', source: '<div class="bar-row">…</div>' });
     },
+    // The markup written any other way a browser accepts still draws the row.
+    'a fork quotes the class in single quotes': (files) => {
+      files.push({ name: 'widgets/Forked.svelte', source: "<div class='cond-row'>…</div>" });
+    },
+    'a fork hides the class among others': (files) => {
+      files.push({ name: 'widgets/Forked.svelte', source: '<div class="x cond-row">…</div>' });
+    },
+    'a fork sets the class with a directive': (files) => {
+      files.push({ name: 'widgets/Forked.svelte', source: '<div class:cond-row={on}>…</div>' });
+    },
     'the shared rendering moves and nobody updates the table': (files) => {
       files.splice(
         files.findIndex((file) => file.name === 'widgets/FeedRows.svelte'),
