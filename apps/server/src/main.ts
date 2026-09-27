@@ -80,8 +80,11 @@ if (notifications.url !== undefined) {
   console.log(`ntfy notifications configured: ${notifications.rules.length} rule(s)`);
 }
 
-const server = serve({ fetch: app.fetch, port });
-console.log(`analytics server listening on :${port}`);
+// The bound port, not the configured one: PORT=0 asks the OS for a free port,
+// and whoever spawned us learns which from this line.
+const server = serve({ fetch: app.fetch, port }, (info) => {
+  console.log(`analytics server listening on :${info.port}`);
+});
 
 /** In-flight queries get this long at shutdown — well inside Docker's 10 s stop grace. */
 const QUERY_DRAIN_MS = 3_000;
