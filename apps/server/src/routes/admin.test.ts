@@ -367,7 +367,7 @@ describe('site deletion (docs/04 § 5)', () => {
     await runSitePurges(db);
     expect(count('SELECT COUNT(*) FROM events WHERE site_id = 1')).toBe(0);
     expect(count('SELECT COUNT(*) FROM events WHERE site_id = 2')).toBe(1);
-    expect(count('SELECT COUNT(*) FROM sites WHERE id = 1')).toBe(0);
+    expect(count('SELECT COUNT(*) FROM sites WHERE id = 1 AND deleted_at IS NOT NULL')).toBe(1);
   });
 
   it('404s an unknown site and a repeat delete', async () => {

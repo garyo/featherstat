@@ -23,6 +23,7 @@ import {
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { Auth, AuthEnv } from '../auth/auth.ts';
+import { dropSiteFromGrants } from '../auth/grants.ts';
 import { hashPassword, verifyPassword } from '../auth/password.ts';
 import {
   canGrantScope,
@@ -281,6 +282,7 @@ export function createAdminRoutes(
       if (!tombstoneSite(db, id, auth.now())) return false;
       deleteSiteConfigRows(db, id);
       removeSiteFromUsers(db, id);
+      dropSiteFromGrants(db, id, auth.now());
       options.propRegistry?.forgetSite(id);
       if (deleteSiteAnnotations(db, id) > 0) bumpAnnotationsVersion(db);
       // deleteDashboard revokes the dashboard's share tokens with it.

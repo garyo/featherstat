@@ -50,7 +50,7 @@ each here; docs/03 is the depth.
 | `domains` | JSON array of hostnames; the first entry is canonical |
 | `timezone` | IANA zone every `local_date`/`local_hour` below was computed in |
 | `created_at` | UTC unix ms |
-| `deleted_at` | tombstone; non-NULL rows are logically gone while the purge job finishes |
+| `deleted_at` | tombstone; non-NULL rows are logically gone — the purge job removes their data, and the row itself stays so the id is never reused |
 
 ### `events`
 
