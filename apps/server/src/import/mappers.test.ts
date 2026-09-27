@@ -1,3 +1,4 @@
+import { localClock } from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
 import {
   actionUrl,
@@ -6,6 +7,7 @@ import {
   mapAction,
   mapSite,
   mapVisit,
+  matomoTimezone,
   sessionIdForVisit,
 } from './mappers.ts';
 
@@ -116,6 +118,69 @@ describe('mapSite', () => {
       timezone: 'UTC',
     });
     expect(site.created_at).toBeUndefined();
+  });
+
+  it('maps a manual UTC offset to a zone the runtime resolves', () => {
+    const site = mapSite({
+      idsite: 1,
+      name: 's',
+      main_url: 'https://a.test',
+      ts_created: '2013-04-01 12:00:00',
+      timezone: 'UTC+5.75',
+    });
+    expect(site.timezone).toBe('+0545');
+  });
+
+  it('refuses a timezone that maps to nothing, naming the site', () => {
+    const row = {
+      idsite: 7,
+      name: 's',
+      main_url: 'https://a.test',
+      ts_created: '2013-04-01 12:00:00',
+      timezone: 'Mars/Olympus_Mons',
+    };
+    expect(() => mapSite(row)).toThrow(/Matomo site 7 has timezone 'Mars\/Olympus_Mons'/);
+  });
+});
+
+describe('matomoTimezone', () => {
+  it('passes an IANA name through', () => {
+    expect(matomoTimezone('Europe/Berlin')).toBe('Europe/Berlin');
+    expect(matomoTimezone('UTC')).toBe('UTC');
+  });
+
+  it('maps whole-hour manual offsets to Etc/GMT, with the POSIX sign flip', () => {
+    expect(matomoTimezone('UTC+10')).toBe('Etc/GMT-10');
+    expect(matomoTimezone('UTC-3')).toBe('Etc/GMT+3');
+    expect(matomoTimezone('UTC+14')).toBe('Etc/GMT-14');
+    expect(matomoTimezone('UTC-12')).toBe('Etc/GMT+12');
+    expect(matomoTimezone('UTC+0')).toBe('UTC');
+  });
+
+  it('maps fractional offsets to a fixed ±hhmm zone', () => {
+    expect(matomoTimezone('UTC-3.5')).toBe('-0330');
+    expect(matomoTimezone('UTC+5.75')).toBe('+0545');
+    expect(matomoTimezone('UTC+12.75')).toBe('+1245');
+    expect(matomoTimezone('UTC-9.5')).toBe('-0930');
+  });
+
+  it('computes local clocks on the mapped zone exactly as the offset says', () => {
+    const at = Date.UTC(2026, 0, 1, 0, 0);
+    for (const [manual, hour, date] of [
+      ['UTC+10', 10, '2026-01-01'],
+      ['UTC-3.5', 20, '2025-12-31'],
+      ['UTC+5.75', 5, '2026-01-01'],
+    ] as const) {
+      const zone = matomoTimezone(manual);
+      if (zone === null) throw new Error(`${manual} did not map`);
+      expect(localClock(zone, at), manual).toEqual({ date, hour });
+    }
+  });
+
+  it('refuses what neither resolves', () => {
+    for (const tz of ['Mars/Olympus_Mons', 'UTC+15', 'UTC-13', 'UTC+abc', 'GMT+1']) {
+      expect(matomoTimezone(tz), tz).toBeNull();
+    }
   });
 });
 

@@ -183,7 +183,7 @@ export async function importMatomo(
     const created: NewSite[] = [];
     for (const row of rows) {
       const site = mapSite(row, aliases.get(row.idsite) ?? []);
-      if (!timezones.has(row.idsite)) timezones.set(row.idsite, row.timezone);
+      if (!timezones.has(row.idsite)) timezones.set(row.idsite, site.timezone);
       if (existing.has(row.idsite)) {
         report.sitesSkipped += 1;
         continue;

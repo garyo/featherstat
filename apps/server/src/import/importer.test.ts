@@ -408,6 +408,29 @@ describe('importMatomo', () => {
     db.close();
   });
 
+  it('imports a manual-offset Matomo site on its mapped zone, local clocks included', async () => {
+    const db = openDb(':memory:');
+    const data = fixtures();
+    data.sites[0] = siteRow({ timezone: 'UTC-3.5' });
+    await importMatomo(db, fakeSource(data).source);
+
+    expect(db.prepare('SELECT timezone FROM sites WHERE id = 1').pluck().get()).toBe('-0330');
+    // 02:00 UTC on Jul 2, three and a half hours west: 22:30 on Jul 1.
+    expect(
+      db.prepare('SELECT local_date, local_hour FROM sessions WHERE site_id = 1').get(),
+    ).toEqual({ local_date: '2026-07-01', local_hour: 22 });
+    db.close();
+  });
+
+  it('refuses a Matomo timezone that maps to no zone, before writing any site', async () => {
+    const db = openDb(':memory:');
+    const data = fixtures();
+    data.sites[1] = siteRow({ idsite: 2, timezone: 'Mars/Olympus_Mons' });
+    await expect(importMatomo(db, fakeSource(data).source)).rejects.toThrow(/Matomo site 2/);
+    expect(count(db, 'sites')).toBe(0);
+    db.close();
+  });
+
   it('keeps pre-existing sites untouched and skips visits for unknown sites', async () => {
     const db = openDb(':memory:');
     withWriteTransaction(db, () => {

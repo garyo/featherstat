@@ -1,4 +1,4 @@
-import { type CampaignField, localClock } from '@featherstat/shared';
+import { type CampaignField, isValidTimezone, localClock } from '@featherstat/shared';
 import type { EventRow, NewSite, SessionRow } from '../db/index.ts';
 import { type NormalizedUtm, plainNormalizer } from '../pipeline/campaigns.ts';
 import { canonicalReferrerDomain } from '../pipeline/referrers.ts';
@@ -148,7 +148,41 @@ const DEVICE_TYPES: Record<number, string> = {
 // Mappers
 // ---------------------------------------------------------------------------
 
-export function mapSite(row: MatomoSiteRow, aliasUrls: readonly string[] = []): NewSite {
+/**
+ * Matomo's site timezone is an IANA name or a manual offset from its settings
+ * list — `UTC+10`, `UTC-3.5`, `UTC+5.75` — which no runtime resolves. Whole
+ * hours become the IANA `Etc/GMT∓h` zone (POSIX sign: east of Greenwich is
+ * minus); fractional ones a fixed `±hhmm` offset. Null when neither resolves.
+ */
+export function matomoTimezone(timezone: string): string | null {
+  if (isValidTimezone(timezone)) return timezone;
+  const match = /^UTC([+-])(\d{1,2})(?:\.(\d+))?$/.exec(timezone);
+  if (match === null) return null;
+  const [, sign = '+', hours = '0', fraction = '0'] = match;
+  const minutes = Math.round(Number(`0.${fraction}`) * 60);
+  let zone: string;
+  if (minutes > 0) {
+    zone = `${sign}${hours.padStart(2, '0')}${String(minutes).padStart(2, '0')}`;
+  } else if (Number(hours) === 0) {
+    zone = 'UTC';
+  } else {
+    zone = `Etc/GMT${sign === '+' ? '-' : '+'}${Number(hours)}`;
+  }
+  return isValidTimezone(zone) ? zone : null;
+}
+
+/** Throws on a timezone `matomoTimezone` cannot map: the site's every row would land on wrong days. */
+export function mapSite(
+  row: MatomoSiteRow,
+  aliasUrls: readonly string[] = [],
+): NewSite & { timezone: string } {
+  const timezone = matomoTimezone(row.timezone);
+  if (timezone === null) {
+    throw new Error(
+      `Matomo site ${row.idsite} has timezone '${row.timezone}', which maps to no zone this ` +
+        'runtime knows — fix it in Matomo (or pick an IANA name) and re-run',
+    );
+  }
   const domains: string[] = [];
   for (const url of [row.main_url, ...aliasUrls]) {
     const host = hostnameOf(url);
@@ -159,7 +193,7 @@ export function mapSite(row: MatomoSiteRow, aliasUrls: readonly string[] = []): 
     id: row.idsite, // preserved verbatim (docs/06 R2)
     name: row.name,
     domains,
-    timezone: row.timezone,
+    timezone,
     ...(created === null ? {} : { created_at: created }),
   };
 }

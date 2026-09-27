@@ -63,7 +63,13 @@ credentials).
 Import details:
 
 - `local_date`/`local_hour` recomputed from each site's timezone during
-  import (Matomo stores UTC; same convention).
+  import (Matomo stores UTC; same convention). A Matomo *manual offset*
+  (`UTC+10`, `UTC-3.5`, `UTC+5.75`) is no zone any runtime resolves, so it is
+  mapped: whole hours to IANA `Etc/GMT∓h` (POSIX sign — `UTC+10` is
+  `Etc/GMT-10`), fractions to a fixed `±hhmm` offset (`+0545`). A timezone
+  that maps to neither refuses the import, naming the site, before anything is
+  written — a stored zone the runtime cannot resolve would silently compute
+  every local clock in UTC.
 - Historical visitor ids don't chain with the new daily-rotating scheme —
   fine: unique-visitor counts are per-day-exact in both systems, which is the
   only guarantee we make anyway (03).
