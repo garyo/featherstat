@@ -231,8 +231,16 @@ describe('importV1', () => {
     source.close();
   });
 
-  it('is idempotent: a re-run resumes at the watermarks and duplicates nothing', async () => {
-    const { source, target } = await imported();
+  it('resumes a crashed run at its watermarks and duplicates nothing', async () => {
+    const source = createSeededV1Db();
+    const target = openDb(':memory:');
+    // Every row lands, then the rollup rebuild dies: the state a crash leaves.
+    target.exec(`CREATE TRIGGER crash BEFORE INSERT ON rollup_dim_day
+      BEGIN SELECT RAISE(ABORT, 'crash mid-rebuild'); END`);
+    await expect(importV1(target, source)).rejects.toThrow('crash mid-rebuild');
+    expect(settingKeysWithPrefix(target, 'import:v1:').length).toBeGreaterThan(0);
+    target.exec('DROP TRIGGER crash');
+
     const rerun = await importV1(target, source);
 
     expect(rerun).toMatchObject({
@@ -247,6 +255,16 @@ describe('importV1', () => {
     expect(count(target, 'sessions')).toBe(V1_FIXTURE.sessions);
     expect(count(target, 'dashboards')).toBe(V1_FIXTURE.dashboards);
     expect(target.prepare('SELECT SUM(count) FROM bot_drops').pluck().get()).toBe(10);
+    target.close();
+    source.close();
+  });
+
+  it('clears its watermarks once complete, so the finished file refuses a second import', async () => {
+    const { source, target } = await imported();
+    expect(settingKeysWithPrefix(target, 'import:v1:')).toEqual([]);
+
+    await expect(importV1(target, source)).rejects.toThrow(/stop v1 → import → start v2/);
+    expect(count(target, 'events')).toBe(V1_FIXTURE.events);
     target.close();
     source.close();
   });
