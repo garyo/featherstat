@@ -15,6 +15,7 @@ import {
   type DashRef,
   failureNote,
   heldRange,
+  latestLocalDay,
   localDayKey,
   toRange,
   type ViewRange,
@@ -122,12 +123,11 @@ $effect(() =>
   ),
 );
 
-const dayKey = $derived(
-  localDayKey(
-    app.sites === null ? [] : [...app.sites.values()].map((entry) => entry.timezone),
-    new Date(app.now),
-  ),
+const zones = $derived(
+  app.sites === null ? [] : [...app.sites.values()].map((entry) => entry.timezone),
 );
+const dayKey = $derived(localDayKey(zones, new Date(app.now)));
+const today = $derived(latestLocalDay(zones, app.now));
 
 /** Save, then point the URL at the row — editing a template just cloned it. */
 async function save(next: Parameters<typeof mode.save>[0]): Promise<void> {
@@ -185,6 +185,7 @@ const note = $derived.by(() => {
       {range}
       {cmp}
       {note}
+      {today}
       onselect={onselectrange}
       oncompare={onselectcmp}
       onretry={runner.error === undefined ? undefined : () => runner.refresh()}

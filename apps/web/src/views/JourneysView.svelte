@@ -3,7 +3,14 @@ import type { FilterNode, QueryRequest } from '@featherstat/shared';
 import type { QueryClient } from '../lib/api.ts';
 import FilterRow from '../lib/components/FilterRow.svelte';
 import { createRevalidator, type LiveStream } from '../lib/live.ts';
-import { failureNote, heldRange, localDayKey, toRange, type ViewRange } from '../lib/state.ts';
+import {
+  failureNote,
+  heldRange,
+  latestLocalDay,
+  localDayKey,
+  toRange,
+  type ViewRange,
+} from '../lib/state.ts';
 import FlowsTable from '../widgets/FlowsTable.svelte';
 import type { EdgeRef } from '../widgets/flows.ts';
 import { windowLabel } from '../widgets/format.ts';
@@ -85,7 +92,9 @@ $effect(() =>
   }),
 );
 
-const dayKey = $derived(localDayKey(timezone === undefined ? [] : [timezone], new Date(now)));
+const zones = $derived(timezone === undefined ? [] : [timezone]);
+const dayKey = $derived(localDayKey(zones, new Date(now)));
+const today = $derived(latestLocalDay(zones, now));
 
 /** A clicked sankey edge narrows the table below — client-side (flows.ts). */
 let selected = $state<EdgeRef | undefined>();
@@ -148,6 +157,7 @@ const note = $derived.by(() => {
   {segmentNames}
   {oneditfilters}
     {note}
+    {today}
     onselect={onselectrange}
     onremovefilter={removeFilter}
     onretry={runner.error === undefined ? undefined : () => runner.refresh()}

@@ -12,6 +12,7 @@ import {
   type DetailRef,
   failureNote,
   heldRange,
+  latestLocalDay,
   localDayKey,
   toRange,
   type ViewRange,
@@ -102,7 +103,9 @@ $effect(() => {
 $effect(() =>
   createRevalidator(live, () => runner.refresh(), { site: () => site, key: () => request }),
 );
-const dayKey = $derived(localDayKey(timezone === undefined ? [] : [timezone], new Date(app.now)));
+const zones = $derived(timezone === undefined ? [] : [timezone]);
+const dayKey = $derived(localDayKey(zones, new Date(app.now)));
+const today = $derived(latestLocalDay(zones, app.now));
 
 /** Click-to-filter composes ON TOP of the locked entity binding. */
 function addFilter(filter: Filter): void {
@@ -144,6 +147,7 @@ const note = $derived.by(() => {
   {segmentNames}
   {oneditfilters}
   {note}
+  {today}
   onselect={onselectrange}
   oncompare={onselectcmp}
   onremovefilter={(index) => onfilters(filters.filter((_, i) => i !== index))}

@@ -9,6 +9,7 @@ import {
   failureNote,
   formatDayRange,
   heldRange,
+  latestLocalDay,
   localDayKey,
   parseDashRef,
   parseDetailRef,
@@ -325,6 +326,15 @@ describe('discardsDraft', () => {
   it('has nothing to discard off the Dashboard view', () => {
     const realtime = at({ site: 3, view: 'realtime' });
     expect(discardsDraft(realtime, at({ site: 1 }))).toBe(false);
+  });
+});
+
+describe('latestLocalDay', () => {
+  it('is the date of whichever site has reached the furthest', () => {
+    // 23:00 UTC: Auckland is already on the next day, New York is not.
+    const now = Date.UTC(2026, 6, 29, 23, 0, 0);
+    expect(latestLocalDay(['America/New_York', 'Pacific/Auckland'], now)).toBe('2026-07-30');
+    expect(latestLocalDay(['America/New_York'], now)).toBe('2026-07-29');
   });
 });
 

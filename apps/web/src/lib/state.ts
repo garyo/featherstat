@@ -158,6 +158,18 @@ export function localDayKey(zones: readonly string[], now: Date): string {
     .join('|');
 }
 
+/**
+ * The latest calendar date any of these zones has reached — the most a date
+ * picker may offer, since a site ahead of the reader is already on tomorrow.
+ * With no zones, the reader's own date.
+ */
+export function latestLocalDay(zones: readonly string[], now: number): string {
+  const reader = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return (zones.length === 0 ? [reader] : zones)
+    .map((zone) => elapsedThrough('day', zone, now))
+    .reduce((latest, day) => (day > latest ? day : latest));
+}
+
 /** Widget-title qualifier (mockup: "Traffic by hour · last 30 days"). */
 export const RANGE_QUALIFIER: Record<RangePreset, string> = {
   today: 'today',
