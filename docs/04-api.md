@@ -22,6 +22,10 @@ ignored, never errors — a tracker must be impossible to break from the tag sid
 | `e_c`,`e_a`,`e_n`,`e_v` | event cat/action/name/value | `type='event'` + fields |
 | `link` / `download` | outlink / download URL | `type='outlink'|'download'`, `target_url` |
 | `ping=1` | heartbeat | `type='ping'` (session/engagement only) |
+| `ca=1` | "custom action": not a page view (Matomo's spec) | with no event/link/download/ping in it, **nothing is recorded** — it is a request type this system does not model (media, forms, heatmaps). matomo.js sends every event with `ca=1`; the event still records |
+| `idgoal` | goal conversion (`0` = ecommerce) | nothing recorded — no pageview is booked for the page it fired on |
+| `c_n`, `c_i` | content impression / interaction | nothing recorded; a `link=` click carrying its interaction is still the outlink |
+| `search` | site search | recorded as the page view it arrives with |
 | `pv_id` | pageview id | accepted, ignored (sessions cover our model) |
 | `res` | screen resolution | `screen` |
 | `h`,`m`,`s`,`cdt` | client time | ignored — server clock is authoritative |

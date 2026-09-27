@@ -1,0 +1,15 @@
+{
+  "name": "content impressions and interactions are not page views; a link click that carries its content interaction is still the outlink",
+  "method": "POST",
+  "body": "{\"requests\":[\"?idsite=1&rec=1&c_n=Banner&c_p=hero.png&ca=1&url=https%3A%2F%2Fpcons.org%2F\",\"?idsite=1&rec=1&c_i=click&c_n=Banner&c_p=hero.png&ca=1&url=https%3A%2F%2Fpcons.org%2F\",\"?idsite=1&rec=1&c_n=Banner&url=https%3A%2F%2Fpcons.org%2F\",\"?idsite=1&rec=1&link=https%3A%2F%2Fgithub.com%2Fgaryo%2Fpcons&c_i=click&c_n=Banner&c_p=hero.png&url=https%3A%2F%2Fpcons.org%2F\"]}",
+  "contentType": "application/json",
+  "expectStatus": 200,
+  "expectHits": [
+    {
+      "siteId": 1,
+      "type": "outlink",
+      "url": "https://pcons.org/",
+      "targetUrl": "https://github.com/garyo/pcons"
+    }
+  ]
+}

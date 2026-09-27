@@ -84,7 +84,7 @@ function parseHit(params: URLSearchParams): Hit | undefined {
     targetUrl = download;
   } else if (params.get('ping') === '1') {
     type = 'ping';
-  } else if (url !== undefined || title !== undefined) {
+  } else if ((url !== undefined || title !== undefined) && !declaresNonPageview(params)) {
     type = 'pageview'; // Matomo records a pageview from `action_name` alone (docs/04)
   }
   if (!type) return undefined;
@@ -106,6 +106,20 @@ function parseHit(params: URLSearchParams): Hit | undefined {
     clientIpOverride: optional(HitSchema.shape.clientIpOverride, params.get('cip')),
   });
   return hit.success ? hit.data : undefined;
+}
+
+/**
+ * A request that says it is something other than a page view, in a way this
+ * system does not model: `ca=1` (Matomo's "custom action" — its spec: never a
+ * page view), a goal conversion or ecommerce update (`idgoal`), a content
+ * impression or interaction (`c_n` / `c_i`). Every one carries the page's `url`,
+ * which is what made them look like page views. Nothing is recorded for them —
+ * the beacon is still answered (invariant 4). Events, links, downloads and
+ * pings are decided first, so a `ca=1` event (matomo.js sends every event so)
+ * or a link click carrying its content interaction is still what it says.
+ */
+function declaresNonPageview(params: URLSearchParams): boolean {
+  return params.get('ca') === '1' || params.has('idgoal') || params.has('c_n') || params.has('c_i');
 }
 
 /** An event needs both category and action; a half-declared one degrades to no event. */

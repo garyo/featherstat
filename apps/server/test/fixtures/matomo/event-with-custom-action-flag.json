@@ -1,0 +1,15 @@
+{
+  "name": "an event as matomo.js actually sends it, ca=1 included, is still the event",
+  "method": "GET",
+  "query": "idsite=4&rec=1&e_c=globe&e_a=rotate&e_n=Pangaea&ca=1&url=https%3A%2F%2Fdeep-timeline.org%2Fera%2Fpermian&_id=0123456789abcdef",
+  "expectStatus": 200,
+  "expectHits": [
+    {
+      "siteId": 4,
+      "type": "event",
+      "url": "https://deep-timeline.org/era/permian",
+      "event": { "category": "globe", "action": "rotate", "name": "Pangaea" },
+      "visitorId": "0123456789abcdef"
+    }
+  ]
+}

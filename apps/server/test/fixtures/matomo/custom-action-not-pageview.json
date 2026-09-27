@@ -1,0 +1,7 @@
+{
+  "name": "ca=1 with only a url is Matomo's custom action — never a page view per its spec; nothing recorded, still answered",
+  "method": "GET",
+  "query": "idsite=1&rec=1&ca=1&url=https%3A%2F%2Fpcons.org%2Fdocs&action_name=Docs&ma_id=abc&ma_ti=Intro",
+  "expectStatus": 200,
+  "expectHits": []
+}
