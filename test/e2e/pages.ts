@@ -83,3 +83,23 @@ export async function stranger(browser: Browser): Promise<Page> {
   const context = await browser.newContext({ storageState: { cookies: [], origins: [] } });
   return context.newPage();
 }
+
+/**
+ * Runs `action`, answers the native `confirm()` it raises, and resolves with
+ * the question. A confirm blocks the page, so the answer is armed before the
+ * click that raises it; a guard that no longer asks fails the spec here.
+ */
+export async function answerConfirm(
+  page: Page,
+  answer: 'accept' | 'dismiss',
+  action: () => Promise<unknown>,
+): Promise<string> {
+  const asked = page.waitForEvent('dialog').then(async (dialog) => {
+    await (answer === 'accept' ? dialog.accept() : dialog.dismiss());
+    return dialog;
+  });
+  await action();
+  const dialog = await asked;
+  expect(dialog.type()).toBe('confirm');
+  return dialog.message();
+}
