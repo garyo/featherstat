@@ -407,6 +407,18 @@ describe('attribution', () => {
     expect(sub.session.ref_type).toBe('internal');
   });
 
+  it('classifies a referrer from the landing page host as internal, domains or not', () => {
+    const s = new Sessionizer();
+    const bare = { ...SITE, domains: [] };
+    const { session } = run(
+      s,
+      T0,
+      { url: 'http://localhost:4321/a', referrer: 'http://localhost:4321/' },
+      { site: bare },
+    );
+    expect(session.ref_type).toBe('internal');
+  });
+
   it('classifies search and social hosts, matching subdomains of table entries', () => {
     // ref_domain is the canonical domain (referrers.ts); the classification
     // still has to survive the collapse, and news.google.com still has to stay

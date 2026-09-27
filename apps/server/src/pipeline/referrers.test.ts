@@ -149,6 +149,23 @@ describe('referrerAttribution', () => {
     expect(referrerAttribution('https://docs.example.com/p', sub).ref_domain).toBe('example.com');
   });
 
+  it('matches a configured domain that carries a port', () => {
+    const dev = ['localhost:4321', 'staging.example.org:8443'];
+    expect(referrerAttribution('http://localhost:4321/a', dev).ref_type).toBe('internal');
+    expect(referrerAttribution('https://staging.example.org:8443/', dev).ref_type).toBe('internal');
+  });
+
+  // Matomo's rule too: a referrer on the page's own host is the site itself.
+  it('treats the landing page host as internal, even with no domains configured', () => {
+    expect(
+      referrerAttribution('https://pelorus-nav.com/charts', [], 'pelorus-nav.com').ref_type,
+    ).toBe('internal');
+    expect(referrerAttribution('https://pelorus-nav.com/charts', []).ref_type).toBe('referral');
+    expect(referrerAttribution('https://other.org/', [], 'pelorus-nav.com').ref_type).toBe(
+      'referral',
+    );
+  });
+
   it('falls back to referral for anything unknown', () => {
     expect(referrerAttribution('https://blog.partner.org/post', OWN)).toEqual({
       ref_domain: 'partner.org',

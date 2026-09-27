@@ -119,10 +119,15 @@ const NO_REFERRER: ReferrerAttribution = {
   ref_type: undefined,
 };
 
-/** Everything a session's first hit needs from its `Referer` (docs/03). */
+/**
+ * Everything a session's first hit needs from its `Referer` (docs/03).
+ * `landingHost` is the hostname of the page the hit landed on: a referrer from
+ * that same host is the site itself, whatever its domain list says.
+ */
 export function referrerAttribution(
   referrer: string | undefined,
   domains: readonly string[],
+  landingHost?: string | null,
 ): ReferrerAttribution {
   const host = referrerHost(referrer);
   if (host === null) return NO_REFERRER;
@@ -133,7 +138,9 @@ export function referrerAttribution(
   };
   // Own-domain matching stays on the RECEIVED host: a site registered as
   // `docs.example.com` would not match its own eTLD+1.
-  if (isInternal(host, domains)) return { ...stored, ref_type: 'internal' };
+  if (host === landingHost || isInternal(host, domains)) {
+    return { ...stored, ref_type: 'internal' };
+  }
   return { ...stored, ref_type: referrerTypeOf(canonical) };
 }
 
@@ -156,9 +163,10 @@ function referrerHost(referrer: string | undefined): string | null {
   }
 }
 
+/** A configured domain may carry a port (`localhost:4321`); a referrer's hostname never does. */
 function isInternal(host: string, domains: readonly string[]): boolean {
   return domains.some((entry) => {
-    const domain = bareHost(entry);
+    const domain = bareHost(entry.replace(/:\d+$/, ''));
     return host === domain || host.endsWith(`.${domain}`);
   });
 }

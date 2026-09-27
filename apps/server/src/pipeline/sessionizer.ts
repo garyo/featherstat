@@ -382,7 +382,7 @@ const NO_CAMPAIGN = {
 };
 
 function classify(hit: Hit, page: PageParts, site: Site, normalizeUtm: UtmNormalizer): Attribution {
-  const ref = referrerAttribution(hit.referrer, site.domains);
+  const ref = referrerAttribution(hit.referrer, site.domains, page.hostname);
   const campaign = campaignParams(page.url, site.id, normalizeUtm);
   if (campaign !== null) return { ...refDomain(ref), ref_type: 'campaign', ...campaign };
   // No campaign params, but a click id names its platform: synthesize
