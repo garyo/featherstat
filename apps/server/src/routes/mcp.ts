@@ -86,7 +86,7 @@ export function createMcpRoutes(db: Db, auth: Auth, options: McpRouteOptions = {
     if (c.get('principal')?.kind !== 'token') {
       return c.json({ error: 'MCP is token-only — send Authorization: Bearer fs_<token>' }, 403);
     }
-    await next();
+    return next();
   });
 
   app.all('/mcp', async (c) => {

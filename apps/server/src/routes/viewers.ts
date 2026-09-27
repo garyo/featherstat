@@ -225,7 +225,7 @@ export const jsonOnly: MiddlewareHandler = async (c, next) => {
   if (!type.toLowerCase().startsWith('application/json')) {
     return c.json({ error: 'send the claim as application/json' }, 415);
   }
-  await next();
+  return next();
 };
 
 function sha256(token: string): Buffer {
