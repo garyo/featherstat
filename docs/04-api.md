@@ -519,7 +519,12 @@ buckets rather than the top groups; the schema refuses that combination with a
   pattern bound as a parameter, length- and wildcard-capped), and `is_null`
   (no value — matches the NULL group a breakdown returns, e.g. direct traffic
   under `ref_domain`). The compiler maps this vocabulary to parameterized SQL;
-  anything outside it is a 400.
+  anything outside it is a 400. A leaf's `scope` is `hit` (the default: the row
+  itself matches) or `session`: the row's session has ≥ 1 non-ping event
+  matching the leaf — ANY of its events, inside the window or not, on both
+  tables. So a session crossing a window edge is judged the same way whether a
+  session metric (`visits`) or an event metric (`pageviews`) asks, and a visit
+  is never counted while its pageviews are dropped.
 - **Which store answers is invisible.** Per query, the planner
   (`query/planner.ts`, rules in 03 § Rollups) routes eligible metric shapes to
   the rollup tables and everything else to raw rows. The wire never says

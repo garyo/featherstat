@@ -913,12 +913,22 @@ export function filterNodeSql(
 
 /**
  * A session-scoped leaf: "the session containing this row has ≥1 non-ping event
- * matching the predicate". On the sessions table that is a correlated EXISTS
- * riding ix_events_session; on the events table, a semi-join through the same
- * bounds CTE the statement already scopes with — so the subquery walks the
- * window, never all history. The predicate itself always reads the events
- * table (aliased e2), which is what lets an event-only dimension like `path`
- * scope a session-shaped question honestly.
+ * matching the predicate" — ANY of the session's events, not only those inside
+ * the window (docs/04 § 3), so the two tables agree about a session that
+ * crosses a window edge: a visit the sessions table counts never loses its
+ * pageviews on the events table because the matching hit fell outside.
+ *
+ * On the sessions table that is a correlated EXISTS riding ix_events_session.
+ * On the events table it is a semi-join in two halves: the sessions with a
+ * match inside the window (the window scan the statement makes anyway), plus
+ * the sessions reaching past the window whose match lies outside it. Those
+ * second ones are few and findable cheaply: consecutive events of a session
+ * are at most `SESSION_REVIVAL_MS` apart (docs/03), far less than a local day,
+ * so a session with events on both sides of an edge has one ON the edge's
+ * date. Only the sessions touching the two edge dates are re-read whole —
+ * never all history, and not every session of a 90-day window. The predicate
+ * itself always reads the events table (aliased e2/e4), which is what lets an
+ * event-only dimension like `path` scope a session-shaped question honestly.
  */
 function sessionLeafSql(
   leaf: FilterLeaf,
@@ -926,27 +936,34 @@ function sessionLeafSql(
   windows: readonly SiteWindow[],
   params: (string | number)[],
 ): string {
+  const edgeSessions =
+    'SELECT e3.session_id FROM events e3 JOIN bounds ON e3.site_id = bounds.site_id ' +
+    'AND e3.local_date IN (bounds.from_date, bounds.to_date)';
   // A session-only dimension (entry/exit page) IS a session attribute — there
   // is no event to range over. On the sessions table the leaf reads the column
-  // directly; on the events table it reaches the session through the same
-  // bounds CTE, so the subquery walks the window, never all history.
+  // directly; on the events table it reads the sessions that started in the
+  // window, plus those reaching into it from before.
   if (sessionOnlyDimension(leaf.dim)) {
-    const pred = filterSql(leaf, 'sessions', params);
-    if (table === 'sessions') return `(${pred})`;
+    if (table === 'sessions') return `(${filterSql(leaf, 'sessions', params)})`;
+    const started = filterSql(leaf, 'sessions', params);
+    const reaching = filterSql(leaf, 'sessions', params);
     return [
-      'e.session_id IN (SELECT s.id',
-      `FROM ${boundsJoin('sessions', windows)}`,
-      `WHERE ${pred})`,
+      `e.session_id IN (SELECT s.id FROM ${boundsJoin('sessions', windows)} WHERE ${started}`,
+      `UNION SELECT s.id FROM sessions s WHERE ${reaching} AND s.id IN (${edgeSessions}))`,
     ].join(' ');
   }
-  const pred = filterSql(leaf, 'events', params, 'e2');
   if (table === 'sessions') {
+    const pred = filterSql(leaf, 'events', params, 'e2');
     return `EXISTS (SELECT 1 FROM events e2 WHERE e2.session_id = s.id AND e2.type != 'ping' AND ${pred})`;
   }
+  const inside = filterSql(leaf, 'events', params, 'e2');
+  const anywhere = filterSql(leaf, 'events', params, 'e4');
   return [
     'e.session_id IN (SELECT e2.session_id',
     `FROM ${boundsJoin('events', windows, 'e2')}`,
-    `WHERE e2.type != 'ping' AND ${pred})`,
+    `WHERE e2.type != 'ping' AND ${inside}`,
+    `UNION SELECT e4.session_id FROM events e4 WHERE e4.type != 'ping' AND ${anywhere}`,
+    `AND e4.session_id IN (${edgeSessions}))`,
   ].join(' ');
 }
 
