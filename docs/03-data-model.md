@@ -420,7 +420,11 @@ Priority order, evaluated once per session on its first hit:
    always win over a click id.
 3. Referrer hostname ∈ site's own domains → `internal` (not a referral).
 4. Referrer matches a small built-in search/social table (~50 entries — the
-   long tail is not worth a database) → `search` / `social`.
+   long tail is not worth a database) → `search` / `social`. Google, Bing,
+   Yahoo and Yandex match by the registrable domain's own label instead
+   (`SEARCH_BRANDS`), so `google.com.mx`, `yahoo.co.jp` and `yandex.ua` are
+   search without a row per country; the country domain stays its own
+   `ref_domain`.
 5. Any other referrer → `referral`; none → `direct`.
 
 ### Referrer canonicalization
