@@ -1,7 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import {
   collectBatch,
-  type Dashboard,
   hourlyWhenIntraday,
   isLinkToken,
   LINK_TOKEN_BYTES,
@@ -9,6 +8,7 @@ import {
   type QueryResponse,
   RangeSchema,
   readStoredDashboard,
+  type SharePayload,
   type SiteWindow,
 } from '@featherstat/shared';
 import { type Context, Hono } from 'hono';
@@ -59,13 +59,6 @@ const DEFAULT_SHARE_RANGE = '30d';
 const SHARE_BATCHES_PER_IP = 30;
 const SHARE_BATCHES_GLOBAL = 240;
 const SHARE_WINDOW_MS = 60_000;
-
-/** `GET /share/:token` body: the dashboard JSON plus its batch, one response. */
-export interface ShareView {
-  dashboard: Dashboard;
-  results: QueryResponse['results'];
-  meta: QueryResponse['meta'];
-}
 
 export interface ShareRouteOptions {
   /** How a batch runs: inline by default, on the read pool in main.ts. */
@@ -214,7 +207,7 @@ export function createShareRoutes(
       throw error;
     }
     const tag = batchEtag(response.meta.dataVersion, schema, canonical, windows, now);
-    const body: ShareView = {
+    const body: SharePayload = {
       dashboard: layout,
       results: response.results,
       // dataVersion is a global write counter across ALL sites — inside the

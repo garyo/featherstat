@@ -1,6 +1,6 @@
 <script lang="ts">
-import type { QueryResponse } from '@featherstat/shared';
-import { type SharePayload, shareEndpoint } from '../lib/share.ts';
+import { type QueryResponse, type SharePayload, SharePayloadSchema } from '@featherstat/shared';
+import { shareEndpoint } from '../lib/share.ts';
 import { parseViewState } from '../lib/state.ts';
 import { toggleTheme } from '../lib/theme.ts';
 import DashboardGrid from '../views/DashboardGrid.svelte';
@@ -66,7 +66,12 @@ async function load(): Promise<void> {
           : 'This shared dashboard could not be loaded.';
       return;
     }
-    payload = (await response.json()) as SharePayload;
+    const parsed = SharePayloadSchema.safeParse(await response.json());
+    if (!parsed.success) {
+      error = 'This shared dashboard could not be loaded.';
+      return;
+    }
+    payload = parsed.data;
     document.title = `${payload.dashboard.name} · shared`;
   } catch {
     error = 'This shared dashboard could not be loaded.';

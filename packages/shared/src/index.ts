@@ -1281,6 +1281,13 @@ export type DashboardInfo = z.infer<typeof DashboardInfoSchema>;
 export const DashboardDetailSchema = DashboardInfoSchema.extend({ layout: DashboardSchema });
 export type DashboardDetail = z.infer<typeof DashboardDetailSchema>;
 
+/** `GET /share/:token` body (docs/04 § 5): the stored layout and its batch, one response. */
+export const SharePayloadSchema = z.object({
+  dashboard: DashboardSchema,
+  ...QueryResponseSchema.shape,
+});
+export type SharePayload = z.infer<typeof SharePayloadSchema>;
+
 // ---------------------------------------------------------------------------
 // Realtime SSE (docs/04 § 4)
 // ---------------------------------------------------------------------------

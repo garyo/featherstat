@@ -10,15 +10,8 @@
  * a navigation, JSON for a fetch), `/share/<token>` renders the page too.
  */
 
-import { type Dashboard, linkTokenPattern, type QueryResponse } from '@featherstat/shared';
+import { linkTokenPattern } from '@featherstat/shared';
 import type { RangePreset } from './state.ts';
-
-/** `GET /share/:token` body (the server's `ShareView`): the layout and its batch, one response. */
-export interface SharePayload {
-  dashboard: Dashboard;
-  results: QueryResponse['results'];
-  meta: QueryResponse['meta'];
-}
 
 const SHARE_PATH = new RegExp(`^/(?:s|share)/(${linkTokenPattern('share')})/?$`);
 
