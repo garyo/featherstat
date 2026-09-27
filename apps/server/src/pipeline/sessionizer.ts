@@ -30,6 +30,8 @@ export interface SessionizerInput {
   visitorId: Uint8Array;
   /** Server receive time, UTC ms — the tracker's clock is never trusted (docs/04). */
   now: number;
+  /** `now` on the site's clock; the pipeline passes the one it already computed. */
+  local?: LocalClock;
   device: DeviceInfo;
   geo: GeoResult | null;
   lang: string | null;
@@ -118,7 +120,7 @@ export class Sessionizer {
     this.evict(now);
     const key = sessionKey(site.id, input.visitorId);
     const page = pageParts(hit.url);
-    const local = localClock(site.timezone, now);
+    const local = input.local ?? localClock(site.timezone, now);
 
     const carried =
       this.liveSession(key, now) ?? (hit.type === 'pageview' ? undefined : this.revive(input, key));
