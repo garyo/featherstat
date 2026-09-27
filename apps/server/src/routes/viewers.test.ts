@@ -249,4 +249,18 @@ describe('viewer lifecycle', () => {
     });
     expect(other.status).toBe(410);
   });
+
+  it('lets a live link claim through a probe flood from many addresses', async () => {
+    const minted = await invite([1]);
+    for (let i = 0; i < 70; i += 1) {
+      const probe = await claim(`/invite/fsv_${'A'.repeat(43)}`, {
+        'x-forwarded-for': `10.0.0.${i}`,
+      });
+      expect(probe.status).toBe(410);
+    }
+    expect(
+      (await claim(`/invite/fsv_${'A'.repeat(43)}`, { 'x-forwarded-for': '10.0.0.1' })).status,
+    ).toBe(429);
+    expect((await claim(minted.url, { 'x-forwarded-for': '203.0.113.7' })).status).toBe(200);
+  });
 });

@@ -30,7 +30,7 @@ import {
   parseSiteScope,
   serializeSiteScope,
 } from '../auth/principal.ts';
-import { RateLimiter } from '../auth/ratelimit.ts';
+import { FailureBudget } from '../auth/ratelimit.ts';
 import {
   type ApiTokenRow,
   addUserSite,
@@ -99,10 +99,12 @@ const DECOY_HASH =
   'scrypt$32768$8$1$rpiLzxaemhczP2Fh-2tuLpDKFLW31mwfTOiFKCAY4iA$' +
   'woSL-ofmP1MBrXZHifGcdrjFR_D4VGDXqbLd4cdHL7E-MgYA0VteYb4D0MiJhauhhzB1W6oCLJ2lLfnY66XECQ';
 
-const LOGIN_LIMIT = 5;
-/** Backstop across ALL keys: a spoofed-header flood must still hit a wall. */
-const GLOBAL_LOGIN_LIMIT = 30;
-const LOGIN_WINDOW_MS = 60_000;
+/** Failure budgets for login and setup (FailureBudget): per address, per
+ * account, and across the door — the last two mark a flood, never a lockout. */
+const LOGIN_FAILURES = { perAddress: 5, perAccount: 10, global: 30, windowMs: 60_000 };
+/** The failure-budget account of the settings-row password and of setup. */
+const ADMIN_ACCOUNT = 'admin';
+const SETUP_ACCOUNT = 'setup';
 /** Admin bodies are a password or a site record — far under this. */
 const MAX_ADMIN_BODY_BYTES = 64 * 1024;
 /** Diagnostics window: today plus six prior site-local dates. */
@@ -127,15 +129,9 @@ export function createAdminRoutes(
   options: AdminRouteOptions = {},
 ): Hono<AuthEnv> {
   const app = new Hono<AuthEnv>();
-  const loginAttempts = new RateLimiter(LOGIN_LIMIT, LOGIN_WINDOW_MS);
-  const globalAttempts = new RateLimiter(GLOBAL_LOGIN_LIMIT, LOGIN_WINDOW_MS);
-
-  /** Both budgets always record, so a spoofed per-key flood still burns the global one. */
-  const allowAttempt = (c: Context): boolean => {
-    const perIp = loginAttempts.allow(clientIp(c), auth.now());
-    const global = globalAttempts.allow('*', auth.now());
-    return perIp && global;
-  };
+  const failures = new FailureBudget(LOGIN_FAILURES);
+  const tooMany = (c: Context): Response =>
+    c.json({ error: 'too many attempts — try again in a minute' }, 429);
 
   app.use('/api/admin/*', bodyLimit({ maxSize: MAX_ADMIN_BODY_BYTES }));
   // Responses carry session-derived material (the CSRF token) — never cacheable.
@@ -163,13 +159,13 @@ export function createAdminRoutes(
   });
 
   app.post('/api/admin/setup', async (c) => {
-    if (!allowAttempt(c)) {
-      return c.json({ error: 'too many attempts — try again in a minute' }, 429);
-    }
+    const address = clientIp(c);
+    if (failures.refuses(address, SETUP_ACCOUNT, auth.now())) return tooMany(c);
     if (auth.hasPassword()) return c.json({ error: 'already configured — log in instead' }, 403);
     const body = await parseBody(c, AdminSetupSchema);
     if (body.ok === false) return body.response;
     if (!auth.verifySetupToken(body.data.setupToken)) {
+      failures.fail(address, SETUP_ACCOUNT, auth.now());
       return c.json({ error: 'wrong setup token — it is printed in the server log' }, 403);
     }
     await auth.setPassword(body.data.password);
@@ -179,30 +175,33 @@ export function createAdminRoutes(
   });
 
   app.post('/api/admin/login', async (c) => {
-    if (!allowAttempt(c)) {
-      return c.json({ error: 'too many attempts — try again in a minute' }, 429);
-    }
     const hash = auth.passwordHash();
     if (hash === undefined) return c.json({ error: 'setup required' }, 403);
     const body = await parseBody(c, AdminLoginSchema);
     if (body.ok === false) return body.response;
+    const { email, password } = body.data;
+    const address = clientIp(c);
+    // Unknown emails are accounts too — refusing them differently would name
+    // the known ones. The column collates NOCASE, so the key folds case.
+    const account = email === undefined ? ADMIN_ACCOUNT : `user:${email.toLowerCase()}`;
+    if (failures.refuses(address, account, auth.now())) return tooMany(c);
+    const wrong = (): Response => {
+      failures.fail(address, account, auth.now());
+      return c.json({ error: 'wrong password' }, 401);
+    };
     // Email present: a user login. Unknown email, unclaimed invite, disabled
     // user and wrong password all answer identically — and all cost one scrypt,
     // so the response's timing names no emails either.
-    if (body.data.email !== undefined) {
-      const user = getUserByEmail(db, body.data.email);
+    if (email !== undefined) {
+      const user = getUserByEmail(db, email);
       const usableHash =
         user !== undefined && user.disabled_at === null ? user.password_hash : null;
-      const ok = await verifyPassword(body.data.password, usableHash ?? DECOY_HASH);
-      if (user === undefined || usableHash === null || !ok) {
-        return c.json({ error: 'wrong password' }, 401);
-      }
+      const ok = await verifyPassword(password, usableHash ?? DECOY_HASH);
+      if (user === undefined || usableHash === null || !ok) return wrong();
       const issued = auth.login(c, { kind: 'user', userId: user.id });
       return c.json({ ok: true, csrf: issued.csrfToken });
     }
-    if (!(await verifyPassword(body.data.password, hash))) {
-      return c.json({ error: 'wrong password' }, 401);
-    }
+    if (!(await verifyPassword(password, hash))) return wrong();
     const issued = auth.login(c);
     return c.json({ ok: true, csrf: issued.csrfToken });
   });

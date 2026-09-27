@@ -9,7 +9,7 @@ import { type Context, Hono, type MiddlewareHandler } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { Auth, AuthEnv } from '../auth/auth.ts';
 import { canGrantScope, parseSiteScope, serializeSiteScope } from '../auth/principal.ts';
-import { RateLimiter } from '../auth/ratelimit.ts';
+import { FailureBudget } from '../auth/ratelimit.ts';
 import {
   consumeMagicLink,
   type Db,
@@ -50,13 +50,13 @@ const LINK_TOKEN_SHAPE = /^fsv_[A-Za-z0-9_-]{43}$/;
 const MAX_VIEWER_BODY_BYTES = 64 * 1024;
 
 /**
- * The claim route is unauthenticated and keyed on the IP, like `/share/:token`
- * — and tighter: a legitimate viewer claims once, so anything sustained here is
- * a token probe. Attempts are charged (`allow`), not just successes.
+ * The claim route is unauthenticated and keyed on the IP, like `/share/:token`.
+ * Only dead links are charged (FailureBudget): a legitimate viewer claims once
+ * and never fails, so anything sustained here is a token probe — and a probe
+ * flood must not stop a live link from claiming. A claim names no account.
  */
-const CLAIMS_PER_IP = 10;
-const CLAIMS_GLOBAL = 60;
-const CLAIM_WINDOW_MS = 60_000;
+export const CLAIM_FAILURES = { perAddress: 10, global: 60, windowMs: 60_000 };
+export const CLAIM_ACCOUNT = 'link';
 
 /**
  * The delivery seam: featherstat has no SMTP, so the default just logs that a
@@ -80,8 +80,7 @@ export function createViewerRoutes(
 ): Hono<AuthEnv> {
   const app = new Hono<AuthEnv>();
   const deliver = options.deliver ?? logInvite;
-  const ipClaims = new RateLimiter(CLAIMS_PER_IP, CLAIM_WINDOW_MS);
-  const globalClaims = new RateLimiter(CLAIMS_GLOBAL, CLAIM_WINDOW_MS);
+  const failures = new FailureBudget(CLAIM_FAILURES);
 
   app.use('/api/admin/*', bodyLimit({ maxSize: MAX_VIEWER_BODY_BYTES }));
   // Mint responses carry the raw link — never cacheable.
@@ -185,15 +184,20 @@ export function createViewerRoutes(
   });
 
   app.post('/invite/:token', jsonOnly, (c) => {
-    if (!ipClaims.allow(clientIp(c), auth.now()) || !globalClaims.allow('*', auth.now())) {
+    const address = clientIp(c);
+    if (failures.refuses(address, CLAIM_ACCOUNT, auth.now())) {
       return c.json({ error: 'too many attempts — try again in a minute' }, 429, {
         'Retry-After': '60',
       });
     }
+    const dead = (): Response => {
+      failures.fail(address, CLAIM_ACCOUNT, auth.now());
+      return deadLink(c);
+    };
     const raw = c.req.param('token');
     // Malformed, unknown, used, expired and revoked all answer identically —
     // a probe learns nothing, and the tokens are unguessable anyway.
-    if (!LINK_TOKEN_SHAPE.test(raw)) return deadLink(c);
+    if (!LINK_TOKEN_SHAPE.test(raw)) return dead();
     const viewerId = withWriteTransaction(db, () => {
       const link = getMagicLink(db, sha256(raw));
       if (link === undefined || link.viewer_id === null) return undefined;
@@ -203,7 +207,7 @@ export function createViewerRoutes(
       if (!consumeMagicLink(db, link.token_hash, auth.now())) return undefined;
       return viewer.id;
     });
-    if (viewerId === undefined) return deadLink(c);
+    if (viewerId === undefined) return dead();
     const issued = auth.login(c, { kind: 'viewer', viewerId });
     return c.json({ ok: true, csrf: issued.csrfToken });
   });

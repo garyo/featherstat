@@ -925,8 +925,8 @@ where SMTP/ntfy delivery slots in later.
 
 Opening `/invite/<token>` only loads the SPA page — a chat app or mail
 scanner that fetches the link to unfurl it spends nothing — and the page's
-button sends `POST /invite/:token` (public, per-IP rate-limited like
-`/share/:token`), which consumes the link atomically — used, expired, unknown,
+button sends `POST /invite/:token` (public, and failure-limited like login
+below: dead links are charged, a live one always claims), which consumes the link atomically — used, expired, unknown,
 malformed and revoked-viewer all answer the same 410, so a probe learns
 nothing — issues a viewer session and answers `{ok, csrf}` like `/claim`.
 Both claim POSTs refuse anything but `application/json` with a 415: a
@@ -978,7 +978,15 @@ First-run setup (`POST /api/admin/setup`) additionally requires the one-time
 **setup token** the server prints to its log at first boot: between `docker
 run` and the owner opening the page, an unconfigured install is reachable by
 anyone, and the token makes claiming it require console access. Setup and
-login share the same rate limits (per-IP plus a global budget). The client
+login share one **failure-only** budget (`FailureBudget`, auth/ratelimit.ts):
+successes are never charged, and an address past 5 failures a minute is
+refused (429) before any verification. A flood of failures — 10 a minute
+against one account (the admin password, or one email, known or not), or 30
+across the door — never locks the owner out: it only refuses every address
+that has already failed in the window, while a clean address is still
+verified, so the right password gets in and a distributed guesser is held to
+one guess per address per minute. The claim routes use the same shape with no
+accounts (10 dead links per address, 60 across the door). The client
 address comes from the `TRUSTED_PROXY_HOPS`-th `X-Forwarded-For` entry from
 the end (default 1 — one trusted proxy); with `0`, forwarded headers are
 ignored entirely.
