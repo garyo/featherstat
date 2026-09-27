@@ -23,7 +23,7 @@ jobs:
       # Pinned to the version dev machines run: the workspace carries a
       # Bun-version-specific workaround (scripts that must use Node because
       # better-sqlite3 dies with a NAPI fatal error under Bun 1.3.4). Bump this
-      # deliberately, together with that note.
+      # deliberately, together with that note and the Dockerfile's BUN_IMAGE.
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.4
