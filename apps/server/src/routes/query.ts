@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import {
   type AnnotationInfo,
   isQueryError,
@@ -27,6 +26,7 @@ import { executeQueryRequest, resolveSiteWindows, UnknownSiteError } from '../qu
 import type { GoalDefinitions } from '../query/goals.ts';
 import { PoolSaturatedError } from '../query/pool/pool.ts';
 import { expandSegments, resolveDerived, resolveGoals } from '../query/stored.ts';
+import { batchEtag, canonicalize, ifNoneMatchHits } from './etag.ts';
 import { clientIp } from './track.ts';
 
 /**
@@ -188,8 +188,8 @@ export function createQueryRoutes(db: Db, options: QueryRouteOptions = {}): Hono
       annotationsVersion: request.annotations === true ? annotationsVersion(db) : undefined,
     });
     const schema = schemaVersion(db);
-    const current = etag(dataVersion(db), schema, canonicalBody, windows, now);
-    if (anyMatch(c.req.header('if-none-match'), current)) {
+    const current = batchEtag(dataVersion(db), schema, canonicalBody, windows, now);
+    if (ifNoneMatchHits(c.req.header('if-none-match'), current)) {
       return c.body(null, 304, { ETag: current });
     }
 
@@ -230,7 +230,7 @@ export function createQueryRoutes(db: Db, options: QueryRouteOptions = {}): Hono
       response.meta.annotations = annotationsFor(db, windows);
     }
     // Re-derived from the executed snapshot's version, in case a flush landed in between.
-    const tag = etag(response.meta.dataVersion, schema, canonicalBody, windows, now);
+    const tag = batchEtag(response.meta.dataVersion, schema, canonicalBody, windows, now);
     if (csvQuery !== undefined) {
       const entry = response.results[csvQuery.id];
       if (entry === undefined || isQueryError(entry)) {
@@ -317,60 +317,4 @@ function annotationsFor(db: Db, windows: readonly SiteWindow[]): AnnotationInfo[
       }),
     )
     .map((row) => ({ id: row.id, siteId: row.site_id, ts: row.ts, text: row.text }));
-}
-
-function anyMatch(ifNoneMatch: string | undefined, current: string): boolean {
-  if (ifNoneMatch === undefined) return false;
-  return ifNoneMatch.split(',').some((candidate) => candidate.trim() === current);
-}
-
-/**
- * The resolved windows as ETag input — the reason a preset expires on the site's
- * clock rather than on a data change. `today` moves at site-local midnight; the
- * rolling `24h` preset moves at every local hour turn and is stable in between,
- * which is exactly what its quantization buys (ranges.ts). Shared with the share
- * route so the two cannot disagree about what a tag covers.
- *
- * The last component is where real data can stop inside the window —
- * `min(to, site-local today)`. Presets never need it (their dates move with the
- * clock already), but an explicit `from`/`to` range whose `to` is today or later
- * has static bounds over a moving clip: without this a dashboard left open
- * overnight would revalidate 304 forever while today's rows drained into a day
- * the cached body still shows empty. For a fully past range it equals `to`, so
- * those tags stay stable — exactly what makes them cacheable.
- */
-export function windowTag(windows: readonly SiteWindow[], now: number): string {
-  return windows
-    .map((w) => {
-      const today = localClock(w.timezone, now).date;
-      const clip = w.to < today ? w.to : today;
-      return `${w.siteId}:${w.timezone}:${w.from}:${w.to}:${w.fromTs ?? ''}:${w.toTs ?? ''}:${clip}`;
-    })
-    .join(',');
-}
-
-function etag(
-  version: number,
-  schema: number,
-  canonicalBody: string,
-  windows: readonly SiteWindow[],
-  now: number,
-): string {
-  const hash = createHash('sha256')
-    .update(`${version}|${schema}|${canonicalBody}|${windowTag(windows, now)}`)
-    .digest('base64url');
-  return `"${hash}"`;
-}
-
-/** JSON with object keys sorted, so key order alone can never produce a distinct ETag. */
-function canonicalize(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalize).join(',')}]`;
-  if (typeof value === 'object' && value !== null) {
-    const parts = Object.entries(value)
-      .filter(([, v]) => v !== undefined)
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-      .map(([k, v]) => `${JSON.stringify(k)}:${canonicalize(v)}`);
-    return `{${parts.join(',')}}`;
-  }
-  return JSON.stringify(value);
 }

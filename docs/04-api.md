@@ -620,8 +620,10 @@ batch itself still succeeds, and never returns wrong numbers.
   site-local midnight even when no data changed, `24h` expires when the site's
   local hour turns and is stable in between, and re-zoning a site expires an
   explicit `from`/`to` range whose bounds did not move but whose hour axis did).
-  Unchanged data → 304 with zero queries executed. Realtime SSE tells the
-  client *when* to revalidate, so there's no polling loop. Two refinements:
+  Unchanged data → 304 with zero queries executed; `If-None-Match` compares
+  weakly (RFC 9110), so a proxy that forwards the tag as `W/"…"` still
+  revalidates. Realtime SSE tells the client *when* to revalidate, so there's
+  no polling loop. Refinements:
   - **The canonical body is the EXPANDED request** — segment refs substituted,
     derived-metric definitions hashed beside it. Editing a segment or a
     derived metric therefore expires every cached answer that used it with

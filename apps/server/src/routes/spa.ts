@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
 import { Hono } from 'hono';
+import { ifNoneMatchHits } from './etag.ts';
 
 /**
  * Serves the built dashboard (`apps/web/dist`) from the bundled server — the
@@ -52,7 +53,8 @@ export function createSpaRoutes({ dir }: SpaRoutesOptions): Hono {
     const asset = cache.get(pathname);
     if (asset === undefined) return c.notFound();
     const headers = { 'Cache-Control': asset.cacheControl, ETag: asset.etag };
-    if (matches(c.req.header('if-none-match'), asset.etag)) return c.body(null, 304, headers);
+    if (ifNoneMatchHits(c.req.header('if-none-match'), asset.etag))
+      return c.body(null, 304, headers);
     return c.body(bodyOf(asset), 200, { ...headers, 'Content-Type': asset.type });
   });
 
@@ -125,9 +127,4 @@ function bodyOf(asset: Asset): ArrayBuffer {
     asset.body.byteOffset,
     asset.body.byteOffset + asset.body.byteLength,
   ) as ArrayBuffer;
-}
-
-function matches(ifNoneMatch: string | undefined, etag: string): boolean {
-  if (ifNoneMatch === undefined) return false;
-  return ifNoneMatch.split(',').some((candidate) => candidate.trim() === etag);
 }

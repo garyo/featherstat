@@ -25,7 +25,7 @@ import {
 import { executeQueryRequest, resolveSiteWindows, UnknownSiteError } from '../query/executor.ts';
 import { expandSegments, resolveDerived } from '../query/stored.ts';
 import { parseDashboardId, siteOf, writableBy } from './dashboards.ts';
-import { windowTag } from './query.ts';
+import { batchEtag, canonicalize, ifNoneMatchHits } from './etag.ts';
 import { clientIp } from './track.ts';
 
 /**
@@ -183,8 +183,8 @@ export function createShareRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
       derived,
     });
     const schema = schemaVersion(db);
-    const current = etag(dataVersion(db), schema, canonical, windows, now);
-    if (anyMatch(c.req.header('if-none-match'), current)) {
+    const current = batchEtag(dataVersion(db), schema, canonical, windows, now);
+    if (ifNoneMatchHits(c.req.header('if-none-match'), current)) {
       return c.body(null, 304, cacheHeaders(current));
     }
 
@@ -195,7 +195,7 @@ export function createShareRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
     }
 
     const response = executeQueryRequest(db, request, { now, derived });
-    const tag = etag(response.meta.dataVersion, schema, canonical, windows, now);
+    const tag = batchEtag(response.meta.dataVersion, schema, canonical, windows, now);
     const body: ShareView = {
       dashboard: layout,
       results: response.results,
@@ -233,37 +233,4 @@ function unknownLink(c: Context): Response {
 /** The token rides in the URL: shared caches must never store what it unlocks. */
 function cacheHeaders(tag: string): Record<string, string> {
   return { ETag: tag, 'Cache-Control': 'private, no-cache' };
-}
-
-// ETag construction matching routes/query.ts — same inputs, same strong-hash shape.
-
-function anyMatch(ifNoneMatch: string | undefined, current: string): boolean {
-  if (ifNoneMatch === undefined) return false;
-  return ifNoneMatch.split(',').some((candidate) => candidate.trim() === current);
-}
-
-function etag(
-  version: number,
-  schema: number,
-  canonicalBody: string,
-  windows: readonly SiteWindow[],
-  now: number,
-): string {
-  const hash = createHash('sha256')
-    .update(`${version}|${schema}|${canonicalBody}|${windowTag(windows, now)}`)
-    .digest('base64url');
-  return `"${hash}"`;
-}
-
-/** JSON with object keys sorted, so key order alone can never produce a distinct ETag. */
-function canonicalize(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalize).join(',')}]`;
-  if (typeof value === 'object' && value !== null) {
-    const parts = Object.entries(value)
-      .filter(([, v]) => v !== undefined)
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-      .map(([k, v]) => `${JSON.stringify(k)}:${canonicalize(v)}`);
-    return `{${parts.join(',')}}`;
-  }
-  return JSON.stringify(value);
 }

@@ -115,6 +115,11 @@ describe('POST /api/query', () => {
     expect(res.headers.get('etag')).not.toBe(etag);
   });
 
+  it('revalidates a weakened tag too — If-None-Match compares weakly', async () => {
+    const etag = (await post(BODY)).headers.get('etag') as string;
+    expect((await post(BODY, { 'if-none-match': `W/${etag}` })).status).toBe(304);
+  });
+
   it('revalidates with 304 and executes no queries', async () => {
     const first = await post(BODY);
     const etag = first.headers.get('etag');
