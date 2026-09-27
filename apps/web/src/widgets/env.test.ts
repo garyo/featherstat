@@ -7,7 +7,14 @@ import {
 } from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
 import { activeCount, visitorRows } from '../lib/realtime.ts';
-import { CAPABILITY_NOTE, dashboardEnv, gridEnv, missingCapability, NEEDS } from './env.ts';
+import {
+  CAPABILITY_NOTE,
+  dashboardEnv,
+  extendEnv,
+  gridEnv,
+  missingCapability,
+  NEEDS,
+} from './env.ts';
 import type { AppEnv, WidgetEnv } from './types.ts';
 
 /**
@@ -209,5 +216,28 @@ describe('gridEnv', () => {
     });
     expect(gridEnv(env, response as QueryResponse).windows).toBe(windows);
     expect(gridEnv(env, undefined).windows).toBeNull();
+  });
+});
+
+describe('extendEnv', () => {
+  it('carries a getter through unread, so only a widget that reads it subscribes', () => {
+    let reads = 0;
+    let now = NOW;
+    const app: AppEnv = {
+      ...SHARED_PAGE,
+      get now() {
+        reads += 1;
+        return now;
+      },
+    };
+    const env = gridEnv(
+      dashboardEnv(app, { scope: 3, range: '30d', onfilter: null, ondrill: null, onpivot: null }),
+      undefined,
+    );
+    const widget = extendEnv(env, { data: null, headless: false, highlight: null });
+    expect(reads).toBe(0);
+    now += 60_000;
+    expect(widget.now).toBe(NOW + 60_000);
+    expect(widget.scope).toBe(3);
   });
 });

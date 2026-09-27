@@ -10,7 +10,15 @@ import { createEditorMode, type EditorMode } from '../lib/editor-mode.svelte.ts'
 import type { LiveStream } from '../lib/live.ts';
 import type { PivotChoice } from '../lib/state.ts';
 import type { AppEnv } from '../widgets/types.ts';
+import * as batch from './batch.ts';
 import SiteView from './SiteView.svelte';
+
+// A pass-through spy: routing a widget its batch share is the first thing a
+// grid re-does when the environment it renders from is rebuilt.
+vi.mock(import('./batch.ts'), async (original) => {
+  const actual = await original();
+  return { ...actual, widgetData: vi.fn(actual.widgetData) };
+});
 
 const NOW = Date.UTC(2026, 6, 30, 12, 0, 0);
 
@@ -75,6 +83,7 @@ afterEach(() => {
 
 interface Setup {
   store: DashboardStore;
+  app?: AppEnv;
   pivots?: PivotChoice[];
   mode?: EditorMode;
   /** Read reactively, so a test can move the page to another site. */
@@ -83,6 +92,7 @@ interface Setup {
 
 function render({
   store,
+  app = APP,
   pivots = [],
   mode: editorMode = mode,
   site = () => 1,
@@ -93,7 +103,7 @@ function render({
     mount(SiteView, {
       target,
       props: {
-        app: APP,
+        app,
         admin: { createShareLink: async () => ({ token: 't' }) } as unknown as AdminClient,
         client,
         live,
@@ -196,5 +206,57 @@ describe('an editor draft belongs to one dashboard', () => {
     flushSync();
     expect(root.querySelector('.ename')?.textContent).toBe('Dashboard of site 1');
     expect(editorMode.dirty).toBe(false);
+  });
+});
+
+describe('the live stream and the clock reach only the widgets that read them', () => {
+  it('re-derives no data widget for a hit, a recount or a clock tick', () => {
+    // Built as the Shell builds it: one stable object of getters over state.
+    const state = new SvelteMap<string, unknown>([
+      ['now', NOW],
+      ['active', { 1: 2 }],
+    ]);
+    const app: AppEnv = {
+      get now() {
+        return state.get('now') as number;
+      },
+      realtime: {
+        get active() {
+          return state.get('active') as Record<number, number>;
+        },
+        recent: [],
+        visitorTimes: [],
+      },
+      sites: new Map([[1, SITE]]),
+      onopenrealtime: () => undefined,
+      onselectsite: () => undefined,
+    };
+    const store = {
+      ...templateStore(async () => false),
+      stored: {
+        ...builtTemplate('overview', 1),
+        grid: [
+          {
+            id: 'pages',
+            viz: 'bar-list',
+            w: 6,
+            h: 2,
+            query: { id: 'pages', metrics: ['pageviews'], dim: 'path', limit: 8 },
+            options: {},
+          },
+          { id: 'live', viz: 'active-now', w: 6, h: 1, options: {} },
+        ],
+      } satisfies Dashboard,
+    };
+    const root = render({ store, app });
+    const routed = vi.mocked(batch.widgetData);
+    const before = routed.mock.calls.length;
+
+    state.set('active', { 1: 5 });
+    state.set('now', NOW + 60_000);
+    flushSync();
+
+    expect(root.querySelector('.active-now .n')?.textContent).toBe('5');
+    expect(routed.mock.calls.length).toBe(before);
   });
 });

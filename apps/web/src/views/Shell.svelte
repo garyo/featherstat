@@ -34,7 +34,7 @@ import {
   type ViewStatePatch,
 } from '../lib/state.ts';
 import { toggleTheme } from '../lib/theme.ts';
-import type { AppEnv } from '../widgets/types.ts';
+import type { AppEnv, RealtimeEnv } from '../widgets/types.ts';
 import AllSitesView from './AllSitesView.svelte';
 import JourneysView from './JourneysView.svelte';
 import RealtimeView from './RealtimeView.svelte';
@@ -340,15 +340,35 @@ const logout = (): void => {
  * can perform. Assembled ONCE — as separate props, every view remembered a
  * different subset, which is how a site dashboard came to show the live feed
  * beside an `active-now` hero stuck at 0.
+ *
+ * One stable object of getters, never a fresh value: a hit lands several
+ * times a second on a busy site, and only the widgets that read the stream (or
+ * the clock) may re-derive for it — not every card on the page (widgets/env.ts
+ * `extendEnv` carries the getters through).
  */
-const app = $derived<AppEnv>({
-  now,
-  realtime: { active, recent, visitorTimes },
+const realtime: RealtimeEnv = {
+  get active() {
+    return active;
+  },
+  get recent() {
+    return recent;
+  },
+  get visitorTimes() {
+    return visitorTimes;
+  },
+};
+const app: AppEnv = {
+  get now() {
+    return now;
+  },
+  realtime,
   // Null until the directory answers, so a card can tell "loading" from "none".
-  sites: directory.sites === undefined ? null : directory.byId,
+  get sites() {
+    return directory.sites === undefined ? null : directory.byId;
+  },
   onopenrealtime: () => selectView('realtime'),
   onselectsite: selectSite,
-});
+};
 </script>
 
 <main class="shell">
