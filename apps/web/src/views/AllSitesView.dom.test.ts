@@ -61,8 +61,10 @@ const store: DashboardStore = {
 const mode: EditorMode = {
   Editor: undefined,
   editing: false,
+  dirty: false,
   open: async () => undefined,
   close: () => undefined,
+  setDirty: () => undefined,
   save: async () => false,
 };
 

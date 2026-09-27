@@ -1,10 +1,12 @@
 import type { Dashboard, QueryRequest, QueryResponse, SiteInfo } from '@featherstat/shared';
 import { flushSync, mount, unmount } from 'svelte';
+import { SvelteMap } from 'svelte/reactivity';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AdminClient } from '../lib/admin.ts';
 import type { QueryClient } from '../lib/api.ts';
 import type { DashboardStore } from '../lib/dashboards.svelte.ts';
-import type { EditorMode } from '../lib/editor-mode.svelte.ts';
+import { builtTemplate } from '../lib/dashboards.ts';
+import { createEditorMode, type EditorMode } from '../lib/editor-mode.svelte.ts';
 import type { LiveStream } from '../lib/live.ts';
 import type { PivotChoice } from '../lib/state.ts';
 import type { AppEnv } from '../widgets/types.ts';
@@ -41,8 +43,10 @@ const live: LiveStream = { on: () => () => undefined, close: () => undefined };
 const mode: EditorMode = {
   Editor: undefined,
   editing: false,
+  dirty: false,
   open: async () => undefined,
   close: () => undefined,
+  setDirty: () => undefined,
   save: async () => false,
 };
 
@@ -69,7 +73,20 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
-function render(store: DashboardStore, pivots: PivotChoice[]): HTMLElement {
+interface Setup {
+  store: DashboardStore;
+  pivots?: PivotChoice[];
+  mode?: EditorMode;
+  /** Read reactively, so a test can move the page to another site. */
+  site?: () => number;
+}
+
+function render({
+  store,
+  pivots = [],
+  mode: editorMode = mode,
+  site = () => 1,
+}: Setup): HTMLElement {
   const target = document.createElement('div');
   document.body.append(target);
   mounted.push(
@@ -81,8 +98,10 @@ function render(store: DashboardStore, pivots: PivotChoice[]): HTMLElement {
         client,
         live,
         store,
-        mode,
-        site: 1,
+        mode: editorMode,
+        get site() {
+          return site();
+        },
         timezone: 'UTC',
         range: '30d',
         cmp: 'previous',
@@ -112,7 +131,10 @@ function button(root: HTMLElement, label: string): HTMLButtonElement {
 describe('sharing a pivoted dashboard', () => {
   it('saves the layout as stored, never the transient pivot (docs/05 § Pivots)', async () => {
     const save = vi.fn(async (_layout: Dashboard) => false);
-    const root = render(templateStore(save), [{ widget: 'pages', dim: 'country' }]);
+    const root = render({
+      store: templateStore(save),
+      pivots: [{ widget: 'pages', dim: 'country' }],
+    });
 
     button(root, 'Share').click();
     await vi.waitFor(() => button(document.body, 'Create share link'));
@@ -121,5 +143,58 @@ describe('sharing a pivoted dashboard', () => {
 
     const pages = save.mock.calls[0]?.[0].grid.find((spec) => spec.id === 'pages');
     expect(pages?.query).toMatchObject({ dim: 'path' });
+  });
+});
+
+describe('an editor draft belongs to one dashboard', () => {
+  /** Each site has its own stored row, named for it. */
+  const layoutOf = (site: number): Dashboard => ({
+    ...builtTemplate('overview', site),
+    name: `Dashboard of site ${site}`,
+  });
+
+  it('remounts on another site, never carrying the old draft over', async () => {
+    const at = new SvelteMap([['site', 3]]);
+    const site = (): number => at.get('site') ?? 3;
+    const store: DashboardStore = {
+      ...templateStore(async () => true),
+      get stored() {
+        return layoutOf(site());
+      },
+      get selection() {
+        const name = `Dashboard of site ${site()}`;
+        return {
+          kind: 'stored' as const,
+          ref: site(),
+          name,
+          info: {
+            id: site(),
+            name,
+            site: site(),
+            template: null,
+            createdAt: 0,
+            updatedAt: 0,
+            shareCount: 0,
+          },
+        };
+      },
+    };
+    const editorMode = createEditorMode(store, site);
+    const root = render({ store, mode: editorMode, site });
+    await editorMode.open();
+    flushSync();
+    expect(root.querySelector('.ename')?.textContent).toBe('Dashboard of site 3');
+    expect(editorMode.dirty).toBe(false);
+
+    root.querySelector<HTMLButtonElement>('button[title="Remove widget"]')?.click();
+    flushSync();
+    expect(editorMode.dirty).toBe(true);
+
+    // Back/forward (had the reader said yes) — the draft of site 3 must not
+    // survive onto site 1, where Save would have written it.
+    at.set('site', 1);
+    flushSync();
+    expect(root.querySelector('.ename')?.textContent).toBe('Dashboard of site 1');
+    expect(editorMode.dirty).toBe(false);
   });
 });

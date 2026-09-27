@@ -226,18 +226,22 @@ const note = $derived.by(() => {
 
 {#if mode.Editor !== undefined}
   {@const Editor = mode.Editor}
-  <Editor
-    initial={dashboard}
-    {client}
-    request={requestFor}
-    response={runner.response}
-    error={runner.error}
-    {env}
-    saving={store.saving}
-    saveError={store.error}
-    onsave={(next) => void save(next)}
-    oncancel={() => mode.close()}
-  />
+  <!-- A draft belongs to one dashboard: a new scope or selection is a new editor. -->
+  {#key `${site}|${store.selection?.ref}`}
+    <Editor
+      initial={dashboard}
+      {client}
+      request={requestFor}
+      response={runner.response}
+      error={runner.error}
+      {env}
+      saving={store.saving}
+      saveError={store.error}
+      onsave={(next) => void save(next)}
+      oncancel={() => mode.close()}
+      ondirty={mode.setDirty}
+    />
+  {/key}
 {:else}
   <div class="toolbar">
     <FilterRow

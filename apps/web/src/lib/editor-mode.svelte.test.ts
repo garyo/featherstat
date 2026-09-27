@@ -2,12 +2,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { confirmDashboardSwitch } from './editor-mode.svelte.ts';
 
 /**
- * The decision the header's pickers make before a scope or dashboard switch
- * lands: an open editor draft is confirmed away, never silently discarded —
- * and never asked about when there is no draft to lose.
+ * The decision every navigation makes before it discards an editor draft: a
+ * changed draft is confirmed away, never silently discarded — and never asked
+ * about when there is no change to lose.
  */
 describe('confirmDashboardSwitch', () => {
-  it('lets a switch through without asking when nothing is being edited', () => {
+  it('lets a switch through without asking when the draft holds no change', () => {
     const ask = vi.fn(() => false);
     expect(confirmDashboardSwitch(false, 'Content', ask)).toBe(true);
     expect(ask).not.toHaveBeenCalled();

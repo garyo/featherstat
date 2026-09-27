@@ -5,6 +5,7 @@ import {
   compareNote,
   compareParam,
   DEFAULT_VIEW_STATE,
+  discardsDraft,
   formatDayRange,
   localDayKey,
   parseDashRef,
@@ -268,6 +269,36 @@ describe('resolveNav', () => {
       site: 'all',
       view: 'dash',
     });
+  });
+});
+
+describe('discardsDraft', () => {
+  const editing = at({ site: 3, dash: 7 });
+
+  it('is true for every move that takes the edited dashboard away', () => {
+    // Back/forward to another site's dashboard is how a stale draft got saved
+    // onto the wrong scope: the editor stayed mounted over the new one.
+    expect(discardsDraft(editing, at({ site: 1, dash: 1 }))).toBe(true);
+    expect(discardsDraft(editing, at({ site: 3, dash: 8 }))).toBe(true);
+    expect(discardsDraft(editing, at({ site: 3, dash: 't:overview' }))).toBe(true);
+    expect(discardsDraft(editing, { ...editing, view: 'realtime' })).toBe(true);
+    expect(discardsDraft(editing, { ...editing, view: 'detail' })).toBe(true);
+  });
+
+  it('keeps the draft through moves that keep its dashboard', () => {
+    expect(discardsDraft(editing, { ...editing, range: '7d' })).toBe(false);
+    expect(discardsDraft(editing, { ...editing, cmp: 'off' })).toBe(false);
+    expect(
+      discardsDraft(editing, { ...editing, filters: [{ dim: 'country', op: 'eq', value: 'NZ' }] }),
+    ).toBe(false);
+    expect(
+      discardsDraft(editing, { ...editing, pivots: [{ widget: 'pages', dim: 'country' }] }),
+    ).toBe(false);
+  });
+
+  it('has nothing to discard off the Dashboard view', () => {
+    const realtime = at({ site: 3, view: 'realtime' });
+    expect(discardsDraft(realtime, at({ site: 1 }))).toBe(false);
   });
 });
 

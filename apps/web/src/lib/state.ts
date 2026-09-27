@@ -121,6 +121,18 @@ export function resolveNav(
   return next;
 }
 
+/**
+ * Whether moving between two states takes away the dashboard an editor draft
+ * belongs to: the page leaves the Dashboard view, or the scope or library
+ * selection under it changes. Range, compare, filter and pivot moves keep the
+ * document, so an open draft survives them (it previews in the new context).
+ */
+export function discardsDraft(from: ViewState, to: ViewState): boolean {
+  return (
+    from.view === 'dash' && (to.view !== 'dash' || to.site !== from.site || to.dash !== from.dash)
+  );
+}
+
 /** Exhaustive by construction: a new preset in `packages/shared` fails to compile until it is labeled. */
 export const RANGE_LABELS: Record<RangePreset, string> = {
   today: 'Today',

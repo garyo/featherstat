@@ -9,6 +9,10 @@ import {
 /**
  * The URL is the store: reads come from it, writes push to it, and back/forward
  * are just another writer (docs/05 — every view state is linkable).
+ *
+ * A history move cannot be cancelled, only undone: when `admit` refuses one
+ * (an unsaved editor draft the reader chose to keep), the state stays and its
+ * URL is pushed back over the one the browser moved to.
  */
 export interface ViewStateStore {
   readonly current: ViewState;
@@ -16,11 +20,16 @@ export interface ViewStateStore {
   destroy(): void;
 }
 
-export function createViewState(win: Window = window): ViewStateStore {
+export function createViewState(
+  win: Window = window,
+  admit: (from: ViewState, to: ViewState) => boolean = () => true,
+): ViewStateStore {
   let current = $state(parseViewState(win.location.href));
 
   const sync = (): void => {
-    current = parseViewState(win.location.href);
+    const next = parseViewState(win.location.href);
+    if (admit(current, next)) current = next;
+    else win.history.pushState(null, '', applyViewState(current, win.location.href));
   };
   win.addEventListener('popstate', sync);
 
