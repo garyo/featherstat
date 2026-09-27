@@ -49,6 +49,7 @@ import {
   deleteSiteConfigRows,
   deleteUserSessions,
   getSetting,
+  getSite,
   getUser,
   getUserByEmail,
   insertApiToken,
@@ -77,9 +78,11 @@ import {
 import { requestPropScrub, runPropScrubs } from '../jobs/prop-scrub.ts';
 import { RETENTION_DAYS_KEY, retentionDays } from '../jobs/retention.ts';
 import { requestSitePurge, runSitePurges } from '../jobs/site-purge.ts';
+import { dropSiteFromNtfyRules } from '../notify/settings.ts';
 import type { AliasCache } from '../pipeline/campaigns.ts';
 import type { ExclusionMatcher } from '../pipeline/exclusions.ts';
 import { readExclusionRules, writeExclusionRules } from '../pipeline/exclusions.ts';
+import { forgetSiteIdentity, type Identity } from '../pipeline/identity.ts';
 import type { PropRegistry } from '../pipeline/props.ts';
 import { clientIp } from './track.ts';
 
@@ -113,6 +116,9 @@ export interface AdminRouteOptions {
   /** The live pipeline's prop registry — a delete must invalidate its cache too.
    * Absent (a query-only server, tests), the governance rows alone are dropped. */
   propRegistry?: PropRegistry;
+  /** The live identity salts — a site delete evicts the site's (and an abandoned
+   * zone's) through it. Absent, the settings rows alone are dropped. */
+  identity?: Identity;
   /** The live pipeline's campaign-alias cache — a site delete drops its rows. */
   campaignAliases?: AliasCache;
   /** The live exclusion set — a rule write must take effect without a restart.
@@ -279,8 +285,12 @@ export function createAdminRoutes(
     if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'invalid site id' }, 400);
     if (!canManageSite(c.get('principal'), id)) return c.json({ error: `unknown site ${id}` }, 404);
     const known = withWriteTransaction(db, () => {
-      if (!tombstoneSite(db, id, auth.now())) return false;
+      const site = getSite(db, id);
+      if (site === undefined) return false;
+      tombstoneSite(db, id, auth.now());
       deleteSiteConfigRows(db, id);
+      if (options.identity === undefined) forgetSiteIdentity(db, id, site.timezone);
+      else options.identity.forgetSite(id, site.timezone);
       removeSiteFromUsers(db, id);
       dropSiteFromGrants(db, id, auth.now());
       options.propRegistry?.forgetSite(id);
@@ -292,6 +302,7 @@ export function createAdminRoutes(
       const rules = readAlertRules(db);
       const kept = rules.filter((rule) => rule.site !== id);
       if (kept.length !== rules.length) writeAlertRules(db, kept);
+      dropSiteFromNtfyRules(db, id);
       requestSitePurge(db, id);
       return true;
     });

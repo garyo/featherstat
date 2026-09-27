@@ -30,7 +30,7 @@ const WATERMARK_PREFIX = 'site_purge:';
 const DEFAULT_BATCH_SIZE = 5_000;
 
 /** Ordinary rowid tables: chunk by rowid, `changes` says when a table is drained. */
-const ROWID_TABLES = ['events', 'sessions', 'bot_drops'] as const;
+const ROWID_TABLES = ['events', 'sessions', 'bot_drops', 'excluded_drops'] as const;
 
 /** WITHOUT ROWID rollup + presence tables: chunk by local_date — a day's rows
  * are bounded (dims × values), so a date batch stays a short transaction. */

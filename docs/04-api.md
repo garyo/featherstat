@@ -820,11 +820,14 @@ tombstones the row (`sites.deleted_at` — from that commit on, ingest drops the
 site's beacons like an unknown site's and every directory and query scope
 omits it), deletes the small per-site objects (goals, campaigns and their
 aliases, the prop registry, annotations, site-scoped dashboards with their
-share links, alert rules naming the site), sheds the site from its owners and
-from every token and viewer scope — a grant left naming no site is revoked —
-and enqueues the chunked, watermarked purge of the bulk rows
-(`jobs/site-purge.ts`: events, sessions, the drop counters, every rollup
-table), which bumps the data epoch on completion. The tombstoned row is never
+share links, alert and ntfy rules naming the site, the `uid` opt-in and salt,
+and — when no live site is left in its timezone — that zone's day salts),
+sheds the site from its owners and from every token and viewer scope — a
+grant left naming no site is revoked — and enqueues the chunked, watermarked
+purge of the bulk rows (`jobs/site-purge.ts`: events, sessions, the bot and
+exclusion drop counters, every rollup table), which bumps the data epoch on
+completion. `routes/site-delete.test.ts` enumerates every `site_id` and
+`site_scope` column from the live schema and requires each to come out clean. The tombstoned row is never
 deleted: `sites.id` is a plain `INTEGER PRIMARY KEY`, so a removed row would
 let SQLite hand the id to the next site created, and anything still naming it
 would silently start naming the newcomer.

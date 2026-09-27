@@ -1,9 +1,24 @@
 import type { SiteInfo } from '@featherstat/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { openTestDb, T0 } from '../../test/rows.ts';
+import { binId, event, openTestDb, session, syncRollups, T0 } from '../../test/rows.ts';
 import { createSecuredApp, type SecuredApp } from '../auth/app.ts';
-import { type Db, listApiTokens } from '../db/index.ts';
+import {
+  createDashboard,
+  type Db,
+  getSetting,
+  insertApiToken,
+  insertEvents,
+  insertViewer,
+  listApiTokens,
+  setSetting,
+  stmt,
+  upsertSessions,
+  withWriteTransaction,
+} from '../db/index.ts';
+import { writeAlertRules } from '../jobs/alerts.ts';
 import { runSitePurges } from '../jobs/site-purge.ts';
+import { NTFY_SETTING_KEYS } from '../notify/settings.ts';
+import { uidEnabledKey } from '../pipeline/identity.ts';
 import { createPipeline, type Pipeline } from '../pipeline/index.ts';
 
 /**
@@ -100,5 +115,152 @@ describe('deleting a site', () => {
     expect(site.id).toBe(3);
     expect(listApiTokens(db).map((row) => row.site_scope)).toEqual(['[1]']);
     expect(await sitesSeenBy(token)).toEqual([1]);
+  });
+});
+
+/** Every table with this column, read from the live schema — a future table is in by default. */
+function tablesWith(column: string): string[] {
+  const tables = stmt<string>(
+    db,
+    "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
+  )
+    .pluck()
+    .all() as string[];
+  return tables.filter((table) =>
+    stmt<string>(db, `SELECT name FROM pragma_table_info('${table}')`)
+      .pluck()
+      .all()
+      .includes(column),
+  );
+}
+
+function rowsFor(table: string, siteId: number): number {
+  return stmt<number>(db, `SELECT COUNT(*) FROM ${table} WHERE site_id = ?`)
+    .pluck()
+    .get(siteId) as number;
+}
+
+/** Scope rows naming the site — json_each reads a bare id and an id array alike. */
+function scopesNaming(table: string, siteId: number): number {
+  return stmt<number>(
+    db,
+    `SELECT COUNT(*) FROM ${table} WHERE site_scope <> 'all'
+       AND EXISTS (SELECT 1 FROM json_each(site_scope) WHERE value = ?)`,
+  )
+    .pluck()
+    .get(siteId) as number;
+}
+
+/** One row per site-keyed table, for both sites, by whatever path writes it. */
+function seedEverything(): void {
+  const presence = (table: string, column: string) =>
+    `INSERT INTO ${table} (site_id, local_date, dim_id, dim_value, ${column}) VALUES (?, '2026-07-27', 0, '', ?)`;
+  withWriteTransaction(db, () => {
+    const user = stmt(db, 'INSERT INTO users (email, created_at) VALUES (?, 0)').run(
+      'o@example.com',
+    );
+    for (const siteId of [1, 2]) {
+      const id = binId(siteId);
+      insertEvents(db, [{ ...event({ site_id: siteId }), session_id: id, visitor_id: id }]);
+      upsertSessions(db, [session({ id, site_id: siteId, visitor_id: id })]);
+      for (const sql of [
+        'INSERT INTO bot_drops (site_id, local_date, count) VALUES (?, ?, 1)',
+        'INSERT INTO excluded_drops (site_id, local_date, count) VALUES (?, ?, 1)',
+        "INSERT INTO prop_drops (site_id, local_date, reason, count) VALUES (?, ?, 'oversize', 1)",
+      ]) {
+        stmt(db, sql).run(siteId, '2026-07-27');
+      }
+      stmt(db, presence('rollup_visitor_seen', 'visitor_id')).run(siteId, id);
+      stmt(db, presence('rollup_session_seen', 'session_id')).run(siteId, id);
+      stmt(
+        db,
+        'INSERT INTO goals (site_id, name, filters, created_at, updated_at) VALUES (?, ?, ?, 0, 0)',
+      ).run(siteId, 'signup', '[]');
+      stmt(db, 'INSERT INTO campaigns (site_id, name, created_at) VALUES (?, ?, 0)').run(
+        siteId,
+        'spring',
+      );
+      stmt(
+        db,
+        'INSERT INTO campaign_aliases (site_id, field, alias, canonical) VALUES (?, ?, ?, ?)',
+      ).run(siteId, 'source', 'em', 'email');
+      stmt(
+        db,
+        'INSERT INTO prop_keys (site_id, key, first_seen, last_seen, events, distinct_values) VALUES (?, ?, 0, 0, 1, 1)',
+      ).run(siteId, 'plan');
+      stmt(db, 'INSERT INTO prop_values (site_id, key, value) VALUES (?, ?, ?)').run(
+        siteId,
+        'plan',
+        'pro',
+      );
+      stmt(
+        db,
+        'INSERT INTO annotations (site_id, ts, text, created_at, updated_at) VALUES (?, 0, ?, 0, 0)',
+      ).run(siteId, 'launch');
+      stmt(db, 'INSERT INTO user_sites (user_id, site_id) VALUES (?, ?)').run(
+        user.lastInsertRowid,
+        siteId,
+      );
+      createDashboard(db, {
+        name: `Site ${siteId}`,
+        site_scope: String(siteId),
+        layout: '{}',
+        template: null,
+        updated_at: 0,
+      });
+      setSetting(db, uidEnabledKey(siteId), '1');
+      setSetting(db, `uidsalt:${siteId}`, 'aa');
+    }
+    insertApiToken(db, {
+      name: 'both',
+      token_hash: new Uint8Array(32).fill(1),
+      site_scope: '[1,2]',
+      created_at: 0,
+    });
+    insertViewer(db, { email: 'v@example.com', site_scope: '[1]', created_at: 0 });
+    writeAlertRules(db, [
+      { site: 1, metric: 'pageviews', condition: 'above', threshold: 10, window: 'day' },
+    ]);
+    setSetting(db, NTFY_SETTING_KEYS.rules, JSON.stringify([{ site: 1 }, { site: 2 }]));
+    // Site 1 alone lives in Tokyo; New York is still site 2's zone.
+    stmt(db, "UPDATE sites SET timezone = 'Asia/Tokyo' WHERE id = 1").run();
+    setSetting(db, 'salt:Asia/Tokyo:2026-07-28', 'bb');
+    setSetting(db, 'salt:America/New_York:2026-07-27', 'cc');
+  });
+  syncRollups(db);
+}
+
+describe('the purge', () => {
+  it('leaves no row, scope or setting naming the deleted site, and spares its neighbour', async () => {
+    seedEverything();
+    const tables = tablesWith('site_id');
+    // A new site-keyed table must be seeded here, which is what puts it under this test.
+    for (const table of tables) expect(rowsFor(table, 1), `${table} seeded`).toBeGreaterThan(0);
+    const before = Object.fromEntries(tables.map((table) => [table, rowsFor(table, 2)]));
+    // Scope columns store `'all'`, one id, or a JSON id array.
+    const scopes = tablesWith('site_scope');
+    expect(scopes).toEqual(['api_tokens', 'dashboards', 'viewers']);
+
+    const session = await adminSession();
+    expect((await admin(session, 'DELETE', '/api/admin/sites/1')).status).toBe(200);
+    await runSitePurges(db);
+
+    for (const table of tables) {
+      expect(rowsFor(table, 1), table).toBe(0);
+      expect(rowsFor(table, 2), `${table} (neighbour)`).toBe(before[table]);
+    }
+    for (const table of scopes) expect(scopesNaming(table, 1), table).toBe(0);
+    expect(scopesNaming('api_tokens', 2)).toBe(1);
+
+    const keys = stmt<string>(db, 'SELECT key FROM settings ORDER BY key')
+      .pluck()
+      .all() as string[];
+    expect(keys.filter((key) => /:1$/.test(key))).toEqual([]);
+    expect(keys).toContain('uid_enabled:2');
+    // The abandoned zone's salt goes; the zone site 2 still lives in keeps its own.
+    expect(getSetting(db, 'salt:Asia/Tokyo:2026-07-28')).toBeUndefined();
+    expect(getSetting(db, 'salt:America/New_York:2026-07-27')).toBe('cc');
+    expect(JSON.parse(getSetting(db, NTFY_SETTING_KEYS.rules) ?? '')).toEqual([{ site: 2 }]);
+    expect(getSetting(db, 'alert_rules')).toBe('[]');
   });
 });

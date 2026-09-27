@@ -51,6 +51,17 @@ export function clearNtfySettings(db: Db): void {
   for (const key of Object.values(NTFY_SETTING_KEYS)) deleteSetting(db, key);
 }
 
+/**
+ * Site deletion companion: rules naming the site go. The live notifier keeps
+ * its copy until its next reload, which is harmless — ingest drops a
+ * tombstoned site's hits before any rule sees them.
+ */
+export function dropSiteFromNtfyRules(db: Db, siteId: number): void {
+  const rules = readRules(db, () => {});
+  const kept = rules.filter((rule) => rule.site !== siteId);
+  if (kept.length !== rules.length) setSetting(db, NTFY_SETTING_KEYS.rules, JSON.stringify(kept));
+}
+
 /** A row we cannot validate disables notifications rather than taking ingest down. */
 function readRules(db: Db, warn: (line: string) => void): NtfyRule[] {
   const raw = getSetting(db, NTFY_SETTING_KEYS.rules);
