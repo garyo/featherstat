@@ -8,7 +8,7 @@ import type { DashboardStore } from '../lib/dashboards.svelte.ts';
 import { builtTemplate } from '../lib/dashboards.ts';
 import { createEditorMode, type EditorMode } from '../lib/editor-mode.svelte.ts';
 import type { LiveStream } from '../lib/live.ts';
-import type { PivotChoice } from '../lib/state.ts';
+import type { DashRef, PivotChoice } from '../lib/state.ts';
 import type { AppEnv } from '../widgets/types.ts';
 import * as batch from './batch.ts';
 import SiteView from './SiteView.svelte';
@@ -88,6 +88,7 @@ interface Setup {
   mode?: EditorMode;
   /** Read reactively, so a test can move the page to another site. */
   site?: () => number;
+  onselectdash?: (dash: DashRef) => void;
 }
 
 function render({
@@ -96,6 +97,7 @@ function render({
   pivots = [],
   mode: editorMode = mode,
   site = () => 1,
+  onselectdash = () => undefined,
 }: Setup): HTMLElement {
   const target = document.createElement('div');
   document.body.append(target);
@@ -119,7 +121,7 @@ function render({
         pivots,
         onselectrange: () => undefined,
         onselectcmp: () => undefined,
-        onselectdash: () => undefined,
+        onselectdash,
         onfilters: () => undefined,
         onpivots: () => undefined,
         onopendetail: () => undefined,
@@ -153,6 +155,29 @@ describe('sharing a pivoted dashboard', () => {
 
     const pages = save.mock.calls[0]?.[0].grid.find((spec) => spec.id === 'pages');
     expect(pages?.query).toMatchObject({ dim: 'path' });
+  });
+});
+
+describe('sharing the built-in dashboard', () => {
+  it('moves the view onto the row the first share saved, so a second share reuses it', async () => {
+    let id: number | undefined;
+    const store: DashboardStore = {
+      ...templateStore(async () => {
+        id = 42;
+        return true;
+      }),
+      get id() {
+        return id;
+      },
+    };
+    const onselectdash = vi.fn();
+    const root = render({ store, onselectdash });
+
+    button(root, 'Share').click();
+    await vi.waitFor(() => button(document.body, 'Create share link'));
+    button(document.body, 'Create share link').click();
+
+    await vi.waitFor(() => expect(onselectdash).toHaveBeenCalledWith(42));
   });
 });
 

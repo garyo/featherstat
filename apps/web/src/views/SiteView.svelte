@@ -291,6 +291,7 @@ const note = $derived.by(() => {
     {admin}
     {store}
     layout={{ ...saved, site }}
+    {onselectdash}
     onclose={() => (ShareDialog = undefined)}
   />
 {/if}
