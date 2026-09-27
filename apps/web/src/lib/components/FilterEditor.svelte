@@ -31,6 +31,7 @@ import {
   wrapAt,
 } from '../filter-tree.ts';
 import { chipLabel, DIMENSION_CHOICES } from '../filters.ts';
+import { edited } from '../unsaved.ts';
 import FilterGroup, { type EditIntent } from './FilterGroup.svelte';
 import Modal from './Modal.svelte';
 
@@ -107,12 +108,11 @@ const error = $derived('error' in converted ? converted.error : undefined);
 /** The expression as opened, round-tripped the way Apply would send it — "unchanged". */
 // svelte-ignore state_referenced_locally
 const openedAs = nodesOf(draftOfNodes(filters));
-const opened = 'nodes' in openedAs ? JSON.stringify(openedAs.nodes) : undefined;
 
 /** Closing without Apply loses whatever differs from what was opened; ask first. */
 function mayClose(): boolean {
   const now = asText ? parseFilterText(text, segmentIds) : converted;
-  const unchanged = 'nodes' in now && JSON.stringify(now.nodes) === opened;
+  const unchanged = 'nodes' in now && 'nodes' in openedAs && !edited(now.nodes, openedAs.nodes);
   return unchanged || window.confirm('Discard the filter changes you have not applied?');
 }
 
