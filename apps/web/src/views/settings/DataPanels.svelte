@@ -10,6 +10,7 @@ import type {
 import type { AdminClient } from '../../lib/admin.ts';
 import { type PanelFailure, panelFailure } from '../../lib/admin-failure.ts';
 import { adminObjects } from '../../lib/admin-objects.ts';
+import ConfirmButton from '../../lib/components/ConfirmButton.svelte';
 import {
   type DataSettingsDraft,
   dataSettingsBody,
@@ -45,13 +46,10 @@ const propSiteId = $derived(propSite ?? sites?.[0]?.id);
 let propStats = $state<AdminPropsResponse | undefined>(undefined);
 let propsFailed = $state(false);
 let propError = $state<PanelFailure | undefined>(undefined);
-/** The key whose delete is awaiting the second, explicit click. */
-let confirming = $state<string | undefined>(undefined);
 
 $effect(() => {
   if (propSiteId === undefined) return;
   propStats = undefined;
-  confirming = undefined;
   void api
     .props(propSiteId)
     .then((response) => {
@@ -67,7 +65,6 @@ async function deleteKey(key: string): Promise<void> {
   propError = undefined;
   try {
     await api.deletePropKey(propSiteId, key);
-    confirming = undefined;
     propStats = await api.props(propSiteId);
   } catch (failure) {
     propError = panelFailure(failure, 'Deleting failed — try again.');
@@ -279,18 +276,12 @@ async function saveExclusions(): Promise<void> {
             {new Date(key.lastSeen).toLocaleDateString()}
           </span>
         </div>
-        {#if confirming === key.key}
-          <button class="btn subtle danger" type="button" onclick={() => void deleteKey(key.key)}>
-            Really delete + scrub
-          </button>
-          <button class="btn subtle" type="button" onclick={() => (confirming = undefined)}>
-            Keep
-          </button>
-        {:else}
-          <button class="btn subtle" type="button" onclick={() => (confirming = key.key)}>
-            Delete…
-          </button>
-        {/if}
+        <ConfirmButton
+          label="Delete…"
+          confirm="Really delete + scrub"
+          pending="Scrubbing…"
+          onconfirm={() => deleteKey(key.key)}
+        />
       </div>
     {:else}
       <p class="widget-note">No props recorded for this site.</p>
@@ -327,9 +318,12 @@ async function saveExclusions(): Promise<void> {
           </span>
         </div>
         <button class="btn subtle" type="button" onclick={() => openAnnotation(info)}>Edit</button>
-        <button class="btn subtle" type="button" onclick={() => void deleteAnnotation(info.id)}>
-          Delete
-        </button>
+        <ConfirmButton
+          label="Delete"
+          confirm="Really delete?"
+          pending="Deleting…"
+          onconfirm={() => deleteAnnotation(info.id)}
+        />
       </div>
     {:else}
       <p class="widget-note">No annotations yet.</p>

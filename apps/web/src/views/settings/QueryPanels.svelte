@@ -12,6 +12,7 @@ import type { AdminClient } from '../../lib/admin.ts';
 import { type PanelFailure, panelFailure } from '../../lib/admin-failure.ts';
 import { adminObjects } from '../../lib/admin-objects.ts';
 import type { AuthRole } from '../../lib/auth.svelte.ts';
+import ConfirmButton from '../../lib/components/ConfirmButton.svelte';
 import FilterEditor from '../../lib/components/FilterEditor.svelte';
 import {
   describeFilter,
@@ -451,9 +452,12 @@ async function deleteGoal(id: number): Promise<void> {
           <span class="psub">{describeFilter(info.filter)}</span>
         </div>
         <button class="btn subtle" type="button" onclick={() => openSegment(info)}>Edit</button>
-        <button class="btn subtle" type="button" onclick={() => void deleteSegment(info.id)}>
-          Delete
-        </button>
+        <ConfirmButton
+          label="Delete"
+          confirm="Really delete? Queries naming it will fail."
+          pending="Deleting…"
+          onconfirm={() => deleteSegment(info.id)}
+        />
       </div>
     {:else}
       <p class="widget-note">No segments yet.</p>
@@ -507,9 +511,12 @@ async function deleteGoal(id: number): Promise<void> {
           <span class="psub">{info.expr}</span>
         </div>
         <button class="btn subtle" type="button" onclick={() => openDerived(info)}>Edit</button>
-        <button class="btn subtle" type="button" onclick={() => void deleteDerived(info.id)}>
-          Delete
-        </button>
+        <ConfirmButton
+          label="Delete"
+          confirm="Really delete? Queries naming it will fail."
+          pending="Deleting…"
+          onconfirm={() => deleteDerived(info.id)}
+        />
       </div>
     {:else}
       <p class="widget-note">No derived metrics yet.</p>
@@ -577,9 +584,12 @@ async function deleteGoal(id: number): Promise<void> {
           </span>
         </div>
         <button class="btn subtle" type="button" onclick={() => openGoal(info)}>Edit</button>
-        <button class="btn subtle" type="button" onclick={() => void deleteGoal(info.id)}>
-          Delete
-        </button>
+        <ConfirmButton
+          label="Delete"
+          confirm="Really delete? Widgets showing it will fail."
+          pending="Deleting…"
+          onconfirm={() => deleteGoal(info.id)}
+        />
       </div>
     {:else}
       <p class="widget-note">No goals for this site yet.</p>

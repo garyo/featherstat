@@ -1,6 +1,7 @@
 <script lang="ts">
 import type { Dashboard } from '@featherstat/shared';
 import type { AdminClient } from '../lib/admin.ts';
+import ConfirmButton from '../lib/components/ConfirmButton.svelte';
 import Modal from '../lib/components/Modal.svelte';
 import type { DashboardStore } from '../lib/dashboards.svelte.ts';
 import { shareLink } from '../lib/share.ts';
@@ -37,14 +38,13 @@ let busy = $state(false);
 let error = $state<string | undefined>(undefined);
 let revoked = $state<number | undefined>(undefined);
 let copied = $state<string | undefined>(undefined);
-/** Revoking is destructive and unenumerable — it takes a second, armed click. */
+/** Revoking is destructive and unenumerable — the armed button explains it first. */
 let confirmRevoke = $state(false);
 
 async function mint(): Promise<void> {
   busy = true;
   error = undefined;
   revoked = undefined;
-  confirmRevoke = false;
   try {
     const id = await dashboardId();
     const { token } = await admin.createShareLink(id);
@@ -57,11 +57,6 @@ async function mint(): Promise<void> {
 }
 
 async function revokeAll(): Promise<void> {
-  if (!confirmRevoke) {
-    confirmRevoke = true;
-    return;
-  }
-  confirmRevoke = false;
   busy = true;
   error = undefined;
   try {
@@ -148,19 +143,14 @@ async function copy(link: MintedLink): Promise<void> {
     <button class="btn primary" type="button" disabled={busy} onclick={() => void mint()}>
       {busy ? 'Working…' : 'Create share link'}
     </button>
-    <button
+    <ConfirmButton
       class="btn"
-      type="button"
+      label="Revoke all links"
+      confirm="Really revoke all links?"
       disabled={busy || store.id === undefined}
-      title={store.id === undefined ? 'Nothing is shared yet — this dashboard has no stored row' : undefined}
-      onclick={() => void revokeAll()}
-      >{confirmRevoke ? 'Really revoke all links?' : 'Revoke all links'}</button
-    >
-    {#if confirmRevoke}
-      <button class="btn subtle" type="button" onclick={() => (confirmRevoke = false)}
-        >Keep them</button
-      >
-    {/if}
+      bind:armed={confirmRevoke}
+      onconfirm={revokeAll}
+    />
   </div>
 </Modal>
 

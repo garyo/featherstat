@@ -1,5 +1,6 @@
 <script lang="ts">
 import type { AdminClient } from '../lib/admin.ts';
+import ConfirmButton from '../lib/components/ConfirmButton.svelte';
 import Modal from '../lib/components/Modal.svelte';
 import type { LibraryEntry } from '../lib/dashboards.ts';
 import type { DashRef, SiteScope } from '../lib/state.ts';
@@ -8,9 +9,10 @@ import type { DashRef, SiteScope } from '../lib/state.ts';
  * The dashboard library's management panel (docs/05 § The dashboard library):
  * new/rename/duplicate/reset/delete over the scope's stored rows. Templates are
  * listed read-only — customizing one is the editor's job (edit clones), and a
- * clone is what these actions then apply to. Deleting says what it revokes:
- * removing a row kills its share links in the same transaction server-side, so
- * the confirm states the count first.
+ * clone is what these actions then apply to. Reset and delete both destroy a
+ * layout, so both ask first; deleting also says what it revokes — removing a
+ * row kills its share links in the same transaction server-side, so the
+ * question states the count.
  */
 interface Props {
   admin: AdminClient;
@@ -28,8 +30,6 @@ let { admin, scope, library, dash, onchanged, onselectdash, onclose }: Props = $
 
 let busy = $state(false);
 let error = $state<string | undefined>(undefined);
-/** Row id armed for deletion — the second click deletes. */
-let confirmDelete = $state<number | undefined>(undefined);
 /** Row id being renamed, and the draft name. */
 let renaming = $state<number | undefined>(undefined);
 let renameTo = $state('');
@@ -68,8 +68,8 @@ function duplicate(id: number): void {
   });
 }
 
-function reset(id: number): void {
-  void run(async () => {
+function reset(id: number): Promise<void> {
+  return run(async () => {
     await admin.resetDashboard(id);
   });
 }
@@ -90,13 +90,8 @@ function rename(id: number): void {
   });
 }
 
-function remove(entry: LibraryEntry & { kind: 'stored' }): void {
-  if (confirmDelete !== entry.ref) {
-    confirmDelete = entry.ref;
-    return;
-  }
-  confirmDelete = undefined;
-  void run(async () => {
+function remove(entry: LibraryEntry & { kind: 'stored' }): Promise<void> {
+  return run(async () => {
     await admin.deleteDashboard(entry.ref);
     if (dash === entry.ref) onselectdash(undefined);
   });
@@ -154,13 +149,21 @@ function deleteWarning(entry: LibraryEntry & { kind: 'stored' }): string {
             >Duplicate</button
           >
           {#if entry.info.template !== null}
-            <button class="btn slim" type="button" disabled={busy} onclick={() => reset(entry.ref)}
-              >Reset</button
-            >
+            <ConfirmButton
+              class="btn slim"
+              label="Reset"
+              confirm="Really reset to the built-in layout?"
+              disabled={busy}
+              onconfirm={() => reset(entry.ref)}
+            />
           {/if}
-          <button class="btn slim danger" type="button" disabled={busy} onclick={() => remove(entry)}
-            >{confirmDelete === entry.ref ? deleteWarning(entry) : 'Delete'}</button
-          >
+          <ConfirmButton
+            class="btn slim"
+            label="Delete"
+            confirm={deleteWarning(entry)}
+            disabled={busy}
+            onconfirm={() => remove(entry)}
+          />
         {/if}
       </div>
     {/if}
@@ -224,9 +227,5 @@ function deleteWarning(entry: LibraryEntry & { kind: 'stored' }): string {
 
   .spacer {
     flex: 1;
-  }
-
-  .danger {
-    color: var(--bad);
   }
 </style>

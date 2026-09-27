@@ -4,6 +4,7 @@ import type { AdminClient } from '../../lib/admin.ts';
 import { type PanelFailure, panelFailure } from '../../lib/admin-failure.ts';
 import { adminObjects } from '../../lib/admin-objects.ts';
 import type { AuthRole } from '../../lib/auth.svelte.ts';
+import ConfirmButton from '../../lib/components/ConfirmButton.svelte';
 import {
   buildUtmUrl,
   emptyUtmDraft,
@@ -222,9 +223,12 @@ async function copyUtm(): Promise<void> {
           </span>
         </div>
         <button class="btn subtle" type="button" onclick={() => openCampaign(info)}>Edit</button>
-        <button class="btn subtle" type="button" onclick={() => void deleteCampaign(info.id)}>
-          Delete
-        </button>
+        <ConfirmButton
+          label="Delete"
+          confirm="Really delete? Its traffic will read as unregistered."
+          pending="Deleting…"
+          onconfirm={() => deleteCampaign(info.id)}
+        />
       </div>
     {:else}
       <p class="widget-note">No registered campaigns for this site.</p>

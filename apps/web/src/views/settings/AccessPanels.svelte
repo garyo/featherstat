@@ -5,6 +5,7 @@ import type { AdminClient } from '../../lib/admin.ts';
 import { type PanelFailure, panelFailure } from '../../lib/admin-failure.ts';
 import { adminObjects } from '../../lib/admin-objects.ts';
 import type { AuthRole } from '../../lib/auth.svelte.ts';
+import ConfirmButton from '../../lib/components/ConfirmButton.svelte';
 import PanelError from './PanelError.svelte';
 
 /**
@@ -231,9 +232,12 @@ async function copySecret(secret: string): Promise<void> {
             {token.lastUsedAt === null ? 'never used' : `last used ${day(token.lastUsedAt)}`}
           </span>
         </div>
-        <button class="btn subtle" type="button" onclick={() => void revokeToken(token.id)}>
-          Revoke
-        </button>
+        <ConfirmButton
+          label="Revoke"
+          confirm="Really revoke? Scripts using it stop working."
+          pending="Revoking…"
+          onconfirm={() => revokeToken(token.id)}
+        />
       </div>
     {:else}
       <p class="widget-note">No live tokens.</p>
@@ -280,9 +284,12 @@ async function copySecret(secret: string): Promise<void> {
         <button class="btn subtle" type="button" onclick={() => void reinvite(viewer)}>
           New link
         </button>
-        <button class="btn subtle" type="button" onclick={() => void revokeViewer(viewer.id)}>
-          Revoke
-        </button>
+        <ConfirmButton
+          label="Revoke"
+          confirm="Really revoke their access?"
+          pending="Revoking…"
+          onconfirm={() => revokeViewer(viewer.id)}
+        />
       </div>
     {:else}
       <p class="widget-note">No viewers yet.</p>

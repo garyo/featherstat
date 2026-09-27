@@ -2,6 +2,7 @@
 import { MAX_NTFY_RULES, type SiteInfo } from '@featherstat/shared';
 import { type AdminClient, AdminError } from '../lib/admin.ts';
 import { type PanelFailure, panelFailure } from '../lib/admin-failure.ts';
+import ConfirmButton from '../lib/components/ConfirmButton.svelte';
 import {
   draftFrom,
   emptyRule,
@@ -249,13 +250,14 @@ function removeRule(index: number): void {
           Send test notification
         </button>
         {#if storedConfigured}
-          <button
+          <ConfirmButton
             class="btn"
-            type="button"
+            label="Disable notifications"
+            confirm="Really forget the endpoint, token and every rule?"
+            pending="Disabling…"
             disabled={busy}
-            title="Forget the endpoint, token and rules — nothing will be sent"
-            onclick={() => void disable()}>Disable notifications</button
-          >
+            onconfirm={disable}
+          />
         {/if}
       </div>
     </form>

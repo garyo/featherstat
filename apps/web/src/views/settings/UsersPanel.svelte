@@ -4,6 +4,7 @@ import { toggleSite } from '../../lib/access.ts';
 import type { AdminClient } from '../../lib/admin.ts';
 import { type PanelFailure, panelFailure } from '../../lib/admin-failure.ts';
 import { adminObjects } from '../../lib/admin-objects.ts';
+import ConfirmButton from '../../lib/components/ConfirmButton.svelte';
 import PanelError from './PanelError.svelte';
 
 /**
@@ -150,9 +151,12 @@ async function copySecret(secret: string): Promise<void> {
         <button class="btn subtle" type="button" onclick={() => void reinvite(user)}>
           New link
         </button>
-        <button class="btn subtle" type="button" onclick={() => void disable(user.id)}>
-          Disable
-        </button>
+        <ConfirmButton
+          label="Disable"
+          confirm="Really disable? They are signed out now."
+          pending="Disabling…"
+          onconfirm={() => disable(user.id)}
+        />
       </div>
       {#if assigning?.id === user.id}
         <fieldset class="scope">
