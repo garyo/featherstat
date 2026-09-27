@@ -1,6 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -75,7 +74,6 @@ export async function startServer({ seed }: { seed: boolean }): Promise<Server> 
 
   if (seed) run('bun', ['run', '--cwd', 'apps/server', 'seed'], { DB_PATH: dbPath });
 
-  const port = await freePort();
   const server = spawn(
     'node',
     ['--experimental-transform-types', '--disable-warning=ExperimentalWarning', 'src/main.ts'],
@@ -85,7 +83,8 @@ export async function startServer({ seed }: { seed: boolean }): Promise<Server> 
         ...process.env,
         DB_PATH: dbPath,
         WEB_DIR: join(ROOT, 'apps/web/dist'),
-        PORT: String(port),
+        // The OS picks; the server logs what it bound, so nothing can race for it.
+        PORT: '0',
         // A test run must never reach for a few hundred MB of GeoIP database.
         GEOIP_AUTO: '0',
         NODE_ENV: 'production',
@@ -104,7 +103,7 @@ export async function startServer({ seed }: { seed: boolean }): Promise<Server> 
   };
 
   try {
-    const setupToken = await bootToken(server);
+    const { setupToken, port } = await boot(server);
     return { baseURL: `http://127.0.0.1:${port}`, setupToken, dir, stop };
   } catch (failure) {
     await stop();
@@ -112,11 +111,12 @@ export async function startServer({ seed }: { seed: boolean }): Promise<Server> 
   }
 }
 
-/** Resolves once the server has logged both the token and its port. */
-function bootToken(server: ReturnType<typeof spawn>): Promise<string> {
+/** Resolves once the server has logged both the token and the port it bound. */
+function boot(server: ReturnType<typeof spawn>): Promise<{ setupToken: string; port: number }> {
   return new Promise((resolve, reject) => {
     let output = '';
     let token: string | undefined;
+    let port: number | undefined;
     const timer = setTimeout(() => {
       reject(new Error(`server did not boot in ${BOOT_TIMEOUT_MS}ms:\n${output}`));
     }, BOOT_TIMEOUT_MS);
@@ -124,33 +124,21 @@ function bootToken(server: ReturnType<typeof spawn>): Promise<string> {
       clearTimeout(timer);
       if (error !== undefined) reject(error);
       else if (token === undefined) reject(new Error(`no setup token logged:\n${output}`));
-      else resolve(token);
+      else if (port === undefined) reject(new Error(`no port logged:\n${output}`));
+      else resolve({ setupToken: token, port });
     };
     const read = (chunk: Buffer): void => {
       output += chunk.toString();
       token ??= TOKEN_LINE.exec(output)?.[1];
-      if (LISTENING.test(output)) finish();
+      const listening = LISTENING.exec(output)?.[1];
+      if (listening !== undefined) {
+        port = Number(listening);
+        finish();
+      }
     };
     server.stdout?.on('data', read);
     server.stderr?.on('data', read);
     server.once('exit', (code) => finish(new Error(`server exited (${code}):\n${output}`)));
-  });
-}
-
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const probe = createServer();
-    probe.once('error', reject);
-    probe.listen(0, '127.0.0.1', () => {
-      const address = probe.address();
-      if (address === null || typeof address === 'string') {
-        probe.close();
-        reject(new Error('could not take a port'));
-        return;
-      }
-      const { port } = address;
-      probe.close(() => resolve(port));
-    });
   });
 }
 

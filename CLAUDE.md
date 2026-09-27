@@ -181,7 +181,7 @@ and the cost, live in `apps/server/test/replay/calibrated.ts`. The consequence
 worth holding: **the pre-push hook is the only thing enforcing perf**, so a
 clone without it can land a regression.
 
-**`bun run e2e` is deliberately outside `bun run ci`** (`test/e2e`, ~25 s): run
+**`bun run e2e` is deliberately outside `bun run ci`** (`test/e2e`, ~35 s): run
 it after touching anything the browser renders. It is out of `ci` so the pre-push
 gate stays fast, which is what keeps it being run at all; GitHub Actions runs it
 as its own `e2e` job beside the gates, uploading the Playwright report and

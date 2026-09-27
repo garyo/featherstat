@@ -2,8 +2,9 @@ import { defineConfig, devices } from '@playwright/test';
 
 /**
  * End-to-end, against the built SPA served by the real server (fixtures/
- * harness.ts). Manual for now — `bun run e2e` — and deliberately NOT part of
- * `bun run ci`: the pre-push gate stays fast, which is what keeps it being run.
+ * harness.ts). Run by `bun run e2e` and GitHub Actions' own `e2e` job, and
+ * deliberately NOT part of `bun run ci`: the pre-push gate stays fast, which is
+ * what keeps it being run.
  *
  * Three projects, because some specs write:
  *
@@ -28,7 +29,8 @@ export default defineConfig({
   timeout: 30_000,
   expect: { timeout: 10_000 },
   forbidOnly: true,
-  reporter: process.env.CI === undefined ? [['list']] : [['github'], ['list']],
+  // A non-empty $CI, the rule scripts/ci.sh and calibrated.ts share.
+  reporter: process.env.CI ? [['github'], ['list']] : [['list']],
   use: {
     baseURL,
     ...devices['Desktop Chrome'],
