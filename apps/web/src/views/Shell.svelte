@@ -26,11 +26,13 @@ import {
   DEFAULT_VIEW_STATE,
   type DetailRef,
   discardsDraft,
+  leavesSettingsSection,
   type PivotChoice,
   resolveNav,
   type SiteScope,
   type ViewName,
   type ViewRange,
+  type ViewState,
   type ViewStatePatch,
 } from '../lib/state.ts';
 import { toggleTheme } from '../lib/theme.ts';
@@ -58,9 +60,9 @@ let { admin, auth }: Props = $props();
  * site — a scoped user's directory may not contain site 1 at all. */
 const firstSite = (): number => directory.sites?.[0]?.id ?? 1;
 
-// Back/forward is a navigation like any other: it may not take a changed draft
+// Back/forward is a navigation like any other: it may not take an unsaved edit
 // away without asking (the refused move is undone — see state.svelte.ts).
-const view = createViewState(window, (from, to) => !discardsDraft(from, to) || guardEdit());
+const view = createViewState(window, (from, to) => mayLeave(from, to));
 
 /** Any 401 mid-session flips the app back to the login view (docs/02). */
 const guardedFetch: typeof fetch = async (input, init) => {
@@ -146,30 +148,45 @@ $effect(() => {
   if (current !== 'dash') mode.close();
 });
 
+/** The mounted Settings view — asked, before it is left, whether a form holds an edit. */
+let settingsView = $state<{ unsaved(): boolean } | undefined>(undefined);
+const ask = (message: string): boolean => window.confirm(message);
+
 /** Asks before a move would discard a changed draft; a yes closes the editor. */
 function guardEdit(): boolean {
-  const ok = confirmDiscard(mode.dirty, dashboards.selection?.name ?? 'this dashboard', (message) =>
-    window.confirm(message),
-  );
+  const ok = confirmDiscard(mode.dirty, dashboards.selection?.name ?? 'this dashboard', ask);
   if (ok && mode.editing) mode.close();
   return ok;
 }
 
+/** Asks before a move would discard an unsaved Settings form. */
+function guardSettings(): boolean {
+  return confirmDiscard(settingsView?.unsaved() ?? false, 'Settings', ask);
+}
+
+/** Whether a move may proceed: one that would discard an unsaved edit asks first. */
+function mayLeave(from: ViewState, to: ViewState): boolean {
+  if (discardsDraft(from, to)) return guardEdit();
+  if (leavesSettingsSection(from, to)) return guardSettings();
+  return true;
+}
+
 /**
  * Every navigation — the header's, a widget's jump, a drill — goes through
- * here, so none can discard a draft without the same question. (The header's
+ * here, so none can discard an edit without the same question. (The header's
  * pickers also ask first, to snap a vetoed select back; by then the editor is
  * closed and this passes.)
  */
 function navigate(patch: ViewStatePatch): void {
-  if (discardsDraft(view.current, { ...view.current, ...patch }) && !guardEdit()) return;
-  view.update(patch);
+  if (mayLeave(view.current, { ...view.current, ...patch })) view.update(patch);
 }
 
-// A changed draft also survives an accidental reload or tab close.
+// An unsaved edit also survives an accidental reload or tab close.
 $effect(() => {
-  if (!mode.dirty) return;
-  const hold = (event: BeforeUnloadEvent): void => event.preventDefault();
+  if (!mode.dirty && current !== 'settings') return;
+  const hold = (event: BeforeUnloadEvent): void => {
+    if (mode.dirty || settingsView?.unsaved() === true) event.preventDefault();
+  };
   window.addEventListener('beforeunload', hold);
   return () => window.removeEventListener('beforeunload', hold);
 });
@@ -332,7 +349,7 @@ const setPivots = (pivots: PivotChoice[]): void => navigate({ pivots });
 const openDetail = (detail: DetailRef): void =>
   navigate(resolveNav(view.current, { detail }, siteTab));
 const logout = (): void => {
-  if (guardEdit()) void auth.logout();
+  if (guardEdit() && guardSettings()) void auth.logout();
 };
 
 /**
@@ -394,10 +411,14 @@ const app: AppEnv = {
 
   {#if current === 'settings'}
     {#if SettingsPanel !== undefined}
+      <!-- The section nav asks before it discards a form, so its move skips `navigate`. -->
       <SettingsPanel
+        bind:this={settingsView}
         {admin}
         sites={directory.sites}
         role={auth.role}
+        section={view.current.section}
+        onselectsection={(section) => view.update({ section })}
         onsiteschanged={() => void directory.reload()}
       />
     {/if}
