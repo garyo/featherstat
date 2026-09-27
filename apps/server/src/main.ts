@@ -1,6 +1,6 @@
 import { serve } from '@hono/node-server';
 import { createSecuredApp } from './auth/app.ts';
-import { openDb } from './db/index.ts';
+import { DEV_DB_PATH, openDb } from './db/index.ts';
 import { DEFAULT_MMDB_PATH, startJobs } from './jobs/index.ts';
 import { readNtfySettings } from './notify/index.ts';
 import { startExclusionRefresh } from './pipeline/exclusions.ts';
@@ -13,7 +13,7 @@ import { createRealtimeHub } from './realtime/hub.ts';
 /** One path for both readers: the pipeline reads this file, the refresh job replaces it. */
 const mmdbPath = process.env.GEOIP_MMDB_PATH ?? DEFAULT_MMDB_PATH;
 
-const dbPath = process.env.DB_PATH ?? 'analytics.db';
+const dbPath = process.env.DB_PATH ?? DEV_DB_PATH;
 const db = openDb(dbPath);
 
 /**

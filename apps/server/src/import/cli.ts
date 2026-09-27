@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import BetterSqlite3 from 'better-sqlite3';
-import { openDb, V1_IMPORT_SUBCOMMAND } from '../db/index.ts';
+import { DEV_DB_PATH, openDb, V1_IMPORT_SUBCOMMAND } from '../db/index.ts';
 import { type ImportReport, importMatomo, parseSiteMap, type SourceQuery } from './importer.ts';
 import { importV1, type V1ImportReport } from './v1/importer.ts';
 
@@ -45,7 +45,6 @@ ${V1_IMPORT_SUBCOMMAND} (featherstat v1 → v2):
                created and migrated if absent, REFUSED if it already has events
   --dry-run    read + validate the source + report what would happen, write nothing`;
 
-const DEFAULT_MATOMO_DB_PATH = 'data/dev.db';
 const DEFAULT_V1_TARGET_PATH = 'analytics.db';
 
 interface CliValues {
@@ -205,7 +204,7 @@ async function mainMatomo(values: CliValues): Promise<void> {
     dateStrings: true,
     supportBigNumbers: true,
   });
-  const db = openDb(process.env.DB_PATH ?? DEFAULT_MATOMO_DB_PATH);
+  const db = openDb(process.env.DB_PATH ?? DEV_DB_PATH);
   try {
     const source: SourceQuery = async (sql, params) => {
       const [rows] = await connection.query(sql, params as unknown[]);

@@ -171,7 +171,7 @@ Tracking endpoints and `/healthz` are public, everything else needs the session.
 | Env | Default (image) | Meaning |
 | --- | --- | --- |
 | `PORT` | `8080` | Listen port |
-| `DB_PATH` | `/data/analytics.db` | SQLite file (put it on the volume) |
+| `DB_PATH` | `/data/analytics.db` | SQLite file (put it on the volume). Outside the image it defaults to `data/dev.db`, the file `seed` writes |
 | `TRUSTED_PROXY_HOPS` | `1` | Reverse proxies in front (each appends one `X-Forwarded-For` entry). `1` fits the Traefik setup below; `0` = no proxy, forwarded headers are ignored |
 | `TRUST_X_REAL_IP` | unset | `1` = read `X-Real-IP` when a request carries no `X-Forwarded-For` — only if your proxy sets it (nginx `proxy_set_header X-Real-IP`); otherwise any client can send it |
 | `GEOIP_MMDB_PATH` | `/data/dbip-city-lite.mmdb` | GeoIP database the refresh job maintains |

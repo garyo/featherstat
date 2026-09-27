@@ -6,7 +6,7 @@ import {
   REPLAY_HITS_PER_FLUSH,
   toMatomoQuery,
 } from '../../test/replay/generate.ts';
-import { createSite, openDb, withWriteTransaction } from '../db/index.ts';
+import { createSite, DEV_DB_PATH, openDb, withWriteTransaction } from '../db/index.ts';
 import { parseMatomoRequest } from '../ingest/matomo.ts';
 import { createPipeline } from '../pipeline/index.ts';
 import { DevGeoProvider } from './geo.ts';
@@ -24,12 +24,11 @@ import { DevGeoProvider } from './geo.ts';
  */
 
 const DAYS = 90;
-const DEFAULT_PATH = 'data/dev.db';
 /** Long enough that only the explicit flushes below ever run (as in the bench). */
 const MANUAL_FLUSH_INTERVAL_MS = 3_600_000;
 
 function main(): void {
-  const path = process.env.DB_PATH ?? DEFAULT_PATH;
+  const path = process.env.DB_PATH ?? DEV_DB_PATH;
   const now = Date.now();
   const startMs = utcMidnight(now) - (DAYS - 1) * DAY_MS;
 
