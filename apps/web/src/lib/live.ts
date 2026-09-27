@@ -39,7 +39,7 @@ const DEFAULT_STALE_MS = ACTIVE_TICK_MS * 2.5;
 /** docs/05: a busy site must not re-issue its batch per hit. */
 export const REVALIDATE_DEBOUNCE_MS = 3_000;
 
-export interface LiveEvents {
+interface LiveEvents {
   snapshot: RealtimeSnapshot;
   hit: RealtimeHit;
   active: RealtimeActive;
@@ -53,7 +53,7 @@ export interface LiveEvents {
   /** Client-synthesized connection health, emitted on transitions only. */
   status: { connected: boolean };
 }
-export type LiveEventName = keyof LiveEvents;
+type LiveEventName = keyof LiveEvents;
 
 /** The slice of `EventSource` this module uses — tests supply their own. */
 export interface EventSourceLike {

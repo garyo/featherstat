@@ -68,7 +68,7 @@ export function draftOfNodes(nodes: readonly FilterNode[]): DraftGroup {
   return groupDraft('all', nodes.map(draftOfNode));
 }
 
-export function draftOfNode(node: FilterNode): DraftNode {
+function draftOfNode(node: FilterNode): DraftNode {
   if ('not' in node) {
     const inner = draftOfNode(node.not);
     // A negated group negates in place; anything else gains the group that

@@ -14,7 +14,7 @@ import { SiteCache } from './site-cache.ts';
 export type HitSink = (hits: Hit[], ctx: HitContext) => void;
 
 /** Enriched hit, delivered as it happens — the realtime hub cannot wait for the flush. */
-export type HitHook = (event: EventRow) => void;
+type HitHook = (event: EventRow) => void;
 
 export interface PipelineOptions {
   geo?: GeoProvider;

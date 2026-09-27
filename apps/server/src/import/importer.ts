@@ -82,7 +82,7 @@ export interface ImportOptions {
   log?: (line: string) => void;
 }
 
-export interface DayTotal {
+interface DayTotal {
   site_id: number;
   local_date: string;
   visits: number;

@@ -57,7 +57,7 @@ const LINK_TOKEN_SHAPE = /^fsu_[A-Za-z0-9_-]{43}$/;
 const MAX_USER_BODY_BYTES = 64 * 1024;
 
 /** The delivery seam, mirroring viewers.ts: no SMTP, so the default just logs. */
-export type DeliverUserInvite = (user: UserRow, url: string) => void;
+type DeliverUserInvite = (user: UserRow, url: string) => void;
 
 const logInvite: DeliverUserInvite = (user) => {
   console.log(`user invite minted for ${user.email} — copy the link from the admin response`);

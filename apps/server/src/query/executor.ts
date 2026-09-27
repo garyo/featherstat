@@ -347,7 +347,7 @@ function asFilter(resolved: FilterNode | string): FilterNode | undefined {
  * events dated the horizon's own local date can predate the instant, so that
  * date is already suspect.
  */
-export function rawHorizonRefusal(
+function rawHorizonRefusal(
   windows: readonly SiteWindow[],
   horizonTs: number | undefined,
 ): QueryErrorResult | undefined {

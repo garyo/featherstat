@@ -35,7 +35,7 @@ import {
 
 /** Exhaustive over the closed enum: a new dimension in `packages/shared` fails to
  * compile until labeled. `prop:` dims are open-ended — `dimLabel` names them by key. */
-export const DIM_LABELS: Record<BaseDimension, string> = {
+const DIM_LABELS: Record<BaseDimension, string> = {
   path: 'Page',
   hostname: 'Hostname',
   title: 'Title',

@@ -16,7 +16,7 @@ import type { SourceFile } from './ownership.guard.ts';
  * it an invented rogue widget and check that this actually objects.
  */
 
-export interface WidgetIo {
+interface WidgetIo {
   /** What the widget did — the noun in the failure. */
   what: string;
   pattern: RegExp;
@@ -27,7 +27,7 @@ function importOf(module: string): RegExp {
   return new RegExp(`(?:from|import)\\s*\\(?\\s*['"][^'"]*/lib/${module}(?:\\.ts)?['"]`);
 }
 
-export const WIDGET_IO: readonly WidgetIo[] = [
+const WIDGET_IO: readonly WidgetIo[] = [
   { what: 'calls fetch', pattern: /(?<![\w$])fetch\s*\(/ },
   {
     what: 'opens a stream or socket',
@@ -40,7 +40,7 @@ export const WIDGET_IO: readonly WidgetIo[] = [
 ];
 
 /** The guard is worth exactly what it reads; below this the walk broke. */
-export const MIN_WIDGET_FILES = 20;
+const MIN_WIDGET_FILES = 20;
 
 /** Every file under `widgets/` that reaches past its `env` to the network. */
 export function widgetIoBreaches(files: readonly SourceFile[]): string[] {

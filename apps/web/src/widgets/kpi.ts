@@ -29,7 +29,7 @@ import { type SeriesPoint, sliceRanges } from './series.ts';
  * sign alone.
  */
 
-export type Tone = 'up' | 'down' | 'muted';
+type Tone = 'up' | 'down' | 'muted';
 
 export interface TileModel {
   name: string;

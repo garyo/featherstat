@@ -48,7 +48,7 @@ export type DashRef = number | `t:${string}`;
 export type ViewName = 'dash' | 'journeys' | 'realtime' | 'settings' | 'detail';
 
 /** The Settings view's sections (docs/05 § Settings), in nav order. */
-export const SETTINGS_SECTIONS = [
+const SETTINGS_SECTIONS = [
   'sites',
   'access',
   'users',
@@ -193,7 +193,7 @@ export function latestLocalDay(zones: readonly string[], now: number): string {
 }
 
 /** Widget-title qualifier (mockup: "Traffic by hour · last 30 days"). */
-export const RANGE_QUALIFIER: Record<RangePreset, string> = {
+const RANGE_QUALIFIER: Record<RangePreset, string> = {
   today: 'today',
   '24h': 'last 24 hours',
   '7d': 'last 7 days',
@@ -233,12 +233,12 @@ export function compareParam(cmp: CompareChoice): Compare | undefined {
   return cmp === 'off' ? undefined : cmp;
 }
 
-export function sameRange(a: ViewRange, b: ViewRange): boolean {
+function sameRange(a: ViewRange, b: ViewRange): boolean {
   if (typeof a === 'string' || typeof b === 'string') return a === b;
   return a.from === b.from && a.to === b.to;
 }
 
-export function sameCompare(a: CompareChoice, b: CompareChoice): boolean {
+function sameCompare(a: CompareChoice, b: CompareChoice): boolean {
   if (typeof a === 'string' || typeof b === 'string') return a === b;
   return a.from === b.from && a.to === b.to;
 }
@@ -429,7 +429,7 @@ function parseSite(raw: string | null): SiteScope {
 const CUSTOM_RANGE_RE = /^(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})$/;
 
 /** An explicit range the query API would accept, or undefined. */
-export function parseCustomRange(raw: string): CustomRange | undefined {
+function parseCustomRange(raw: string): CustomRange | undefined {
   const match = CUSTOM_RANGE_RE.exec(raw);
   if (match === null) return undefined;
   const candidate = { from: match[1] as string, to: match[2] as string };
@@ -437,7 +437,7 @@ export function parseCustomRange(raw: string): CustomRange | undefined {
   return RangeSchema.safeParse(candidate).success ? candidate : undefined;
 }
 
-export function serializeRange(range: ViewRange): string {
+function serializeRange(range: ViewRange): string {
   return typeof range === 'string' ? range : `${range.from}..${range.to}`;
 }
 
@@ -483,7 +483,7 @@ function parseSection(raw: string | null): SettingsSection | undefined {
  * detail template. The value is component-encoded, so a path carrying `:` can
  * never split the ref.
  */
-export function serializeDetailRef(detail: DetailRef): string {
+function serializeDetailRef(detail: DetailRef): string {
   return `${detail.dim}:${encodeURIComponent(detail.value)}`;
 }
 
@@ -502,7 +502,7 @@ export function parseDetailRef(raw: string | null): DetailRef | undefined {
   return value === '' ? undefined : { dim, value };
 }
 
-export function sameDetailRef(a: DetailRef | undefined, b: DetailRef | undefined): boolean {
+function sameDetailRef(a: DetailRef | undefined, b: DetailRef | undefined): boolean {
   if (a === undefined || b === undefined) return a === b;
   return a.dim === b.dim && a.value === b.value;
 }

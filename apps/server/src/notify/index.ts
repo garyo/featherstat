@@ -5,25 +5,13 @@ import type { Pipeline } from '../pipeline/index.ts';
 import { createNtfyNotifier, type NtfyNotifier, type NtfyNotifierOptions } from './ntfy.ts';
 import { createNtfyRoutes } from './routes.ts';
 
-export {
-  createNtfyNotifier,
-  type NtfyNotifier,
-  type NtfyNotifierOptions,
-  type NtfyStats,
-  type NtfyTestResult,
+export type {
+  NtfyNotifier,
+  NtfyNotifierOptions,
+  NtfyTestResult,
 } from './ntfy.ts';
-export {
-  createNtfyRoutes,
-  NTFY_ADMIN_PATH,
-  NTFY_TEST_PATH,
-  type NtfyRoutesOptions,
-} from './routes.ts';
-export {
-  NTFY_SETTING_KEYS,
-  type NtfySettings,
-  readNtfySettings,
-  writeNtfySettings,
-} from './settings.ts';
+export { createNtfyRoutes, NTFY_ADMIN_PATH, NTFY_TEST_PATH } from './routes.ts';
+export { NTFY_SETTING_KEYS, readNtfySettings } from './settings.ts';
 
 export interface NtfyIntegration {
   notifier: NtfyNotifier;

@@ -156,7 +156,7 @@ export function createAnnotationRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
   return app;
 }
 
-export function toInfo(row: AnnotationRow): AnnotationInfo {
+function toInfo(row: AnnotationRow): AnnotationInfo {
   return { id: row.id, siteId: row.site_id, ts: row.ts, text: row.text };
 }
 

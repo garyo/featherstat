@@ -26,7 +26,7 @@ import { executeQueryRequest } from '../query/executor.ts';
 export const ALERT_RULES_KEY = 'alert_rules';
 
 /** A breached rule renotifies at most this often while it stays breached. */
-export const ALERT_COOLDOWN_MS = 6 * 3_600_000;
+const ALERT_COOLDOWN_MS = 6 * 3_600_000;
 
 /** What `runAlerts`/`runDigest` need from the notifier — main.ts passes the real one. */
 export type AlertNotifier = Pick<NtfyNotifier, 'post' | 'configured'>;
@@ -99,7 +99,7 @@ export function runAlerts(
  * rule names a dimension value, with `compare: 'previous'` exactly when the
  * condition needs a previous window.
  */
-export function requestOf(rule: AlertRule): QueryRequest {
+function requestOf(rule: AlertRule): QueryRequest {
   const filters: FilterNode[] | undefined =
     rule.dim === undefined || rule.value === undefined
       ? undefined
@@ -119,7 +119,7 @@ export function requestOf(rule: AlertRule): QueryRequest {
  * (an unanswerable metric × dimension shape) evaluates to no alert — a rule
  * the vocabulary refuses must not page anyone with a made-up number.
  */
-export function evaluateAlert(rule: AlertRule, response: QueryResponse): string | undefined {
+function evaluateAlert(rule: AlertRule, response: QueryResponse): string | undefined {
   const entry = response.results.alert;
   if (entry === undefined || isQueryError(entry)) return undefined;
   const current = numberOf(entry.rows[0]?.[rule.metric]);

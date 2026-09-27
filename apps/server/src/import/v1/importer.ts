@@ -81,7 +81,7 @@ function hasColumn(db: Db, table: string, column: string): boolean {
 }
 
 /** Throws unless `source` looks like a featherstat v1 database. */
-export function assertV1Source(source: Db): void {
+function assertV1Source(source: Db): void {
   const version = schemaVersion(source);
   if (version < V1_VERSION_MIN || version > V1_VERSION_MAX) {
     throw new Error(
@@ -100,7 +100,7 @@ export function assertV1Source(source: Db): void {
 // Report
 // ---------------------------------------------------------------------------
 
-export interface V1GateReport {
+interface V1GateReport {
   ok: boolean;
   /** One line per mismatch — empty means every gate held. */
   failures: string[];
@@ -154,7 +154,7 @@ export interface V1ImportOptions {
 }
 
 /** Whether a previous run left resume watermarks in `target`. */
-export function hasV1ImportWatermarks(target: Db): boolean {
+function hasV1ImportWatermarks(target: Db): boolean {
   return settingKeysWithPrefix(target, WATERMARK_PREFIX).length > 0;
 }
 
@@ -796,7 +796,7 @@ WHERE site_id = ? AND local_date BETWEEN ? AND ? GROUP BY local_date`,
   }
 }
 
-export function runValidationGates(source: Db, target: Db): V1GateReport {
+function runValidationGates(source: Db, target: Db): V1GateReport {
   const failures: string[] = [];
   for (const table of GATE_TABLES) {
     const sql = `SELECT COUNT(*) FROM ${table}`;

@@ -12,7 +12,7 @@ import { readAlertRules, writeAlertRules } from '../jobs/alerts.ts';
  * that patch semantics would only add ways to be surprised.
  */
 
-export const ALERTS_ADMIN_PATH = '/api/admin/alerts';
+const ALERTS_ADMIN_PATH = '/api/admin/alerts';
 /** A rule list, nothing more (the shared schema caps it far below this). */
 const MAX_BODY_BYTES = 64 * 1024;
 

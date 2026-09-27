@@ -62,7 +62,7 @@ const SQL_SET_META =
 const SQL_DELETE_META = 'DELETE FROM rollup_meta WHERE key = ?';
 
 export const META_ENGAGEMENT_THRESHOLD = 'engagement_threshold_ms';
-export const META_NEEDS_REBUILD = 'needs_rebuild';
+const META_NEEDS_REBUILD = 'needs_rebuild';
 /** UTC ms below which raw events/sessions may have been pruned (jobs/retention.ts). */
 export const META_RAW_HORIZON = 'raw_horizon_ts';
 

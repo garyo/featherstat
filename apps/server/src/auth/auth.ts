@@ -43,7 +43,7 @@ import {
 
 const PASSWORD_SETTING = 'auth.password';
 /** The session id `gate` grants when auth is disabled for local dev. */
-export const DEV_SESSION_ID = 'dev';
+const DEV_SESSION_ID = 'dev';
 
 export interface AuthOptions {
   /** Default: env `AUTH_DISABLED` is `1`/`true`. Only honored under a dev/test NODE_ENV. */
@@ -107,7 +107,7 @@ export interface Auth {
 
 /** What a session can be issued as — the magic-link claim passes the viewer
  * form, the user login and invite claim the user form. */
-export type SessionPrincipal =
+type SessionPrincipal =
   | { kind: 'admin' }
   | { kind: 'viewer'; viewerId: number }
   | { kind: 'user'; userId: number };

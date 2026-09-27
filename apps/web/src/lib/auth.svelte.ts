@@ -5,7 +5,7 @@ import { type AdminClient, AdminError } from './admin.ts';
  * `loading` (one `/api/admin/me` probe) → `setup` (first run, no password yet)
  * | `login` | `ready`. A 401 anywhere later flips `ready` back to `login`.
  */
-export type AuthPhase = 'loading' | 'setup' | 'login' | 'ready';
+type AuthPhase = 'loading' | 'setup' | 'login' | 'ready';
 
 /** Which kind of session this is — how the UI decides what to offer. */
 export type AuthRole = 'admin' | 'user' | 'viewer';

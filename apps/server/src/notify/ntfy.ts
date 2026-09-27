@@ -16,7 +16,7 @@ import { type NtfySettings, readNtfySettings } from './settings.ts';
  *   time. Never the IP, the visitor or session id, or a user id.
  */
 
-export const DEFAULT_COOLDOWN_MS = 60_000;
+const DEFAULT_COOLDOWN_MS = 60_000;
 const DEFAULT_MAX_PENDING = 32;
 const DEFAULT_MAX_IN_FLIGHT = 2;
 /** A hung ntfy must not hold an in-flight slot forever. */
@@ -49,7 +49,7 @@ export interface NtfyNotifierOptions {
   warn?: (line: string) => void;
 }
 
-export interface NtfyStats {
+interface NtfyStats {
   sent: number;
   failed: number;
   /** Queued behind a full backlog and discarded. */
@@ -234,7 +234,7 @@ export function createNtfyNotifier(db: Db, options: NtfyNotifierOptions = {}): N
 }
 
 /** Every field the rule states must equal the event's; absent fields don't constrain. */
-export function matches(rule: NtfyRule, event: EventRow): boolean {
+function matches(rule: NtfyRule, event: EventRow): boolean {
   if (rule.site !== undefined && rule.site !== event.site_id) return false;
   if (rule.eventCategory !== undefined && rule.eventCategory !== event.event_category) return false;
   if (rule.eventAction !== undefined && rule.eventAction !== event.event_action) return false;

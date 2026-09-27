@@ -4,7 +4,6 @@ import { type Db, migrate } from './migrate.ts';
 
 export {
   type Db,
-  type Migration,
   migrate,
   schemaVersion,
   V1_IMPORT_SUBCOMMAND,
@@ -885,7 +884,6 @@ export interface DerivedMetricRow {
 
 const DERIVED_COLUMNS = 'id, name, expr, updated_at';
 const SQL_LIST_DERIVED = `SELECT ${DERIVED_COLUMNS} FROM derived_metrics ORDER BY id`;
-const SQL_GET_DERIVED = `SELECT ${DERIVED_COLUMNS} FROM derived_metrics WHERE id = ?`;
 const SQL_GET_DERIVED_BY_NAME = `SELECT ${DERIVED_COLUMNS} FROM derived_metrics WHERE name = ?`;
 const SQL_CREATE_DERIVED =
   'INSERT INTO derived_metrics (name, expr, created_at, updated_at) VALUES (?, ?, ?, ?)';
@@ -895,10 +893,6 @@ const SQL_DELETE_DERIVED = 'DELETE FROM derived_metrics WHERE id = ?';
 
 export function listDerivedMetrics(db: Db): DerivedMetricRow[] {
   return stmt<DerivedMetricRow>(db, SQL_LIST_DERIVED).all() as DerivedMetricRow[];
-}
-
-export function getDerivedMetric(db: Db, id: number): DerivedMetricRow | undefined {
-  return stmt<DerivedMetricRow>(db, SQL_GET_DERIVED).get(id);
 }
 
 export function getDerivedMetricByName(db: Db, name: string): DerivedMetricRow | undefined {

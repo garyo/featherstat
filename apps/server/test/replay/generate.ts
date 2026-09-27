@@ -32,7 +32,7 @@ import type { GeoProvider } from '../../src/pipeline/geo.ts';
 // Public shape
 // ---------------------------------------------------------------------------
 
-export interface ReplaySite {
+interface ReplaySite {
   id: number;
   name: string;
   domains: string[];

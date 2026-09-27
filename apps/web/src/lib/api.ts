@@ -16,7 +16,7 @@ const DEFAULT_ENDPOINT = '/api/query';
 const DEFAULT_CACHE_ENTRIES = 32;
 
 /** The slice of `fetch` this client uses — tests supply their own. */
-export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
+type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 
 export interface QueryClientOptions {
   endpoint?: string;
@@ -25,7 +25,7 @@ export interface QueryClientOptions {
   cacheEntries?: number;
 }
 
-export interface QueryOptions {
+interface QueryOptions {
   signal?: AbortSignal;
 }
 

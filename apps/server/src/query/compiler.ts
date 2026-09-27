@@ -124,7 +124,7 @@ const DIMS: Record<BaseDimension, DimSpec> = {
  * a bag, so every prop dim is event-only. Everything else resolves from the
  * closed `DIMS` table; this is the single seam where the union splits.
  */
-export function dimSpec(dim: Dimension): DimSpec {
+function dimSpec(dim: Dimension): DimSpec {
   if (!isPropDimension(dim)) return DIMS[dim];
   return {
     events: (alias: string) => `json_extract(${alias}.props, ?)`,
@@ -970,7 +970,7 @@ function sessionLeafSql(
   ].join(' ');
 }
 
-export function filterSql(
+function filterSql(
   filter: FilterLeaf,
   table: Table,
   params: (string | number)[],

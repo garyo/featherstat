@@ -63,7 +63,7 @@ export const CLAIM_ACCOUNT = 'link';
  * link was minted (never the link itself — the response is its one appearance).
  * An SMTP/ntfy integration later replaces this one function and nothing else.
  */
-export type DeliverInvite = (viewer: ViewerRow, url: string) => void;
+type DeliverInvite = (viewer: ViewerRow, url: string) => void;
 
 const logInvite: DeliverInvite = (viewer) => {
   console.log(`viewer invite minted for ${viewer.email} — copy the link from the admin response`);

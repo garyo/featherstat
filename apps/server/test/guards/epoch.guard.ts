@@ -52,14 +52,14 @@ export function jobSources(dir: string = JOBS_DIR): JobSource[] {
  * and a rollup rebuild, which rewrites the derived history queries answer from
  * (reconcile's repair path replaces rows a cached ETag was computed against).
  */
-export const HISTORY_REWRITE =
+const HISTORY_REWRITE =
   /\b(?:UPDATE|DELETE\s+FROM)\s+(?:(?:events|sessions)\b|\$\{table\})|\brebuildRollupDay\s*\(/;
 
 /** The call every rewriter must make after its last chunk commits. */
 const EPOCH_BUMP = 'bumpDataEpoch(';
 
 /** Calls that bump on a rewriter's behalf, each with the job file that must bump itself. */
-export const DELEGATED_BUMPS: Readonly<Record<string, string>> = {
+const DELEGATED_BUMPS: Readonly<Record<string, string>> = {
   'settleRewrite(': 'rewrite.ts',
 };
 
@@ -71,7 +71,7 @@ function bumps(source: string): boolean {
 }
 
 /** The known rewrite entry points. A new one is added HERE, with its bump. */
-export const REWRITERS = [
+const REWRITERS = [
   'campaign-backfill.ts',
   'referrer-backfill.ts',
   'prop-scrub.ts',
@@ -84,14 +84,14 @@ export const REWRITERS = [
  * Files that match the rewrite shape but legitimately never bump. Each needs a
  * reason; an empty entry is not allowed.
  */
-export const EXEMPT: Readonly<Record<string, string>> = {
+const EXEMPT: Readonly<Record<string, string>> = {
   'retention.ts':
     'deletes only rows below the raw horizon it records first — the query engine ' +
     'refuses to answer under that floor, so pruned history is refused, never re-served stale',
 };
 
 /** The guard is worth exactly what it reads; below this the walk broke. */
-export const MIN_JOB_FILES = 10;
+const MIN_JOB_FILES = 10;
 
 /**
  * `source` reprinted without its comments, so a comment that merely mentions

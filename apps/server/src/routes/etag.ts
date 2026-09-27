@@ -40,7 +40,7 @@ function stripWeak(tag: string): string {
  * the cached body still shows empty. For a fully past range it equals `to`, so
  * those tags stay stable — exactly what makes them cacheable.
  */
-export function windowTag(windows: readonly SiteWindow[], now: number): string {
+function windowTag(windows: readonly SiteWindow[], now: number): string {
   return windows
     .map((w) => {
       const today = localClock(w.timezone, now).date;

@@ -8,7 +8,7 @@
 import { isRepeatView } from '../repeat.ts';
 
 /** Ordered tracking parameters; the shim encodes its own bodies to stay small. */
-export type Params = readonly (readonly [string, string])[];
+type Params = readonly (readonly [string, string])[];
 
 /** What the DOM knows at the moment a command is pushed. */
 export interface PageInfo {
@@ -22,7 +22,7 @@ export interface PageInfo {
   lang?: string;
 }
 
-export interface Beacon {
+interface Beacon {
   /** `setTrackerUrl` — where the hit goes. */
   url: string;
   /** Form-encoded matomo.php parameters, POSTed as the beacon body. */

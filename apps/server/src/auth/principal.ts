@@ -15,10 +15,6 @@ export type Principal =
   | { kind: 'viewer'; sessionId: string; viewerId: number; sites: SiteScope }
   | { kind: 'token'; tokenId: number; sites: SiteScope };
 
-export function isAdmin(principal: Principal): boolean {
-  return principal.kind === 'admin';
-}
-
 /** A principal that may hold the management surface at all: admin or user. */
 export function isManager(principal: Principal): boolean {
   return principal.kind === 'admin' || principal.kind === 'user';

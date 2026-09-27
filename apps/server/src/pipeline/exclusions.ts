@@ -253,7 +253,7 @@ export function formatAddress(bytes: Uint8Array): string {
 export type Resolver = (hostname: string) => Promise<string[]>;
 
 /** A + AAAA together; either family answering alone is a success. */
-export const dnsResolver: Resolver = async (hostname) => {
+const dnsResolver: Resolver = async (hostname) => {
   const [v4, v6] = await Promise.allSettled([resolve4(hostname), resolve6(hostname)]);
   const addresses: string[] = [];
   if (v4.status === 'fulfilled') addresses.push(...v4.value);
@@ -275,7 +275,7 @@ export const dnsResolver: Resolver = async (hostname) => {
  * milliseconds; anything near this is already broken, and saying so beats
  * hanging.
  */
-export const RESOLVE_TIMEOUT_MS = 3_000;
+const RESOLVE_TIMEOUT_MS = 3_000;
 
 function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
@@ -307,7 +307,7 @@ export async function refreshResolutions(
 // Storage + the refresh timer
 // ---------------------------------------------------------------------------
 
-export const EXCLUSION_RULES_KEY = 'exclusion_rules';
+const EXCLUSION_RULES_KEY = 'exclusion_rules';
 
 /**
  * How often hostname rules are re-resolved. A dynamic address changes on the
@@ -315,7 +315,7 @@ export const EXCLUSION_RULES_KEY = 'exclusion_rules';
  * after one moves — short enough not to matter, long enough to be invisible
  * next to the DNS TTL.
  */
-export const EXCLUSION_REFRESH_MS = 5 * 60_000;
+const EXCLUSION_REFRESH_MS = 5 * 60_000;
 
 /**
  * A row we cannot validate excludes NOTHING rather than guessing. The failure
