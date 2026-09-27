@@ -24,8 +24,9 @@ export interface Pipeline {
   sink: HitSink;
   /** Flushes everything queued right now (tests, admin). */
   flush(): void;
-  /** Stops the batch timer and flushes — wire to SIGTERM/SIGINT. */
-  shutdown(): void;
+  /** Stops the batch timer and flushes — wire to SIGTERM/SIGINT. False when
+   * the flush failed and queued hits are still unwritten; calling again retries. */
+  shutdown(): boolean;
   onHit(hook: HitHook): void;
   onFlush(hook: FlushHook): void;
   /** The live prop registry — the admin delete route invalidates through it. */

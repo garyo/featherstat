@@ -125,7 +125,9 @@ rows it writes after the importer's scan passed them exist in neither file's
 future. The importer enforces the fresh-start side of this: a target that
 already has events is refused unless a crash left resume watermarks
 (`import:v1:*` in the target's settings — re-running resumes, never
-duplicates).
+duplicates). A run that completes with every validation gate held clears
+them, so the finished file counts as live from then on and a second import
+into it is refused too.
 
 What transfers, streamed in watermarked batches:
 

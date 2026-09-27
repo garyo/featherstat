@@ -54,6 +54,7 @@ import {
   updateDashboard,
   updateSite,
   upsertSessions,
+  withReadSnapshot,
   withWriteTransaction,
 } from './index.ts';
 import { MIGRATIONS } from './migrations/index.ts';
@@ -735,6 +736,24 @@ describe('helpers', () => {
         insertShareToken(db, { token_hash: new Uint8Array(32), dashboard_id: 1, created_at: 0 }),
       ).toThrow(/withWriteTransaction/);
       expect(() => revokeShareTokens(db, 1, 0)).toThrow(/withWriteTransaction/);
+    });
+
+    it('rejects writes made inside a read snapshot, which is a transaction too', () => {
+      expect(() => withReadSnapshot(db, () => setSetting(db, 'snap', 'nope'))).toThrow(
+        /withWriteTransaction/,
+      );
+      expect(getSetting(db, 'snap')).toBeUndefined();
+    });
+
+    it('stops admitting writes once the transaction that opened it is over, even on a throw', () => {
+      expect(() =>
+        write(() => {
+          throw new Error('boom');
+        }),
+      ).toThrow('boom');
+      expect(() => withReadSnapshot(db, () => setSetting(db, 'after', 'nope'))).toThrow(
+        /withWriteTransaction/,
+      );
     });
   });
 });

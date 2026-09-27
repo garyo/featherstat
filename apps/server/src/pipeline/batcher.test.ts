@@ -150,4 +150,19 @@ describe('WriteBatcher', () => {
       db.prepare('SELECT COUNT(*) FROM rollup_dim_day WHERE site_id = 2').pluck().get(),
     ).not.toBe(0);
   });
+
+  it('stop() reports a failed final flush, and a second stop() retries it', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    batcher.addEvent(event());
+    batcher.beforeCommit = () => {
+      batcher.beforeCommit = undefined;
+      throw new Error('disk full');
+    };
+
+    expect(batcher.stop()).toBe(false);
+    expect(count(db, 'events')).toBe(0);
+    expect(batcher.stop()).toBe(true);
+    expect(count(db, 'events')).toBe(1);
+    error.mockRestore();
+  });
 });

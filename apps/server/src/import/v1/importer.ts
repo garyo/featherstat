@@ -8,6 +8,7 @@ import {
   countEvents,
   createSite,
   type Db,
+  deleteSetting,
   type EventRow,
   getSetting,
   insertEvents,
@@ -43,7 +44,8 @@ import { rebuildAllRollups } from '../../rollup/rebuild.ts';
  *
  * Runbook rule (docs/06): **stop v1 → import → start v2**. A still-writing v1
  * would fork history, which is why a non-empty target without a resume
- * watermark is refused rather than topped up.
+ * watermark is refused rather than topped up — and why a completed import
+ * clears its watermarks.
  *
  * What transfers: sites/events/sessions/bot_drops 1:1 (utm values through the
  * shared campaign normalizer — the importer and live ingest must not disagree
@@ -225,6 +227,16 @@ export async function importV1(
     log(`rollups: ${report.rollupDays} site-days rebuilt`);
     report.gates = runValidationGates(source, target);
     log(report.gates.ok ? 'validation gates: all held' : 'validation gates: FAILED');
+    // Done: from here the file is a live v2 database, and the watermarks would
+    // otherwise disarm the fresh-target refusal above forever. A failed gate
+    // keeps them, so a re-run after investigating is a resume, not a refusal.
+    if (report.gates.ok) {
+      withWriteTransaction(target, () => {
+        for (const key of settingKeysWithPrefix(target, WATERMARK_PREFIX)) {
+          deleteSetting(target, key);
+        }
+      });
+    }
   }
   return report;
 }

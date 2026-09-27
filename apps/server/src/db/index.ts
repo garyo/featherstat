@@ -217,17 +217,32 @@ export function observeWriteTransactions(db: Db, observer: (ms: number) => void)
 }
 
 /**
+ * How many `withWriteTransaction` bodies are running on each connection. The
+ * connection's own `inTransaction` cannot tell a write transaction from a read
+ * snapshot, so `assertWritable` asks this instead.
+ */
+const writeDepth = new WeakMap<Db, number>();
+
+/**
  * The only way to write. Single-writer discipline (docs/02): the ingest batcher wraps
  * each 200 ms flush in one of these; everything else is a read. Nests safely (savepoints).
  */
 export function withWriteTransaction<T>(db: Db, fn: () => T): T {
+  const body = (): T => {
+    writeDepth.set(db, (writeDepth.get(db) ?? 0) + 1);
+    try {
+      return fn();
+    } finally {
+      writeDepth.set(db, (writeDepth.get(db) ?? 1) - 1);
+    }
+  };
   const observers = writeObservers.get(db);
   if (observers === undefined || observers.size === 0 || db.inTransaction) {
-    return db.transaction(fn).immediate();
+    return db.transaction(body).immediate();
   }
   const started = performance.now();
   try {
-    return db.transaction(fn).immediate();
+    return db.transaction(body).immediate();
   } finally {
     const ms = performance.now() - started;
     for (const observer of observers) observer(ms);
@@ -243,8 +258,9 @@ export function withReadSnapshot<T>(db: Db, fn: () => T): T {
   return db.transaction(fn).deferred();
 }
 
+/** Throws unless a `withWriteTransaction` is open on `db` — a read snapshot does not count. */
 export function assertWritable(db: Db): void {
-  if (!db.inTransaction) {
+  if ((writeDepth.get(db) ?? 0) === 0) {
     throw new Error('DB writes must run inside withWriteTransaction() — see docs/02 single writer');
   }
 }

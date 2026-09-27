@@ -83,15 +83,38 @@ if (notifications.url !== undefined) {
 const server = serve({ fetch: app.fetch, port });
 console.log(`analytics server listening on :${port}`);
 
+/** In-flight queries get this long at shutdown — well inside Docker's 10 s stop grace. */
+const QUERY_DRAIN_MS = 3_000;
+
+/**
+ * The final flush comes first, before anything that can take time: queued
+ * beacons must land even if the container is killed at the end of its stop
+ * grace. A second flush after the query drain lands hits whose requests were
+ * already in flight when the listener closed, and retries a first that failed —
+ * so the exit code says whether anything queued was lost.
+ */
+async function shutdown(): Promise<never> {
+  server.close();
+  jobs.stop();
+  exclusionRefresh.stop();
+  let flushed = false;
+  try {
+    pipeline.shutdown();
+    await pool?.close(QUERY_DRAIN_MS);
+    flushed = pipeline.shutdown();
+  } catch (error) {
+    console.error('shutdown:', error);
+  }
+  if (!flushed) console.error('shutdown: the final flush failed — queued hits were not written');
+  db.close();
+  process.exit(flushed ? 0 : 1);
+}
+
+let stopping = false;
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   process.once(signal, () => {
-    server.close();
-    jobs.stop();
-    exclusionRefresh.stop();
-    void (pool?.close() ?? Promise.resolve()).finally(() => {
-      pipeline.shutdown(); // final flush — queued beacons land before exit
-      db.close();
-      process.exit(0);
-    });
+    if (stopping) return;
+    stopping = true;
+    void shutdown();
   });
 }

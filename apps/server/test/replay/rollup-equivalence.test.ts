@@ -1,10 +1,18 @@
-import type { Hit } from '@featherstat/shared';
+import { type Hit, localClock } from '@featherstat/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createSite, type Db, openDb, stmt, withWriteTransaction } from '../../src/db/index.ts';
+import {
+  createSite,
+  type Db,
+  openDb,
+  setSetting,
+  stmt,
+  withWriteTransaction,
+} from '../../src/db/index.ts';
+import { RETENTION_DAYS_KEY, runRetention } from '../../src/jobs/retention.ts';
 import { WriteBatcher } from '../../src/pipeline/batcher.ts';
 import type { DeviceInfo } from '../../src/pipeline/enrich.ts';
 import { priorSessionLookup, Sessionizer } from '../../src/pipeline/sessionizer.ts';
-import { rebuildRollupDay } from '../../src/rollup/rebuild.ts';
+import { rebuildAllRollups, rebuildRollupDay } from '../../src/rollup/rebuild.ts';
 import { verifyRollupDay } from '../../src/rollup/verify.ts';
 import { generateCorpus } from './generate.ts';
 import { openReplayDb } from './harness.ts';
@@ -119,117 +127,146 @@ const DRIFT_SITES = [
 ];
 const PATHS = ['/', '/a', '/b', '/pricing', null];
 const DAY_MS = 86_400_000;
+const ROLLUP_TABLE_NAMES = [
+  'rollup_traffic_hour',
+  'rollup_dim_day',
+  'rollup_sessions_day',
+  'rollup_visitor_seen',
+  'rollup_session_seen',
+] as const;
+
+interface Planned {
+  siteId: number;
+  ts: number;
+  hit: Hit;
+  visitor: Uint8Array;
+}
+
+/** Spans Tokyo's midnight repeatedly. */
+const DRIFT_START = Date.UTC(2026, 2, 1);
+
+/** Three days of randomized visits on both drift sites, time-ordered. */
+function planDriftHits(rng: () => number): Planned[] {
+  const planned: Planned[] = [];
+  for (let visitor = 0; visitor < 60; visitor += 1) {
+    const site = DRIFT_SITES[visitor % 2];
+    if (site === undefined) continue;
+    const stable = rng() < 0.5; // uid-style: one id across all three days
+    for (let day = 0; day < 3; day += 1) {
+      if (rng() < 0.3) continue;
+      // Biased late into the day so some sessions straddle local midnight.
+      const sessionStart = DRIFT_START + day * DAY_MS + Math.floor(rng() ** 2 * DAY_MS * 1.2);
+      const id = new Uint8Array(8);
+      id[0] = visitor;
+      id[1] = site.id;
+      id[2] = stable ? 0xff : day;
+      let ts = sessionStart;
+      const steps = 1 + Math.floor(rng() * 4);
+      for (let step = 0; step < steps; step += 1) {
+        const roll = rng();
+        const path = PATHS[Math.floor(rng() * PATHS.length)] ?? null;
+        const url = path === null ? undefined : `https://${site.domains[0]}${path}`;
+        const hit: Hit =
+          roll < 0.6 || step === 0
+            ? { siteId: site.id, type: 'pageview', url }
+            : roll < 0.75
+              ? { siteId: site.id, type: 'ping', url }
+              : roll < 0.9
+                ? {
+                    siteId: site.id,
+                    type: 'event',
+                    url,
+                    event: { category: 'cta', action: 'click', value: 1 },
+                  }
+                : { siteId: site.id, type: 'outlink', url, targetUrl: 'https://ext.test/x' };
+        planned.push({ siteId: site.id, ts, hit, visitor: id });
+        ts += 1_000 + Math.floor(rng() * 25_000);
+      }
+    }
+  }
+  // Deliberate midnight-straddlers: a stable visitor reading through their
+  // site's LOCAL midnight (15:00 UTC in Tokyo), so the session's later hits
+  // land on the next local_date while the visit stays on its start date.
+  for (const [index, site] of DRIFT_SITES.entries()) {
+    const offsetMs = site.timezone === 'Asia/Tokyo' ? 9 * 3_600_000 : 0;
+    for (const day of [1, 2]) {
+      const boundary = DRIFT_START + day * DAY_MS - offsetMs;
+      const id = new Uint8Array(8);
+      id[0] = 200 + index;
+      id[1] = site.id;
+      id[2] = day;
+      for (let step = 0; step < 5; step += 1) {
+        const path = PATHS[step % PATHS.length] ?? '/';
+        planned.push({
+          siteId: site.id,
+          ts: boundary - 45_000 + step * 20_000,
+          hit: {
+            siteId: site.id,
+            type: step % 2 === 0 ? 'pageview' : 'ping',
+            url: `https://${site.domains[0]}${path ?? '/'}`,
+          },
+          visitor: id,
+        });
+      }
+    }
+  }
+  return planned.sort((a, b) => a.ts - b.ts);
+}
+
+/**
+ * The real batcher and sessionizer, wired the way createPipeline wires them
+ * (including the revival snapshot seeding) but with the visitor ids supplied
+ * directly — which is what lets a visitor stay STABLE across local midnight
+ * here, the uid shape the corpus has no opted-in site for.
+ */
+function driftIngest(db: Db): {
+  batcher: WriteBatcher;
+  sessionizer: Sessionizer;
+  /** False for an orphan heartbeat, which stores nothing. */
+  ingest(entry: Planned): boolean;
+} {
+  withWriteTransaction(db, () => {
+    for (const site of DRIFT_SITES) createSite(db, site);
+  });
+  const batcher = new WriteBatcher(db, 3_600_000);
+  const lookup = priorSessionLookup(db);
+  const sessionizer = new Sessionizer((siteId, visitorId, notBefore) => {
+    const prior = lookup(siteId, visitorId, notBefore);
+    if (prior !== undefined) batcher.seedSnapshot(prior.row);
+    return prior;
+  });
+  const ingest = (entry: Planned): boolean => {
+    const site = DRIFT_SITES[entry.siteId - 1];
+    if (site === undefined) throw new Error('unknown drift site');
+    const sessionized = sessionizer.process({
+      site: { ...site, created_at: 0, domains: [...site.domains] },
+      hit: entry.hit,
+      visitorId: entry.visitor,
+      now: entry.ts,
+      device: DEVICE,
+      geo: null,
+      lang: 'en-us',
+    });
+    if (sessionized === undefined) return false;
+    batcher.addEvent(sessionized.event);
+    batcher.addSession(sessionized.session);
+    return true;
+  };
+  return { batcher, sessionizer, ingest };
+}
 
 describe('rollup drift under randomized flushes', () => {
   it('random flush points + one failing flush: retry double-counts nothing', () => {
     const rng = mulberry32(0xd41f7);
     const db = openDb(':memory:');
-    withWriteTransaction(db, () => {
-      for (const site of DRIFT_SITES) createSite(db, site);
-    });
-
-    // The real batcher and sessionizer, wired the way createPipeline wires
-    // them (including the revival snapshot seeding) but with the visitor ids
-    // supplied directly — which is what lets a visitor stay STABLE across
-    // local midnight here, the uid shape the corpus has no opted-in site for.
-    const batcher = new WriteBatcher(db, 3_600_000);
-    const lookup = priorSessionLookup(db);
-    const sessionizer = new Sessionizer((siteId, visitorId, notBefore) => {
-      const prior = lookup(siteId, visitorId, notBefore);
-      if (prior !== undefined) batcher.seedSnapshot(prior.row);
-      return prior;
-    });
-
-    interface Planned {
-      siteId: number;
-      ts: number;
-      hit: Hit;
-      visitor: Uint8Array;
-    }
-    const planned: Planned[] = [];
-    const start = Date.UTC(2026, 2, 1); // spans Tokyo's midnight repeatedly
-    for (let visitor = 0; visitor < 60; visitor += 1) {
-      const site = DRIFT_SITES[visitor % 2];
-      if (site === undefined) continue;
-      const stable = rng() < 0.5; // uid-style: one id across all three days
-      for (let day = 0; day < 3; day += 1) {
-        if (rng() < 0.3) continue;
-        // Biased late into the day so some sessions straddle local midnight.
-        const sessionStart = start + day * DAY_MS + Math.floor(rng() ** 2 * DAY_MS * 1.2);
-        const id = new Uint8Array(8);
-        id[0] = visitor;
-        id[1] = site.id;
-        id[2] = stable ? 0xff : day;
-        let ts = sessionStart;
-        const steps = 1 + Math.floor(rng() * 4);
-        for (let step = 0; step < steps; step += 1) {
-          const roll = rng();
-          const path = PATHS[Math.floor(rng() * PATHS.length)] ?? null;
-          const url = path === null ? undefined : `https://${site.domains[0]}${path}`;
-          const hit: Hit =
-            roll < 0.6 || step === 0
-              ? { siteId: site.id, type: 'pageview', url }
-              : roll < 0.75
-                ? { siteId: site.id, type: 'ping', url }
-                : roll < 0.9
-                  ? {
-                      siteId: site.id,
-                      type: 'event',
-                      url,
-                      event: { category: 'cta', action: 'click', value: 1 },
-                    }
-                  : { siteId: site.id, type: 'outlink', url, targetUrl: 'https://ext.test/x' };
-          planned.push({ siteId: site.id, ts, hit, visitor: id });
-          ts += 1_000 + Math.floor(rng() * 25_000);
-        }
-      }
-    }
-    // Deliberate midnight-straddlers: a stable visitor reading through their
-    // site's LOCAL midnight (15:00 UTC in Tokyo), so the session's later hits
-    // land on the next local_date while the visit stays on its start date.
-    for (const [index, site] of DRIFT_SITES.entries()) {
-      const offsetMs = site.timezone === 'Asia/Tokyo' ? 9 * 3_600_000 : 0;
-      for (const day of [1, 2]) {
-        const boundary = start + day * DAY_MS - offsetMs;
-        const id = new Uint8Array(8);
-        id[0] = 200 + index;
-        id[1] = site.id;
-        id[2] = day;
-        for (let step = 0; step < 5; step += 1) {
-          const path = PATHS[step % PATHS.length] ?? '/';
-          planned.push({
-            siteId: site.id,
-            ts: boundary - 45_000 + step * 20_000,
-            hit: {
-              siteId: site.id,
-              type: step % 2 === 0 ? 'pageview' : 'ping',
-              url: `https://${site.domains[0]}${path ?? '/'}`,
-            },
-            visitor: id,
-          });
-        }
-      }
-    }
-    planned.sort((a, b) => a.ts - b.ts);
+    const { batcher, sessionizer, ingest } = driftIngest(db);
+    const planned = planDriftHits(rng);
 
     const failAt = Math.floor(planned.length * 0.4);
     let failed = 0;
     let flushes = 0;
     for (const [index, entry] of planned.entries()) {
-      const site = DRIFT_SITES[entry.siteId - 1];
-      if (site === undefined) throw new Error('unknown drift site');
-      const sessionized = sessionizer.process({
-        site: { ...site, created_at: 0, domains: [...site.domains] },
-        hit: entry.hit,
-        visitorId: entry.visitor,
-        now: entry.ts,
-        device: DEVICE,
-        geo: null,
-        lang: 'en-us',
-      });
-      if (sessionized === undefined) continue; // an orphan heartbeat
-      batcher.addEvent(sessionized.event);
-      batcher.addSession(sessionized.session);
+      if (!ingest(entry)) continue; // an orphan heartbeat
 
       if (index === failAt) {
         // One flush dies mid-transaction; everything must stay queued and the
@@ -264,6 +301,50 @@ describe('rollup drift under randomized flushes', () => {
       .get() as number;
     expect(spanning).toBeGreaterThan(0);
 
+    db.close();
+  }, 60_000);
+
+  it('retention, then a full rebuild: days at or below the floor keep their flushed rollups', async () => {
+    const rng = mulberry32(0x5e7a1);
+    const db = openDb(':memory:');
+    const { batcher, sessionizer, ingest } = driftIngest(db);
+    for (const entry of planDriftHits(rng)) {
+      if (ingest(entry) && rng() < 0.04 && batcher.flush() !== undefined) sessionizer.noteFlush();
+    }
+    batcher.flush();
+
+    // A one-day window whose cutoff lands on a different local date per site
+    // (18:00 UTC is already tomorrow in Tokyo), with midnight-straddling
+    // visits on both sides of it.
+    const now = DRIFT_START + 2 * DAY_MS + 18 * 3_600_000;
+    const floors = DRIFT_SITES.map((site) => localClock(site.timezone, now - DAY_MS).date);
+    expect(new Set(floors).size).toBe(2);
+    const atOrBelowFloor = (): string[] =>
+      ROLLUP_TABLE_NAMES.flatMap((table) =>
+        stmt<Record<string, unknown>>(
+          db,
+          `SELECT * FROM ${table} WHERE (site_id = 1 AND local_date <= ?) OR (site_id = 2 AND local_date <= ?)`,
+        )
+          .all(...floors)
+          .map((row) => `${table} ${JSON.stringify(row)}`),
+      ).sort();
+    const flushed = atOrBelowFloor();
+    expect(flushed.length).toBeGreaterThan(0);
+
+    withWriteTransaction(db, () => setSetting(db, RETENTION_DAYS_KEY, '1'));
+    expect((await runRetention(db, { now: () => now })).events).toBeGreaterThan(0);
+    await rebuildAllRollups(db, { now: () => now });
+
+    expect(atOrBelowFloor()).toEqual(flushed);
+    const survivors = rollupDays(db).filter(
+      ({ site_id, local_date }) => local_date > (floors[site_id - 1] ?? ''),
+    );
+    expect(survivors.length).toBeGreaterThan(0);
+    for (const { site_id, local_date } of survivors) {
+      expect(verifyRollupDay(db, site_id, local_date), `site ${site_id} @ ${local_date}`).toEqual(
+        [],
+      );
+    }
     db.close();
   }, 60_000);
 });

@@ -8,6 +8,7 @@ import {
   stmt,
   withWriteTransaction,
 } from '../db/index.ts';
+import { inChunks, oneRunAtATime } from './rewrite.ts';
 
 /**
  * Chunked removal of one prop key from stored bags (docs/03 § Props). The admin
@@ -24,19 +25,22 @@ import {
 
 const WATERMARK_PREFIX = 'prop_scrub:';
 
-/** Rows per transaction — retention.ts's budget, for the same shared-lock reason. */
+/** Rows examined per transaction — retention.ts's budget, for the same shared-lock reason. */
 const DEFAULT_BATCH_SIZE = 5_000;
 
-/** `json_type` is non-NULL exactly when the bag carries the key; values are never
- * JSON null (the schema forbids it), so this misses nothing. */
-const SQL_SCRUB_CHUNK = `UPDATE events
+/**
+ * One rowid window of `batchSize` rows — examined, not matched: a window keeps
+ * each transaction's work bounded however sparse the key is, where "the next N
+ * matches" could walk the rest of the table in one go. `+site_id` keeps the
+ * planner on the rowid range; the site index would scan the whole site and sort.
+ * `json_type` is non-NULL exactly when the bag carries the key; values are never
+ * JSON null (the schema forbids it), so this misses nothing.
+ */
+const SQL_SCRUB_WINDOW = `UPDATE events
 SET props = nullif(json_remove(props, ?), '{}')
-WHERE id IN (
-  SELECT id FROM events
-  WHERE id > ? AND site_id = ? AND props IS NOT NULL AND json_type(props, ?) IS NOT NULL
-  ORDER BY id LIMIT ?
-)
-RETURNING id`;
+WHERE id > ? AND id <= ? AND +site_id = ? AND props IS NOT NULL AND json_type(props, ?) IS NOT NULL`;
+
+const SQL_MAX_EVENT_ID = 'SELECT COALESCE(MAX(id), 0) FROM events';
 
 function watermarkKey(siteId: number, key: string): string {
   return `${WATERMARK_PREFIX}${siteId}:${key}`;
@@ -59,23 +63,14 @@ interface PropScrubOptions {
   batchSize?: number;
 }
 
-/** One run in flight per db: a route kick during the boot catch-up just rides it. */
-const inFlight = new WeakMap<Db, Promise<PropScrubResult>>();
-
 /**
  * Drain every pending scrub watermark. Safe to call any time — the route kicks
  * it after a DELETE, and the scheduler's hourly job resumes whatever a crash
  * left behind.
  */
-export function runPropScrubs(db: Db, options: PropScrubOptions = {}): Promise<PropScrubResult> {
-  const running = inFlight.get(db);
-  if (running !== undefined) return running;
-  const run = drain(db, options.batchSize ?? DEFAULT_BATCH_SIZE).finally(() => {
-    inFlight.delete(db);
-  });
-  inFlight.set(db, run);
-  return run;
-}
+export const runPropScrubs = oneRunAtATime((db: Db, options: PropScrubOptions = {}) =>
+  drain(db, options.batchSize ?? DEFAULT_BATCH_SIZE),
+);
 
 async function drain(db: Db, batchSize: number): Promise<PropScrubResult> {
   const result: PropScrubResult = { completed: 0, rows: 0 };
@@ -87,30 +82,18 @@ async function drain(db: Db, batchSize: number): Promise<PropScrubResult> {
       continue;
     }
     const path = `$."${key}"`;
-    for (;;) {
-      // The event loop back between chunks: SQLite is synchronous, and an
-      // unbroken scrub would stall ingest and its 200 ms flush.
-      await new Promise((resolve) => setImmediate(resolve));
-      const done = withWriteTransaction(db, () => {
-        const since = Number(getSetting(db, setting) ?? 0);
-        const ids = stmt<{ id: number }>(db, SQL_SCRUB_CHUNK).all(
-          path,
-          since,
-          siteId,
-          path,
-          batchSize,
-        ) as { id: number }[];
-        if (ids.length === 0) {
-          deleteSetting(db, setting);
-          bumpDataEpoch(db);
-          return true;
-        }
-        result.rows += ids.length;
-        setSetting(db, setting, String(ids[ids.length - 1]?.id ?? since));
-        return false;
-      });
-      if (done) break;
-    }
+    await inChunks(db, () => {
+      const since = Number(getSetting(db, setting) ?? 0);
+      if (since >= (stmt<number>(db, SQL_MAX_EVENT_ID).pluck().get() as number)) {
+        deleteSetting(db, setting);
+        bumpDataEpoch(db);
+        return true;
+      }
+      const until = since + batchSize;
+      result.rows += stmt(db, SQL_SCRUB_WINDOW).run(path, since, until, siteId, path).changes;
+      setSetting(db, setting, String(until));
+      return false;
+    });
     result.completed += 1;
   }
   return result;

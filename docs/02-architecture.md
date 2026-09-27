@@ -73,8 +73,11 @@ caps, unknown parameters ignored. Full parameter mapping in
 
 Enriched events append to an in-memory queue; a 200 ms timer flushes the queue
 in a single SQLite transaction (events insert + sessions upsert). SQLite with
-WAL does this in microseconds at our volumes. Graceful shutdown flushes the
-queue. The accepted trade: a hard crash loses at most ~200 ms of hits.
+WAL does this in microseconds at our volumes. Graceful shutdown (`main.ts`)
+flushes the queue first, before giving in-flight queries a bounded 3 s to
+finish, then flushes again for hits that were mid-request; it exits non-zero
+if anything queued could not be written. The accepted trade: a hard crash
+loses at most ~200 ms of hits.
 
 Single-writer discipline: all writes go through the batcher; reads happen
 anywhere (WAL readers don't block the writer).
@@ -129,12 +132,15 @@ site's version moves, and the ETag machinery makes a no-op revalidation free.
 - **Alerts + weekly digest** — hourly rule evaluation and a weekly per-site
   "what changed" sentence, both through the ntfy notifier when configured.
 - **Retention** — optional nightly pruning of raw events/sessions past a
-  configurable age (default: keep forever; the data is small). Records the raw
-  floor in `rollup_meta` first, ages the prop registry with the rows, and never
-  touches rollups (docs/03 § Size & retention).
+  configurable age (default: keep forever; the data is small), in whole
+  site-local days. Records the raw floor in `rollup_meta` first, ages the prop
+  registry with the rows, and never touches rollups — nor lets a rollup rebuild
+  reach a day at the floor (docs/03 § Size & retention).
 - **Backup** — nightly `VACUUM INTO '<dir>/analytics-<date>.db'`, on when
-  Settings → Data names a directory; pruned to the newest N copies
-  (`backup_keep`, default 7). `VACUUM INTO` writes a compacted, consistent
+  Settings → Data names a directory; written under a `.partial` name and
+  renamed into place, so a failed copy never replaces a good one, and pruned
+  to the newest N copies only after it succeeds (`backup_keep`, default 7).
+  `VACUUM INTO` writes a compacted, consistent
   snapshot from one read transaction — the only safe way to copy a live WAL
   file (docs/09) — and runs outside the write transaction discipline because it
   makes no writes. better-sqlite3 is synchronous, so the copy blocks the

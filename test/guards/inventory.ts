@@ -439,6 +439,19 @@ const epochDiscipline = defineGuard<JobSource[]>({
       if (scrub === undefined) throw new Error('prop-scrub.ts not staged');
       scrub.source = scrub.source.replaceAll('bumpDataEpoch', 'neverBumped');
     },
+    "a rewriter's bump survives only in a comment": (files) => {
+      const scrub = files.find((file) => file.name === 'prop-scrub.ts');
+      if (scrub === undefined) throw new Error('prop-scrub.ts not staged');
+      scrub.source = scrub.source.replace(
+        'bumpDataEpoch(db);',
+        '// the epilogue owes bumpDataEpoch(db) here',
+      );
+    },
+    'the shared rewrite epilogue stops bumping for the backfills': (files) => {
+      const shared = files.find((file) => file.name === 'rewrite.ts');
+      if (shared === undefined) throw new Error('rewrite.ts not staged');
+      shared.source = shared.source.replaceAll('bumpDataEpoch', 'neverBumped');
+    },
     'a new job rewrites history without registering': (files) => {
       files.push({
         name: 'sneaky-rewrite.ts',

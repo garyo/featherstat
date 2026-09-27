@@ -113,3 +113,16 @@ describe('the built entrypoint serves the SECURED app', () => {
     expect((await fetch(`${BASE}/metrics`)).status).toBe(404);
   });
 });
+
+// Last on purpose: it stops the server the tests above share.
+describe('the built entrypoint on SIGTERM', () => {
+  it('flushes, drains, and exits 0 well inside a container stop grace', async () => {
+    const exited = new Promise<number | null>((resolve) => {
+      child.once('exit', (code) => resolve(code));
+    });
+    const started = performance.now();
+    child.kill('SIGTERM');
+    expect(await exited).toBe(0);
+    expect(performance.now() - started).toBeLessThan(8_000);
+  }, 15_000);
+});
