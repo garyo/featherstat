@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { card, dashboardReady, openView } from '../pages.ts';
+import { answerConfirm, card, dashboardReady, openView } from '../pages.ts';
 
 /**
  * The dashboard editor, which writes. Serial and self-cleaning (see
@@ -83,5 +83,72 @@ test('a widget can be added, survives a reload, and can be removed', async ({ pa
   await dashboardReady(page);
   await expect(card(page, WIDGET_TITLE)).toHaveCount(0);
   // Back to the shipped built-in, which is what "Customize" implies.
+  await expect(page.getByRole('button', { name: 'Customize' })).toBeVisible();
+});
+
+test('leaving a changed draft asks first, and "no" keeps the draft and the URL', async ({
+  page,
+}) => {
+  await openView(page, { site: 2, range: '90d' });
+  await dashboardReady(page);
+  // In-app, so Back has a same-document entry to return to.
+  await page.getByLabel('Dashboard').selectOption({ label: 'Content (built-in)' });
+  await expect(page).toHaveURL(/dash=t%3Acontent/);
+  await dashboardReady(page);
+
+  await page.getByRole('button', { name: 'Customize' }).click();
+  await page.locator('.ew').filter({ hasText: 'Scroll depth' }).getByTitle('Remove widget').click();
+  const editing = page.getByText('Editing', { exact: true });
+  const removed = page.locator('.ew').filter({ hasText: 'Scroll depth' });
+  await expect(removed).toHaveCount(0);
+
+  // Back: a history move cannot be cancelled, only undone — the URL returns.
+  const asked = await answerConfirm(page, 'dismiss', () => page.goBack());
+  expect(asked).toContain('Discard unsaved changes to Content');
+  await expect(page).toHaveURL(/dash=t%3Acontent/);
+  await expect(editing).toBeVisible();
+  await expect(removed).toHaveCount(0);
+
+  // A header button asks the same question; "no" stays put…
+  const realtime = page.getByRole('button', { name: 'Realtime' });
+  await answerConfirm(page, 'dismiss', () => realtime.click());
+  await expect(page).toHaveURL(/dash=t%3Acontent/);
+  await expect(editing).toBeVisible();
+
+  // …and "yes" leaves, discarding the draft rather than saving it.
+  await answerConfirm(page, 'accept', () => realtime.click());
+  await expect(page).toHaveURL(/view=realtime/);
+  await page.goBack();
+  await dashboardReady(page);
+  await expect(editing).toHaveCount(0);
+  await expect(card(page, 'Scroll depth')).toBeVisible();
+});
+
+test('the drag handle moves a card with the arrow keys', async ({ page }) => {
+  await openView(page, { site: 2, range: '90d', dash: 't:content' });
+  await dashboardReady(page);
+  await page.getByRole('button', { name: 'Customize' }).click();
+
+  const titles = page.locator('.ew .etitle');
+  const before = await titles.allTextContents();
+  const at = before.indexOf('Top pages');
+  expect(at).toBeGreaterThanOrEqual(0);
+
+  const handle = page.getByRole('button', { name: 'Reorder Top pages' });
+  await handle.focus();
+  await page.keyboard.press('ArrowRight');
+
+  const after = [...before];
+  after.splice(at, 2, before[at + 1] as string, 'Top pages');
+  await expect(titles).toHaveText(after);
+  await expect(page.getByText(`Top pages moved to position ${at + 2} of`)).toBeAttached();
+
+  // Focus follows the card it moved, so the next press moves it again.
+  await expect(handle).toBeFocused();
+  await page.keyboard.press('ArrowLeft');
+  await expect(titles).toHaveText(before);
+
+  // Nothing is saved: cancelling leaves the built-in as it was.
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Customize' })).toBeVisible();
 });

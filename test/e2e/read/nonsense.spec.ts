@@ -1,5 +1,5 @@
-import { expect, type Page, test } from '@playwright/test';
-import { dashboardReady, NONSENSE, openView, visibleText } from '../pages.ts';
+import { expect, test } from '@playwright/test';
+import { dashboardReady, expectNoNonsense, openView, stranger } from '../pages.ts';
 
 /**
  * Nothing on screen may read `[object Object]`, `undefined`, `NaN` or `null`.
@@ -15,12 +15,6 @@ import { dashboardReady, NONSENSE, openView, visibleText } from '../pages.ts';
  * but it knows what can never be right anywhere.
  */
 
-async function clean(page: Page, where: string): Promise<void> {
-  const text = await visibleText(page);
-  const bad = text.split('\n').filter((line) => NONSENSE.test(line));
-  expect(bad, `${where} shows text no screen should ever show`).toEqual([]);
-}
-
 test('no screen renders a stringified nothing', async ({ page }) => {
   for (const [where, state] of [
     ['all sites', { site: 'all' as const, range: '90d' }],
@@ -34,7 +28,7 @@ test('no screen renders a stringified nothing', async ({ page }) => {
     ['a filtered dashboard', { site: 2, range: '90d', filters: ['country:neq:SG'] }],
   ] as const) {
     await openView(page, state);
-    await clean(page, where);
+    await expectNoNonsense(page, where);
   }
 });
 
@@ -44,34 +38,52 @@ test('no panel that opens renders one either', async ({ page }) => {
 
   await page.getByRole('button', { name: '+ Filter' }).click();
   const dialog = page.locator('dialog');
-  await clean(page, 'the filter editor, empty');
+  await expectNoNonsense(page, 'the filter editor, empty');
 
   // Text mode first: an unfinished condition disables it on purpose, so this
   // order is the app's rule rather than a workaround for it.
   await dialog.getByRole('button', { name: 'Edit as text' }).click();
   await page.locator('dialog .vocab summary').click();
-  await clean(page, 'the filter editor, text mode');
+  await expectNoNonsense(page, 'the filter editor, text mode');
 
   await dialog.getByRole('button', { name: 'Edit as conditions' }).click();
   await dialog.getByRole('button', { name: '+ condition' }).click();
   const row = dialog.locator('.cond-row').first();
   await row.getByLabel('Dimension').fill('country');
   await row.getByLabel('Value').fill('SG');
-  await clean(page, 'the filter editor, one condition');
+  await expectNoNonsense(page, 'the filter editor, one condition');
   await dialog.getByRole('button', { name: 'Cancel' }).click();
 
   // The editor: Add-widget is where this class of bug actually shipped.
   await page.getByRole('button', { name: 'Customize' }).click();
   await page.getByRole('button', { name: 'Add widget' }).click();
-  await clean(page, 'add widget');
+  await expectNoNonsense(page, 'add widget');
   await page.locator('dialog').getByRole('button', { name: 'Close' }).click();
 });
 
 test('no settings panel renders one', async ({ page }) => {
   await openView(page, { view: 'settings' });
-  for (const tab of ['Sites & tracking', 'Access', 'Query objects', 'Campaigns', 'Data']) {
-    await page.getByRole('button', { name: tab, exact: true }).click();
+  const nav = page.getByLabel('Settings sections');
+  for (const tab of await nav.getByRole('button').allTextContents()) {
+    await nav.getByRole('button', { name: tab.trim(), exact: true }).click();
     await expect(page.getByText('Loading…')).toHaveCount(0);
-    await clean(page, `settings › ${tab}`);
+    await expectNoNonsense(page, `settings › ${tab.trim()}`);
   }
+});
+
+test('no page a link opens renders one', async ({ browser }) => {
+  // Well-formed tokens nobody minted: each page renders its own dead-link
+  // answer, or its claim form, without a session behind it.
+  const unminted = 'A'.repeat(43);
+  const page = await stranger(browser);
+  for (const [where, path, expected] of [
+    ['a dead share link', `/s/${unminted}`, 'no longer valid'],
+    ['a viewer invite', `/invite/fsv_${unminted}`, 'Open the dashboards'],
+    ['a user invite', `/welcome/fsu_${unminted}`, 'Choose a password'],
+  ] as const) {
+    await page.goto(path);
+    await expect(page.getByText(expected).first()).toBeVisible();
+    await expectNoNonsense(page, where);
+  }
+  await page.context().close();
 });

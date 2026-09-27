@@ -1,4 +1,4 @@
-import { expect, type Locator, type Page } from '@playwright/test';
+import { type Browser, expect, type Locator, type Page } from '@playwright/test';
 
 /**
  * The few helpers every spec wants, and nothing more. Not a page-object layer:
@@ -65,4 +65,41 @@ export const NONSENSE = /\[object |\bundefined\b|\bNaN\b|\bnull\b/;
 /** The visible text of the page, as a reader sees it. */
 export async function visibleText(page: Page): Promise<string> {
   return (await page.locator('body').innerText()).trim();
+}
+
+/** Fails listing every line on screen that reads like a stringified nothing. */
+export async function expectNoNonsense(page: Page, where: string): Promise<void> {
+  const text = await visibleText(page);
+  const bad = text.split('\n').filter((line) => NONSENSE.test(line));
+  expect(bad, `${where} shows text no screen should ever show`).toEqual([]);
+}
+
+/**
+ * A browser with no session — someone opening a link they were sent. Said out
+ * loud because `browser.newContext()` inside a test inherits the project's
+ * `storageState`, which here is the admin's session.
+ */
+export async function stranger(browser: Browser): Promise<Page> {
+  const context = await browser.newContext({ storageState: { cookies: [], origins: [] } });
+  return context.newPage();
+}
+
+/**
+ * Runs `action`, answers the native `confirm()` it raises, and resolves with
+ * the question. A confirm blocks the page, so the answer is armed before the
+ * click that raises it; a guard that no longer asks fails the spec here.
+ */
+export async function answerConfirm(
+  page: Page,
+  answer: 'accept' | 'dismiss',
+  action: () => Promise<unknown>,
+): Promise<string> {
+  const asked = page.waitForEvent('dialog').then(async (dialog) => {
+    await (answer === 'accept' ? dialog.accept() : dialog.dismiss());
+    return dialog;
+  });
+  await action();
+  const dialog = await asked;
+  expect(dialog.type()).toBe('confirm');
+  return dialog.message();
 }
