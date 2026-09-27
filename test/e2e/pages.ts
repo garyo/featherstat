@@ -67,6 +67,13 @@ export async function visibleText(page: Page): Promise<string> {
   return (await page.locator('body').innerText()).trim();
 }
 
+/** Fails listing every line on screen that reads like a stringified nothing. */
+export async function expectNoNonsense(page: Page, where: string): Promise<void> {
+  const text = await visibleText(page);
+  const bad = text.split('\n').filter((line) => NONSENSE.test(line));
+  expect(bad, `${where} shows text no screen should ever show`).toEqual([]);
+}
+
 /**
  * A browser with no session — someone opening a link they were sent. Said out
  * loud because `browser.newContext()` inside a test inherits the project's
