@@ -722,12 +722,12 @@ function account(hits: readonly ReplayHit[]): Accounted {
     // ceiling on how far revival can reach back.
     const identity = `${hit.siteId}|${localDate}|${fingerprint(hit, ctx)}`;
 
-    // A ping is a continuation signal, never the start of a visit (docs/03), so it
-    // reaches further back than any other hit: past the idle timeout it revives the
-    // visitor's own last session, and past the returning-reader window it is
-    // dropped rather than booked as a visit with nothing in it.
+    // Only a page view arrives (docs/03): anything else happens on a page already
+    // open, so past the idle timeout it revives the visitor's own last session.
+    // Past the returning-reader window a ping is dropped rather than booked as a
+    // visit with nothing in it; an action still opens one.
     const prior = open.get(identity);
-    const reach = hit.type === 'ping' ? SESSION_REVIVAL_MS : SESSION_TIMEOUT_MS;
+    const reach = oracleReach(hit.type);
     const idle = prior === undefined ? Number.POSITIVE_INFINITY : ctx.receivedAt - prior.lastSeenAt;
     if (hit.type === 'ping' && idle > reach) {
       droppedPings += 1;
@@ -841,6 +841,16 @@ interface LocalStamp {
  * tracking params are its campaign families, so the restatement stays that
  * small — the full closed list is page-url.test.ts's job, not the replay's.
  */
+/**
+ * How far back a hit of this type may join the visitor's last session — the
+ * oracles' copy of the sessionizer's rule (docs/03). Only a page view arrives;
+ * anything else happens on a page already open, so it reaches back across the
+ * returning-reader window.
+ */
+export function oracleReach(type: HitType): number {
+  return type === 'pageview' ? SESSION_TIMEOUT_MS : SESSION_REVIVAL_MS;
+}
+
 export function oraclePath(url: URL): string {
   const kept = url.search
     .slice(1)

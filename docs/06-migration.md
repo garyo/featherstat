@@ -392,6 +392,22 @@ metric *means* has to be logged here or the comparison silently drifts.
     cost 111 ms and breached; both kinds instead select the runs out of a single
     `LEAD` pass, and flows cuts a signature to depth only for the journeys
     actually longer than it.
+- **2026-09-27 — an action on an open page no longer starts a visit.** An
+  event, outlink or download arriving more than 30 minutes after the
+  visitor's last hit now revives that visit, as a heartbeat already did
+  (docs/03 § Sessionization), instead of opening a `direct`, page-less one.
+  With nothing to revive it still opens a visit — packzen's webhook signups
+  are real. On the replay corpus: **visits 13 799 → 13 768 (−31)**,
+  page-less visits **193 → 162**. Matomo counts those as new visits; expect
+  featherstat to read that much lower, and do not chase it.
+- **2026-09-27 — the native tracker's read milestone no longer defeats
+  bounce.** It fired at load on any page that fit the viewport, and the
+  sessionizer counted it as an event, so no visit to a short page on a
+  native-tracker site could bounce. Now it needs a heartbeat of attention and
+  is left out of `sessions.events` (docs/03 § Derived metrics). **Bounce rate
+  rises** on native-tracker sites with short pages, from the change forward;
+  stored sessions keep their counts. The shim never sends it, and the corpus
+  has none, so neither moves.
 
 ## Cutover sequence
 

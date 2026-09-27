@@ -208,7 +208,8 @@ Per incoming hit:
 
 1. Lookup the open session; if none, or `now − last_seen > 30 min`, create a
    session row (attribution + device + geo copied from this first hit) — unless
-   the hit is a ping, which never starts a visit (see below).
+   the hit is anything but a page view, which first tries to revive the
+   visitor's last session, and a ping never starts a visit (see below).
 2. Update counters, `exit_path`, `last_seen_at`; assign the hit's `seq` from
    the session's running event count.
 3. **Engagement**: add `min(now − last_seen, 20 s)` to `engaged_ms`. Heartbeat
@@ -249,6 +250,19 @@ A ping is a **continuation signal**, so:
 - With nothing to revive the ping is **dropped**: never stored, never counted.
   A visit whose every row is a heartbeat is a visit nobody made, and its rows
   could not be attributed to a page anyway. Ingest's only other drop is bots.
+
+**The same holds for every action but a page view.** Only a page view
+arrives; an event, an outlink or a download happens *on* a page already open.
+A reader who comes back to a tab after 35 minutes and clicks a link out of it
+used to open a second visit — `direct`, no page view, its attribution lost —
+which is the ghost visit above reached from the other side. So these revive
+exactly as a ping does, same window, same clamp. What differs is the case with
+nothing to revive: a ping is dropped, but an action still **opens a visit**,
+because it is real and some actions have no page to belong to at all —
+packzen's server-side signup webhook is exactly that, and dropping it would
+lose the conversion. The native tracker's read milestone (docs/04 § 2) is the
+exception that proves the rule: the tracker synthesized it, so with nothing to
+revive it is dropped like a heartbeat.
 
 **Limitation, stated rather than papered over**: `visitor_id` rotates at 00:00
 site-local (see Identity), so revival can never cross that boundary — its

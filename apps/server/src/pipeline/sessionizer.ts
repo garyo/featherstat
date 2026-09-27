@@ -71,10 +71,13 @@ export type PriorSessionLookup = (
  * session's first hit. Pings update engagement and get stored rows, but never
  * touch pageview or exit-path state.
  *
- * A ping is a *continuation* signal, so it never starts a visit. With no live
- * session it revives the visitor's own last one (the returning-reader window,
- * `SESSION_REVIVAL_MS`); with nothing to revive it is dropped, because a visit
- * with no action in it is not a visit.
+ * Only a page view arrives; everything else happens ON a page already open, so
+ * past the idle timeout it revives the visitor's own last session (the
+ * returning-reader window, `SESSION_REVIVAL_MS`) instead of opening a visit
+ * with no page in it. With nothing to revive, a ping or a tracker milestone is
+ * dropped — a visit with no action in it is not a visit — while an event,
+ * outlink or download still opens one: it is a real action, and some have no
+ * page to belong to at all (a server-side signup webhook).
  */
 export class Sessionizer {
   private readonly open = new Map<string, OpenSession>();
@@ -93,7 +96,8 @@ export class Sessionizer {
     return this.open.size;
   }
 
-  /** Heartbeats discarded for having no visit to continue — ingest's only other drop is bots. */
+  /** Heartbeats and tracker milestones discarded for having no visit to continue —
+   * ingest's only other drop is bots. */
   get droppedPings(): number {
     return this.dropped;
   }
@@ -107,7 +111,7 @@ export class Sessionizer {
     this.flushes += 1;
   }
 
-  /** `undefined` when the hit was dropped: an orphan heartbeat, and nothing else. */
+  /** `undefined` when the hit was dropped: an orphan continuation signal, and nothing else. */
   process(input: SessionizerInput): SessionizedHit | undefined {
     const { site, hit, now } = input;
     this.evict(now);
@@ -116,14 +120,14 @@ export class Sessionizer {
     const local = localClock(site.timezone, now);
 
     const carried =
-      this.liveSession(key, now) ?? (isHeartbeat(hit.type) ? this.revive(input, key) : undefined);
+      this.liveSession(key, now) ?? (hit.type === 'pageview' ? undefined : this.revive(input, key));
     if (carried !== undefined) {
       // Clamped per gap, so reviving after half an hour of silence credits one
       // heartbeat's worth of attention, never the silence.
       const gap = now - carried.row.last_seen_at;
       carried.row.engaged_ms += Math.min(Math.max(gap, 0), PING_CLAMP_MS);
       carried.row.last_seen_at = now;
-    } else if (isHeartbeat(hit.type)) {
+    } else if (isHeartbeat(hit.type) || isTrackerMilestone(hit.event)) {
       this.dropped += 1;
       return undefined;
     }
@@ -208,14 +212,14 @@ export class Sessionizer {
 
   /**
    * The returning-reader path: the visitor's own last session, reached only by a
-   * ping that found no live one.
+   * hit other than a page view that found no live one.
    *
    * The map is asked first and its answer is final. An entry still held there is
    * the same session the store would return, but with the counters and `seq` of
    * every hit — including any the current batch has not committed yet, which the
-   * store cannot see. Falling through to the store is the restart case, and a
-   * READ on the ingest path (invariant 2): rare, and served whole by
-   * `ix_sessions_open`.
+   * store cannot see. Falling through to the store is the restart case or a
+   * visitor whose session the sweep already let go, and a READ on the ingest path
+   * (invariant 2): rare, and served whole by `ix_sessions_open`.
    */
   private revive(input: SessionizerInput, key: string): OpenSession | undefined {
     const notBefore = input.now - SESSION_REVIVAL_MS;

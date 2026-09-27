@@ -229,6 +229,23 @@ describe('rollup drift under randomized flushes', () => {
         visitor: milestoneVisitor,
       },
     );
+    // An outlink clicked 35 minutes after the page view revives that visit rather
+    // than opening a page-less one, so a committed session changes after the fact.
+    const returningVisitor = new Uint8Array([211, 1, 0, 0, 0, 0, 0, 0]);
+    planned.push(
+      {
+        siteId: 1,
+        ts: milestoneAt,
+        hit: { siteId: 1, type: 'pageview', url: milestoneUrl },
+        visitor: returningVisitor,
+      },
+      {
+        siteId: 1,
+        ts: milestoneAt + 35 * 60_000,
+        hit: { siteId: 1, type: 'outlink', url: milestoneUrl, targetUrl: 'https://ext.test/y' },
+        visitor: returningVisitor,
+      },
+    );
     planned.sort((a, b) => a.ts - b.ts);
 
     const failAt = Math.floor(planned.length * 0.4);
@@ -293,6 +310,10 @@ describe('rollup drift under randomized flushes', () => {
     ).get(milestoneVisitor);
     expect(milestoneSession?.events).toBe(0);
     expect(milestoneSession?.bounced).toBeGreaterThan(0);
+    const returning = stmt<number>(db, 'SELECT COUNT(*) FROM sessions WHERE visitor_id = ?')
+      .pluck()
+      .get(returningVisitor);
+    expect(returning).toBe(1);
 
     db.close();
   }, 60_000);

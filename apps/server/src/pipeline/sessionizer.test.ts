@@ -678,20 +678,62 @@ describe('session revival (docs/03)', () => {
     });
   });
 
-  it('never revives for an action — a pageview past the timeout is a new visit', () => {
+  it('never revives for a page view — arriving past the timeout is a new visit', () => {
     const away = T0 + 35 * 60_000;
-    for (const type of ['pageview', 'event', 'outlink', 'download'] as const) {
+    withSeededDb(T0, (s) => {
+      const { event, session } = run(s, away);
+      expect(Buffer.from(session.id)).not.toEqual(Buffer.from(PRIOR));
+      expect(event.seq).toBe(1);
+      expect(session.ref_type).toBe('direct'); // attribution re-evaluated
+    });
+  });
+
+  // The ghost visit from the other side: a reader comes back to an open tab
+  // after half an hour and clicks something. That is the page they had open,
+  // not a visit with no page in it.
+  it('revives for an action taken on a page already open', () => {
+    const away = T0 + 35 * 60_000;
+    for (const type of ['event', 'outlink', 'download'] as const) {
       withSeededDb(T0, (s) => {
         const { event, session } = run(s, away, {
           type,
           event: { category: 'ui', action: 'click' },
           targetUrl: 'https://other.org/x',
         });
-        expect(Buffer.from(session.id), type).not.toEqual(Buffer.from(PRIOR));
-        expect(event.seq, type).toBe(1);
-        expect(session.ref_type, type).toBe('direct'); // attribution re-evaluated
+        expect(Buffer.from(session.id), type).toEqual(Buffer.from(PRIOR));
+        expect(event.seq, type).toBe(14);
+        expect(session.pageviews, type).toBe(1);
+        expect(session.ref_type, type).toBe('search'); // first-touch survives
+        expect(session.engaged_ms, type).toBe(180_000 + PING_CLAMP_MS);
+        expect(session.events, type).toBe(type === 'event' ? 1 : 0);
       });
     }
+  });
+
+  // A server-side sender — the signup webhook — has no page to belong to, and
+  // its action is real: dropping it would lose the conversion.
+  it('still opens a visit for an action with nothing to revive', () => {
+    const s = new Sessionizer();
+    const { event, session } = run(s, T0, {
+      type: 'event',
+      url: undefined,
+      event: { category: 'signup', action: 'account-created' },
+    });
+    expect(event.seq).toBe(1);
+    expect(session.pageviews).toBe(0);
+    expect(session.events).toBe(1);
+    expect(s.droppedPings).toBe(0);
+  });
+
+  it('drops a tracker milestone with nothing to continue, like a heartbeat', () => {
+    const s = new Sessionizer();
+    expect(offer(s, T0, { type: 'event', event: READ_MILESTONE })).toBeUndefined();
+    expect(s.size).toBe(0);
+    expect(s.droppedPings).toBe(1);
+    withSeededDb(T0, (revived) => {
+      const stored = run(revived, T0 + 35 * 60_000, { type: 'event', event: READ_MILESTONE });
+      expect(Buffer.from(stored.session.id)).toEqual(Buffer.from(PRIOR));
+    });
   });
 
   it('never revives another site or another visitor', () => {
