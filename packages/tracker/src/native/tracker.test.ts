@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { SESSION_TIMEOUT_MS } from '@featherstat/shared';
+import { READ_MILESTONE, SESSION_TIMEOUT_MS } from '@featherstat/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { REPEAT_VIEW_MS } from '../repeat.ts';
 import { init, page, track } from './tracker.ts';
@@ -464,29 +464,90 @@ describe('scroll depth', () => {
     expect(pings()[0]).not.toHaveProperty('scroll');
   });
 
+  const reads = (): Record<string, unknown>[] => sent().filter((hit) => hit.action === 'read');
+
   it('reports passing the read threshold once, as an ordinary event', () => {
     layout(1_000, 4_000);
     start();
+    vi.advanceTimersByTime(15_000); // held through a heartbeat
     scrollTo(2_600); // 90%
-    const reads = sent().filter((hit) => hit.type === 'event');
-    expect(reads).toHaveLength(1);
-    expect(reads[0]).toMatchObject({ category: 'scroll', action: 'read', url: location.href });
+    expect(reads()).toHaveLength(1);
+    expect(reads()[0]).toMatchObject({
+      type: 'event',
+      category: 'scroll',
+      action: 'read',
+      url: location.href,
+    });
     scrollTo(3_000); // deeper still — the milestone is not news twice
     scrollTo(3_500);
-    expect(sent().filter((hit) => hit.type === 'event')).toHaveLength(1);
+    expect(reads()).toHaveLength(1);
+  });
+
+  it('sends the pair the server knows as the read milestone', () => {
+    layout(1_000, 1_000);
+    start();
+    vi.advanceTimersByTime(15_000);
+    expect(reads()[0]).toMatchObject(READ_MILESTONE);
+  });
+
+  // Depth alone is not reading: a page that fits the viewport is 100 % on load,
+  // and a milestone there would argue every visit to it out of being a bounce.
+  it('reads nothing at load, even on a page that fits the viewport', () => {
+    layout(1_000, 1_000);
+    start();
+    expect(reads()).toEqual([]);
+    document.dispatchEvent(new Event('pointermove')); // input alone is not attention yet
+    vi.advanceTimersByTime(20);
+    expect(reads()).toEqual([]);
+    vi.advanceTimersByTime(15_000); // the first heartbeat: now it was read
+    expect(reads()).toHaveLength(1);
+  });
+
+  it('waits for a heartbeat before a skim to the bottom counts as a read', () => {
+    layout(1_000, 4_000);
+    start();
+    scrollTo(3_000);
+    expect(reads()).toEqual([]);
+    vi.advanceTimersByTime(15_000);
+    expect(reads()).toHaveLength(1);
+  });
+
+  it('reads nothing for a reader who left before the first heartbeat', () => {
+    layout(1_000, 1_000);
+    start();
+    vi.advanceTimersByTime(5_000);
+    window.dispatchEvent(new Event('pagehide'));
+    expect(pings()).toHaveLength(1); // the exit ping still carries the depth
+    expect(reads()).toEqual([]);
   });
 
   it('starts a new page at nothing, so an SPA route does not inherit a depth', () => {
     layout(1_000, 4_000);
     start();
+    vi.advanceTimersByTime(15_000);
     scrollTo(3_000); // read the first page to the end
-    expect(sent().filter((hit) => hit.type === 'event')).toHaveLength(1);
+    expect(reads()).toHaveLength(1);
     layout(1_000, 8_000, 0);
     page('https://deep-timeline.org/era/ordovician');
     vi.advanceTimersByTime(15_000);
     // 12.5% of the new page, and its own read event still to be earned.
     expect(pings().at(-1)?.scroll).toBe(13);
-    expect(sent().filter((hit) => hit.type === 'event')).toHaveLength(1);
+    expect(reads()).toHaveLength(1);
+  });
+
+  // The router announces the route while the old page is still on screen,
+  // scrolled to its end; the swap and the scroll to the top come after.
+  it("never credits a new route with the old page's scroll position", () => {
+    layout(1_000, 4_000);
+    start();
+    vi.advanceTimersByTime(15_000);
+    scrollTo(3_000);
+    history.pushState({}, '', '/era/ordovician');
+    layout(1_000, 8_000, 0);
+    document.dispatchEvent(new Event('scroll')); // the router's scroll to the top
+    vi.advanceTimersByTime(15_000);
+    expect(pings().at(-1)?.scroll).toBe(13);
+    expect(reads()).toHaveLength(1); // the first page's, and only that
   });
 
   it('notices a page that grew after load without anyone scrolling', () => {
@@ -550,11 +611,12 @@ describe('hits follow the reported page, not the address bar', () => {
     vi.useFakeTimers();
     Object.defineProperty(window, 'innerHeight', { value: 1_000, configurable: true });
     Object.defineProperty(document.documentElement, 'scrollHeight', {
-      value: 1_000, // fits the viewport: read the moment it is measured
+      value: 1_000, // fits the viewport: read at the first heartbeat
       configurable: true,
     });
     start({ autoPageviews: false });
     page(REPORTED, 'Not found');
+    vi.advanceTimersByTime(15_000);
 
     const reads = sent().filter((hit) => hit.action === 'read');
     expect(reads).toHaveLength(1);

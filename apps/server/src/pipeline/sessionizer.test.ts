@@ -2,6 +2,7 @@ import {
   ENGAGEMENT_THRESHOLD_MS,
   type Hit,
   PING_CLAMP_MS,
+  READ_MILESTONE,
   SESSION_REVIVAL_MS,
   SESSION_TIMEOUT_MS,
 } from '@featherstat/shared';
@@ -271,6 +272,30 @@ describe('engagement-aware bounce ingredients (docs/03)', () => {
     expect(session.pageviews).toBe(1);
     expect(session.events).toBe(0);
     expect(session.engaged_ms).toBeGreaterThanOrEqual(ENGAGEMENT_THRESHOLD_MS);
+  });
+
+  // The tracker synthesized it; the visitor did nothing. On a page that fits
+  // the viewport it used to arrive with the page view, and no visit to such a
+  // page could ever bounce.
+  it('a read milestone is stored as an event but never counts against bounce', () => {
+    const s = new Sessionizer();
+    run(s, T0);
+    const { event, session } = run(s, T0 + 1_000, { type: 'event', event: READ_MILESTONE });
+    expect(event.type).toBe('event');
+    expect(event.event_category).toBe('scroll');
+    expect(event.event_action).toBe('read');
+    expect(session.events).toBe(0);
+    expect(session.engaged_ms).toBeLessThan(ENGAGEMENT_THRESHOLD_MS);
+  });
+
+  it('the same category with any other action is the visitor, and counts', () => {
+    const s = new Sessionizer();
+    run(s, T0);
+    const { session } = run(s, T0 + 1_000, {
+      type: 'event',
+      event: { category: 'scroll', action: 'jump-to-top' },
+    });
+    expect(session.events).toBe(1);
   });
 });
 

@@ -1,4 +1,4 @@
-import type { Hit } from '@featherstat/shared';
+import { type Hit, READ_MILESTONE } from '@featherstat/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createSite, type Db, openDb, stmt, withWriteTransaction } from '../../src/db/index.ts';
 import { WriteBatcher } from '../../src/pipeline/batcher.ts';
@@ -210,6 +210,25 @@ describe('rollup drift under randomized flushes', () => {
         }
       }
     }
+    // A single-page visit whose only other row is the tracker's read milestone:
+    // still a bounce, and the flush and the rebuild must agree that it is.
+    const milestoneVisitor = new Uint8Array([210, 1, 0, 0, 0, 0, 0, 0]);
+    const milestoneAt = start + DAY_MS / 2;
+    const milestoneUrl = `https://${DRIFT_SITES[0]?.domains[0]}/`;
+    planned.push(
+      {
+        siteId: 1,
+        ts: milestoneAt,
+        hit: { siteId: 1, type: 'pageview', url: milestoneUrl },
+        visitor: milestoneVisitor,
+      },
+      {
+        siteId: 1,
+        ts: milestoneAt + 1_000,
+        hit: { siteId: 1, type: 'event', url: milestoneUrl, event: READ_MILESTONE },
+        visitor: milestoneVisitor,
+      },
+    );
     planned.sort((a, b) => a.ts - b.ts);
 
     const failAt = Math.floor(planned.length * 0.4);
@@ -263,6 +282,17 @@ describe('rollup drift under randomized flushes', () => {
       .pluck()
       .get() as number;
     expect(spanning).toBeGreaterThan(0);
+
+    // And the milestone visit really is in the rollups as a bounce.
+    const milestoneSession = stmt<{ events: number; bounced: number }>(
+      db,
+      `SELECT s.events, r.bounced FROM sessions s
+       JOIN rollup_sessions_day r
+         ON r.site_id = s.site_id AND r.local_date = s.local_date AND r.dim_id = 0
+       WHERE s.visitor_id = ?`,
+    ).get(milestoneVisitor);
+    expect(milestoneSession?.events).toBe(0);
+    expect(milestoneSession?.bounced).toBeGreaterThan(0);
 
     db.close();
   }, 60_000);

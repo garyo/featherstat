@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import {
   type Hit,
   isHeartbeat,
+  isTrackerMilestone,
   type LocalClock,
   localClock,
   PING_CLAMP_MS,
@@ -134,7 +135,9 @@ export class Sessionizer {
     if (hit.type === 'pageview') {
       row.pageviews += 1;
       row.exit_path = page.path;
-    } else if (hit.type === 'event') {
+    } else if (hit.type === 'event' && !isTrackerMilestone(hit.event)) {
+      // `events` counts what the visitor did — it is the bounce test's "no
+      // events" — so a milestone the tracker synthesized stays out of it.
       row.events += 1;
     }
 

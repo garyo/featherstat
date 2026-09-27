@@ -348,7 +348,17 @@ showed *no* engagement: exactly one pageview, no events, **and**
 `engaged_ms` below the engagement threshold (default 15 s, configurable).
 Someone who lands on one article and reads it for three minutes is exactly
 what a site wants — dwell time (via heartbeat) and events both count as
-engagement, so that visit is not a bounce. This deliberately departs from
+engagement, so that visit is not a bounce. "Events" means events the *visitor*
+sent: `sessions.events` leaves out the native tracker's own read milestone
+(`READ_MILESTONE`, docs/04 § 2), which is stored and counted as an ordinary
+event row everywhere else. A milestone the tracker synthesizes is evidence of
+the tracker, and the attention behind it is already in `engaged_ms`; counting
+it made every visit to a page that fits the viewport un-bounceable. Because the
+flush, the rollup rebuild and the raw compiler all read `sessions.events`,
+excluding it at the counter keeps the three in agreement. Sessions stored
+before the change keep the counts they were written with — no rewrite, so no
+epoch bump; a short page's historical bounce rate reads low until that history
+ages out of the range. This deliberately departs from
 Matomo's one-pageview definition (which reports every satisfied
 single-article reader as a bounce); the reporting delta at cutover is called
 out in [06-migration.md](06-migration.md).

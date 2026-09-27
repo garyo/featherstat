@@ -5,10 +5,12 @@ import {
   type BucketValues,
   HEARTBEAT_HIT_TYPE,
   isHeartbeat,
+  isTrackerMilestone,
   type Measure,
   measurePerBucket,
   measureTotal,
   POPULATIONS,
+  READ_MILESTONE,
 } from './measures.ts';
 
 const COUNT: Measure = { unit: 'count', population: 'pageviews', aggregate: 'sum' };
@@ -26,6 +28,16 @@ const ENGAGEMENT: Measure = {
   of: { numerator: 'engaged_ms', denominator: 'engaged_sessions' },
 };
 const LONGEST: Measure = { unit: 'ms', population: 'measured_pageviews', aggregate: 'max' };
+
+describe('the tracker milestone definition', () => {
+  it('is the reserved pair exactly, and nothing near it', () => {
+    expect(isTrackerMilestone(READ_MILESTONE)).toBe(true);
+    expect(isTrackerMilestone({ ...READ_MILESTONE })).toBe(true);
+    expect(isTrackerMilestone({ category: 'scroll', action: 'reread' })).toBe(false);
+    expect(isTrackerMilestone({ category: 'Scroll', action: 'read' })).toBe(false);
+    expect(isTrackerMilestone(undefined)).toBe(false);
+  });
+});
 
 describe('the heartbeat definition', () => {
   it('is the one hit type that is not an action', () => {
