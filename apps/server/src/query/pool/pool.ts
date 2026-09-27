@@ -47,6 +47,21 @@ interface Slot {
   running?: { job: Job; timer: NodeJS.Timeout };
 }
 
+/** Resolves once `job` settles either way, without disturbing its own caller. */
+function settled(job: Job): Promise<void> {
+  return new Promise((resolve) => {
+    const { resolve: reply, reject } = job;
+    job.resolve = (value) => {
+      reply(value);
+      resolve();
+    };
+    job.reject = (error) => {
+      reject(error);
+      resolve();
+    };
+  });
+}
+
 export class QueryPool {
   private readonly slots: Slot[] = [];
   private readonly queue: Job[] = [];
@@ -100,32 +115,28 @@ export class QueryPool {
   }
 
   /**
-   * Stops accepting work, lets in-flight jobs finish (bounded by their own
-   * watchdogs), then terminates every worker. Queued-but-unstarted jobs are
-   * rejected — the client retries against whatever replaces this process.
+   * Stops accepting work, gives in-flight jobs up to `graceMs` to settle — a
+   * reply, a crash or their own watchdog, whichever comes first — then
+   * terminates every worker, which rejects whatever is still running.
+   * Queued-but-unstarted jobs are rejected at once: the client retries against
+   * whatever replaces this process.
    */
-  async close(): Promise<void> {
+  async close(graceMs: number = this.options.timeoutMs): Promise<void> {
     this.closed = true;
     for (const job of this.queue.splice(0)) job.reject(new Error('query pool is shutting down'));
-    await Promise.allSettled(
-      this.slots
-        .filter((slot) => slot.running !== undefined)
-        .map(
-          (slot) =>
-            new Promise<void>((resolve) => {
-              slot.worker.once('exit', () => resolve());
-              const running = slot.running;
-              if (running === undefined) resolve();
-              else {
-                const previous = running.job.resolve;
-                running.job.resolve = (reply) => {
-                  previous(reply);
-                  resolve();
-                };
-              }
-            }),
-        ),
+    const inFlight = this.slots.flatMap((slot) =>
+      slot.running === undefined ? [] : [settled(slot.running.job)],
     );
+    if (inFlight.length > 0) {
+      let timer: NodeJS.Timeout | undefined;
+      // Ref'd on purpose, unlike the watchdogs: a shutdown awaiting this must
+      // not see the process exit from under it with nothing left holding it open.
+      const grace = new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, graceMs);
+      });
+      await Promise.race([Promise.all(inFlight), grace]);
+      clearTimeout(timer);
+    }
     await Promise.allSettled(this.slots.map((slot) => slot.worker.terminate()));
   }
 
@@ -201,9 +212,9 @@ export class QueryPool {
     if (running === undefined) return;
     slot.running = undefined;
     running.job.reject(new Error(`query timed out after ${this.options.timeoutMs} ms`));
-    const wedged = slot.worker;
-    wedged.removeAllListeners();
-    void wedged.terminate();
+    // Its listeners stay: a late reply or its exit finds no job to settle, and
+    // an 'error' with no listener would throw on the main thread.
+    void slot.worker.terminate();
     if (!this.closed) {
       slot.worker = this.spawn();
       this.dispatch();

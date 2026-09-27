@@ -91,13 +91,18 @@ export class WriteBatcher {
     this.timer.unref?.();
   }
 
-  /** Stops the timer and flushes whatever is queued — graceful shutdown. */
-  stop(): void {
+  /**
+   * Stops the timer and flushes whatever is queued — graceful shutdown. True
+   * when nothing is left queued, false when the flush failed and every row it
+   * held is still in memory; calling again retries.
+   */
+  stop(): boolean {
     if (this.timer !== undefined) {
       clearInterval(this.timer);
       this.timer = undefined;
     }
     this.flush();
+    return this.pending === 0;
   }
 
   addEvent(row: EventRow): void {

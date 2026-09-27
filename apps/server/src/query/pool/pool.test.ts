@@ -155,3 +155,48 @@ describe('QueryPool failure paths (fixture worker)', () => {
     await expect(pool.ping()).resolves.not.toBe(0);
   });
 });
+
+describe('QueryPool close (fixture worker)', () => {
+  function fixturePool(timeoutMs: number): QueryPool {
+    return new QueryPool(':fixture:', {
+      size: 1,
+      timeoutMs,
+      workerUrl: FIXTURE_URL,
+      execArgv: EXEC_ARGV,
+    });
+  }
+
+  it('settles when the watchdog replaces a wedged worker mid-close', async () => {
+    const pool = fixturePool(300);
+    await pool.ping(); // the worker is up, so the sleep starts at once
+    const wedged = expect(submit(pool, { kind: 'sleep', ms: 5_000 })).rejects.toThrow(/timed out/);
+    const started = performance.now();
+
+    await pool.close();
+
+    await wedged;
+    expect(performance.now() - started).toBeLessThan(3_000);
+  });
+
+  it('stops waiting for in-flight work after the grace it was given', async () => {
+    const pool = fixturePool(60_000);
+    await pool.ping();
+    const cut = expect(submit(pool, { kind: 'sleep', ms: 5_000 })).rejects.toThrow(/exited/);
+    const started = performance.now();
+
+    await pool.close(100);
+
+    await cut;
+    expect(performance.now() - started).toBeLessThan(3_000);
+  });
+
+  it('still lets a job that finishes inside the grace answer', async () => {
+    const pool = fixturePool(60_000);
+    await pool.ping();
+    const running = submit(pool, { kind: 'sleep', ms: 50 });
+
+    await pool.close(5_000);
+
+    await expect(running).resolves.toMatchObject({ ok: true });
+  });
+});

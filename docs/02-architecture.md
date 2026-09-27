@@ -73,8 +73,11 @@ caps, unknown parameters ignored. Full parameter mapping in
 
 Enriched events append to an in-memory queue; a 200 ms timer flushes the queue
 in a single SQLite transaction (events insert + sessions upsert). SQLite with
-WAL does this in microseconds at our volumes. Graceful shutdown flushes the
-queue. The accepted trade: a hard crash loses at most ~200 ms of hits.
+WAL does this in microseconds at our volumes. Graceful shutdown (`main.ts`)
+flushes the queue first, before giving in-flight queries a bounded 3 s to
+finish, then flushes again for hits that were mid-request; it exits non-zero
+if anything queued could not be written. The accepted trade: a hard crash
+loses at most ~200 ms of hits.
 
 Single-writer discipline: all writes go through the batcher; reads happen
 anywhere (WAL readers don't block the writer).
