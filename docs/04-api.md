@@ -800,7 +800,8 @@ segments, derived-metrics, goals and campaigns CRUD (`/api/admin/segments`,
 `GET /api/segments`, `GET /api/derived-metrics`, `GET /api/goals?site=` and
 `GET /api/campaigns?site=`, session-gated but open to
 every principal — a viewer or token composes queries with them exactly as the
-admin does), campaign aliases (`GET`/`PUT /api/admin/campaign-aliases?site=`,
+admin does; the two per-site lists answer only for a site the principal can
+read, and another site's list 404s exactly like a nonexistent site), campaign aliases (`GET`/`PUT /api/admin/campaign-aliases?site=`,
 full-list replace per site, site 0 = install-wide; a PUT invalidates the live
 ingest cache, enqueues the chunked utm backfill in the same transaction, and
 kicks it — docs/03 § Campaigns), share/API tokens, ntfy notification settings (`GET`/`PUT`/`DELETE

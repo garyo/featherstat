@@ -168,6 +168,19 @@ describe('token principals', () => {
     expect(((await res.json()) as Array<{ id: number }>).map((s) => s.id)).toEqual([2]);
   });
 
+  it('lists goals and campaigns for its own sites only; another site is nonexistent', async () => {
+    const minted = await mintToken([1]);
+    for (const list of ['/api/goals', '/api/campaigns']) {
+      expect((await bearerRequest(minted.token, `${list}?site=1`)).status, list).toBe(200);
+      const foreign = await bearerRequest(minted.token, `${list}?site=2`);
+      const missing = await bearerRequest(minted.token, `${list}?site=99`);
+      expect(foreign.status, list).toBe(404);
+      expect(await foreign.json()).toEqual({ error: 'unknown site 2' });
+      expect(missing.status, list).toBe(404);
+      expect(await missing.json()).toEqual({ error: 'unknown site 99' });
+    }
+  });
+
   it('posts queries without a CSRF token — Bearer carries no ambient credential', async () => {
     const minted = await mintToken('all');
     const res = await bearerRequest(minted.token, '/api/query', {
@@ -390,6 +403,13 @@ describe('viewer principals', () => {
       body: queryBody(1),
     });
     expect(outOfScope.status).toBe(404);
+
+    for (const list of ['/api/goals', '/api/campaigns']) {
+      const own = await secured.app.request(`${list}?site=2`, { headers: { cookie } });
+      const foreign = await secured.app.request(`${list}?site=1`, { headers: { cookie } });
+      expect(own.status, list).toBe(200);
+      expect(foreign.status, list).toBe(404);
+    }
   });
 
   it('is 403d from /mcp like any cookie session', async () => {

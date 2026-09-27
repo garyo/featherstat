@@ -10,7 +10,7 @@ import {
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { Auth, AuthEnv } from '../auth/auth.ts';
-import { canManageSite } from '../auth/principal.ts';
+import { canManageSite, canReadSite, type Principal } from '../auth/principal.ts';
 import {
   createGoal,
   type Db,
@@ -26,8 +26,9 @@ import { tryWrite } from './segments.ts';
 
 /**
  * Goals (docs/04 § 3): the segments pattern — `GET /api/goals?site=` is a read
- * any principal behind the gate may make (a client offering `goal:<id>:…`
- * metrics needs the list), writes live under the `/api/admin/*` wall.
+ * any principal behind the gate may make for a site it can read (a client
+ * offering `goal:<id>:…` metrics needs the list), writes live under the
+ * `/api/admin/*` wall.
  * `GoalCreateSchema` validates the filter trees on every write; the query
  * layer re-parses them on every read and fails closed to a per-query error.
  */
@@ -43,6 +44,8 @@ export function createGoalRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
     c.res.headers.set('Cache-Control', 'no-store');
   });
   app.use('/api/admin/*', auth.gate);
+  // The read list scopes on the principal, so it carries its own gate too.
+  app.use('/api/goals', auth.gate);
   app.use('/api/admin/*', auth.csrfGuard);
 
   /** Out-of-scope site answers exactly like nonexistent — a probe learns nothing. */
@@ -51,17 +54,21 @@ export function createGoalRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
       ? undefined
       : c.json({ error: `unknown site ${siteId}` }, 404);
 
-  const list = (c: Context): Response => {
-    const siteId = Number(c.req.query('site'));
-    if (!Number.isInteger(siteId) || siteId <= 0) return c.json({ error: 'invalid site id' }, 400);
-    return c.json(listGoals(db, siteId).flatMap(toInfoOrNothing));
-  };
-  app.get('/api/goals', list);
-  app.get('/api/admin/goals', (c) => {
-    const siteId = Number(c.req.query('site'));
-    if (!Number.isInteger(siteId) || siteId <= 0) return c.json({ error: 'invalid site id' }, 400);
-    return deniedSite(c, siteId) ?? list(c);
-  });
+  /** One site's list where `allowed` holds; elsewhere exactly like nonexistent. */
+  const listWhere =
+    (allowed: (principal: Principal, siteId: number) => boolean) =>
+    (c: Context): Response => {
+      const siteId = Number(c.req.query('site'));
+      if (!Number.isInteger(siteId) || siteId <= 0) {
+        return c.json({ error: 'invalid site id' }, 400);
+      }
+      if (!allowed(c.get('principal'), siteId)) {
+        return c.json({ error: `unknown site ${siteId}` }, 404);
+      }
+      return c.json(listGoals(db, siteId).flatMap(toInfoOrNothing));
+    };
+  app.get('/api/goals', listWhere(canReadSite));
+  app.get('/api/admin/goals', listWhere(canManageSite));
 
   app.post('/api/admin/goals', async (c) => {
     const siteId = Number(c.req.query('site'));
