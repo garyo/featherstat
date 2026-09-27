@@ -750,12 +750,20 @@ export const AdminSitePatchSchema = z
   });
 export type AdminSitePatch = z.infer<typeof AdminSitePatchSchema>;
 
+/**
+ * The double-submit CSRF pair: the session's token rides in this readable
+ * cookie (`__Host-` pins it to this host, Secure, Path=/), and every mutation
+ * echoes it in this header.
+ */
+export const CSRF_COOKIE = '__Host-csrf';
+export const CSRF_HEADER = 'x-csrf-token';
+
 /** `GET /api/admin/me` — the auth bootstrap: which screen the UI should show. */
 export interface AdminMe {
   authenticated: boolean;
   /** No password configured yet — the UI may only offer first-run setup. */
   needsSetup: boolean;
-  /** Present when authenticated: the token mutations echo as `x-csrf-token`. */
+  /** Present when authenticated: the token mutations echo as `CSRF_HEADER`. */
   csrf?: string;
   /** Present when authenticated: which kind of session this is, so the SPA
    * can hide the admin surface from a viewer instead of 403-ing into it. */

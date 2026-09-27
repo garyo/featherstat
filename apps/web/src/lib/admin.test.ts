@@ -56,6 +56,18 @@ describe('createAdminClient', () => {
     expect(headers['x-csrf-token']).toBe('me-tok');
   });
 
+  it('falls back to the readable CSRF cookie the server set', async () => {
+    vi.stubGlobal('document', { cookie: 'theme=dark; __Host-csrf=cookie-tok; other=1' });
+    try {
+      const { admin, calls } = client(() => json(200, { ok: true }));
+      await admin.logout();
+      const headers = calls[0]?.init?.headers as Record<string, string>;
+      expect(headers['x-csrf-token']).toBe('cookie-tok');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('PATCHes site updates to the id path', async () => {
     const { admin, calls } = client(() =>
       json(200, { id: 2, name: 'Renamed', domains: [], timezone: 'UTC' }),

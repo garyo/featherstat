@@ -1,4 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { CSRF_COOKIE, CSRF_HEADER } from '@featherstat/shared';
 import type { Context, MiddlewareHandler } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import {
@@ -21,8 +22,6 @@ import { bearerCredential } from './bearer.ts';
 import { hashPassword } from './password.ts';
 import { isManager, type Principal, parseSiteScope } from './principal.ts';
 import {
-  CSRF_COOKIE,
-  CSRF_HEADER,
   csrfTokenFor,
   ensureAuthSecret,
   type IssuedSession,

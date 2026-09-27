@@ -1,24 +1,26 @@
-import type {
-  AdminDiagnostics,
-  AdminMe,
-  AdminSessionGrant,
-  AdminSiteCreate,
-  AdminSitePatch,
-  Dashboard,
-  DashboardDetail,
-  DashboardInfo,
-  ExclusionRule,
-  ExclusionState,
-  NtfySettingsInput,
-  NtfySettingsView,
-  SiteInfo,
+import {
+  type AdminDiagnostics,
+  type AdminMe,
+  type AdminSessionGrant,
+  type AdminSiteCreate,
+  type AdminSitePatch,
+  CSRF_COOKIE,
+  CSRF_HEADER,
+  type Dashboard,
+  type DashboardDetail,
+  type DashboardInfo,
+  type ExclusionRule,
+  type ExclusionState,
+  type NtfySettingsInput,
+  type NtfySettingsView,
+  type SiteInfo,
 } from '@featherstat/shared';
 
 /**
  * The admin API client (docs/04 § 5). The session rides in HttpOnly cookies;
  * this module's only credential work is the CSRF echo: it remembers the token
  * from `me`/`login`/`setup` (falling back to the readable `csrf` cookie) and
- * sends it as `x-csrf-token` on every mutation — the double-submit pair.
+ * sends it as `CSRF_HEADER` on every mutation — the double-submit pair.
  *
  * A 401 from any authenticated call reports to `onUnauthorized` (the app flips
  * to the login view) and still throws, so callers never see a half-result.
@@ -114,7 +116,7 @@ export function createAdminClient(options: AdminClientOptions = {}): AdminClient
     if (init.body !== undefined) headers['content-type'] = 'application/json';
     if (method !== 'GET') {
       const token = csrf ?? csrfCookie();
-      if (token !== undefined) headers['x-csrf-token'] = token;
+      if (token !== undefined) headers[CSRF_HEADER] = token;
     }
     let response: Response;
     try {
@@ -201,10 +203,12 @@ export function createAdminClient(options: AdminClientOptions = {}): AdminClient
   };
 }
 
+const CSRF_COOKIE_VALUE = new RegExp(`(?:^|;\\s*)${CSRF_COOKIE}=([^;]*)`);
+
 /** The readable half of the double-submit pair — survives a page reload. */
 function csrfCookie(): string | undefined {
   if (typeof document === 'undefined') return undefined;
-  const match = document.cookie.match(/(?:^|;\s*)__Host-csrf=([^;]*)/);
+  const match = document.cookie.match(CSRF_COOKIE_VALUE);
   return match?.[1] === undefined || match[1] === '' ? undefined : match[1];
 }
 
