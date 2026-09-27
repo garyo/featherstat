@@ -979,6 +979,16 @@ with none. Share links are deliberately not in that set — a link belongs to
 its dashboard, not to whoever minted it, so it survives the minter and is
 revoked by whoever manages the dashboard's site now.
 
+**Viewer emails are unique across the instance, and that is a known,
+accepted signal.** A user inviting an address someone else already invited
+gets `409 email already invited` rather than a re-scope of a viewer that is
+not theirs — which tells that user the address is a viewer somewhere on this
+instance. It names no site, no minter and no scope, the user must already
+hold the address to ask, and the users of one instance are accounts its admin
+created, not strangers. Scoping uniqueness per minter would remove the signal
+at the cost of a `viewers` table rebuild and two viewer rows for one person;
+revisit if an instance ever hosts mutually untrusting users.
+
 First-run setup (`POST /api/admin/setup`) additionally requires the one-time
 **setup token** the server prints to its log at first boot: between `docker
 run` and the owner opening the page, an unconfigured install is reachable by
