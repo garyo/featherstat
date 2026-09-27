@@ -614,6 +614,18 @@ describe('prerendering (prerender.ts)', () => {
     stale();
   });
 
+  // A router hydrating the speculated page rewrites its URL before anyone came.
+  it('ignores history changes made before the visitor arrives', () => {
+    speculating(true);
+    start();
+    history.replaceState({}, '', '/era/hydrated');
+    history.pushState({}, '', '/era/hydrated?tab=1');
+    expect(sent()).toEqual([]);
+    arrive();
+    const views = sent().filter((hit) => hit.type === 'pageview');
+    expect(views).toEqual([expect.objectContaining({ url: location.href })]);
+  });
+
   it('still announces the view immediately where nothing prerenders', () => {
     start();
     expect(sent().filter((hit) => hit.type === 'pageview')).toHaveLength(1);

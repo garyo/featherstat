@@ -243,18 +243,18 @@ export function init(config: TrackerConfig): () => void {
   };
   runtime = started;
 
-  if (autoPageviews) {
-    seen = location.href;
-    unhook = hookHistory(onNavigate);
-  }
-
   // Not `page()` directly: a prerendered document reaches here before the visitor
   // has decided to come, and the view it would announce is not one yet
-  // (prerender.ts). The identity check keeps a prerender that activates late from
-  // announcing its view onto whichever tracker has since replaced this one.
+  // (prerender.ts). The history hook waits too — a router hydrating the
+  // speculated page rewrites the URL before anyone has arrived. The identity
+  // check keeps a prerender that activates late from announcing its view onto
+  // whichever tracker has since replaced this one.
   if (autoPageviews) {
     unwait = whenActivated(() => {
-      if (runtime === started) page();
+      if (runtime !== started) return;
+      seen = location.href;
+      unhook = hookHistory(onNavigate);
+      page();
     });
   }
 

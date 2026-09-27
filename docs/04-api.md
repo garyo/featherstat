@@ -101,7 +101,10 @@ a prerendered document is its own realm holding its own tracker, so two of them
 are two first views rather than one announced twice. So the first page view
 waits for the arrival instead: `document.prerendering` says the document is only
 being speculated on, and `prerenderingchange` fires once, when the visitor
-actually comes. The native tracker defers its opening `page()`; the shim defers
+actually comes. The native tracker defers its opening `page()` and installs its history hook
+only then — a router hydrating the speculated page rewrites its URL before
+anyone has arrived, and a hook listening already would announce that as a
+view; the shim defers
 *taking over* `_paq.push`, which leaves the tag's commands accumulating in the
 plain array they were always pushed into and drains them, in order, on arrival —
 so the view carries the moment of arrival, not of speculation. A browser that
