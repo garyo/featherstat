@@ -4,6 +4,7 @@ import {
   type Db,
   deleteSetting,
   getSetting,
+  listSites,
   setSetting,
   settingKeysWithPrefix,
   withWriteTransaction,
@@ -16,6 +17,25 @@ const UID_ENABLED_PREFIX = 'uid_enabled:';
 /** Settings key that opts a site into `uid` hashing (value `'1'`; docs/03: off by default). */
 export function uidEnabledKey(siteId: number): string {
   return UID_ENABLED_PREFIX + siteId;
+}
+
+function uidSaltKey(siteId: number): string {
+  return UID_SALT_PREFIX + siteId;
+}
+
+/**
+ * Site deletion companion — call inside the delete transaction, after the
+ * tombstone. Drops the site's `uid` opt-in and salt and, when no live site is
+ * left in its zone, the zone's day salts: rotation only ever runs on a hit, so
+ * a zone nothing tracks would keep its last salt forever. True when the zone
+ * was abandoned.
+ */
+export function forgetSiteIdentity(db: Db, siteId: number, timezone: string): boolean {
+  deleteSetting(db, uidEnabledKey(siteId));
+  deleteSetting(db, uidSaltKey(siteId));
+  if (listSites(db).some((site) => site.timezone === timezone)) return false;
+  for (const key of settingKeysWithPrefix(db, zoneSaltPrefix(timezone))) deleteSetting(db, key);
+  return true;
 }
 
 /** `salt:<IANA zone>:` — every day salt of one zone, and nothing else's. */
@@ -115,6 +135,16 @@ export class Identity {
     return salt;
   }
 
+  /** `forgetSiteIdentity`, plus the caches — an evicted zone re-reads its salts,
+   * so a site created in it later mints and persists a fresh one. */
+  forgetSite(siteId: number, timezone: string): boolean {
+    this.uidSalts.delete(siteId);
+    this.uidEnabled.delete(siteId);
+    const abandoned = forgetSiteIdentity(this.db, siteId, timezone);
+    if (abandoned) this.daySalts.delete(timezone);
+    return abandoned;
+  }
+
   private isUidEnabled(siteId: number): boolean {
     let enabled = this.uidEnabled.get(siteId);
     if (enabled === undefined) {
@@ -127,7 +157,7 @@ export class Identity {
   private uidSalt(siteId: number): Buffer {
     let salt = this.uidSalts.get(siteId);
     if (salt === undefined) {
-      const key = UID_SALT_PREFIX + siteId;
+      const key = uidSaltKey(siteId);
       const existing = getSetting(this.db, key);
       if (existing !== undefined) {
         salt = Buffer.from(existing, 'hex');

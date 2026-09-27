@@ -113,7 +113,9 @@ visitor_id = first 8 bytes of SHA-256(day_salt ∥ site_id ∥ ip ∥ user_agent
 - `day_salt` is random, held in the `settings` table under
   `salt:<IANA zone>:<YYYY-MM-DD>`, and rotated at **00:00 site-local** — the
   same boundary `local_date` is computed on. Every strictly older salt for that
-  zone is deleted. After rotation, yesterday's hashes are unlinkable to today's
+  zone is deleted — and when a site deletion leaves no live site in a zone,
+  that zone's salts go with it, since no hit would ever rotate them away.
+  After rotation, yesterday's hashes are unlinkable to today's
   — this is the Plausible model, and it is why "unique visitors" is exact within
   a day and approximate across longer ranges. Two things carry that consequence
   rather than leaving it to be remembered: the metric declares

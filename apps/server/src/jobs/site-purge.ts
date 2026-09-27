@@ -16,11 +16,12 @@ import {
  * watermark-in-settings shape prop-scrub.ts and campaign-backfill.ts use.
  *
  * Each chunk is one short write transaction (the lock is shared with ingest)
- * with an event-loop yield between chunks. The site row is deleted LAST — while
- * any purge chunk remains, the tombstoned row is what marks the work — and the
- * same final transaction bumps the data epoch: rows this site contributed to
- * `MAX(events.id)`-tagged answers are gone, so every ETag minted before the
- * purge must expire (CLAUDE.md invariant 10).
+ * with an event-loop yield between chunks. The watermark is cleared LAST, in
+ * the same final transaction that bumps the data epoch: rows this site
+ * contributed to `MAX(events.id)`-tagged answers are gone, so every ETag minted
+ * before the purge must expire (CLAUDE.md invariant 10). The tombstoned `sites`
+ * row outlives the purge on purpose — it is what keeps the id from being
+ * handed to the next site created (db/index.ts `tombstoneSite`).
  */
 
 const WATERMARK_PREFIX = 'site_purge:';
@@ -29,7 +30,7 @@ const WATERMARK_PREFIX = 'site_purge:';
 const DEFAULT_BATCH_SIZE = 5_000;
 
 /** Ordinary rowid tables: chunk by rowid, `changes` says when a table is drained. */
-const ROWID_TABLES = ['events', 'sessions', 'bot_drops'] as const;
+const ROWID_TABLES = ['events', 'sessions', 'bot_drops', 'excluded_drops'] as const;
 
 /** WITHOUT ROWID rollup + presence tables: chunk by local_date — a day's rows
  * are bounded (dims × values), so a date batch stays a short transaction. */
@@ -55,7 +56,7 @@ export function requestSitePurge(db: Db, siteId: number): void {
 }
 
 export interface SitePurgeResult {
-  /** Purges completed this run (site row deleted, epoch bumped). */
+  /** Purges completed this run (watermark cleared, epoch bumped). */
   completed: number;
   /** Rows deleted across all tables and purges. */
   rows: number;
@@ -121,10 +122,9 @@ async function drain(db: Db, batchSize: number): Promise<SitePurgeResult> {
       }
     }
 
-    // Everything drained: the tombstoned row, the watermark and the epoch move
-    // together, so a crash can only ever leave a resumable state behind.
+    // Everything drained: the watermark and the epoch move together, so a
+    // crash can only ever leave a resumable state behind.
     withWriteTransaction(db, () => {
-      stmt(db, 'DELETE FROM sites WHERE id = ?').run(siteId);
       deleteSetting(db, setting);
       bumpDataEpoch(db);
     });

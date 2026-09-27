@@ -815,6 +815,24 @@ live registry's cache) immediately, then scrubs stored bags with a chunked,
 watermarked `json_remove` job (`jobs/prop-scrub.ts` — resumed at boot after a
 crash) that bumps the data epoch on completion so pre-scrub ETags expire.
 
+**Site deletion** (`DELETE /api/admin/sites/:id`): one write transaction
+tombstones the row (`sites.deleted_at` — from that commit on, ingest drops the
+site's beacons like an unknown site's, the batcher drops whatever of the
+site's was already queued when it flushes, and every directory and query
+scope omits it), deletes the small per-site objects (goals, campaigns and their
+aliases, the prop registry, annotations, site-scoped dashboards with their
+share links, alert and ntfy rules naming the site, the `uid` opt-in and salt,
+and — when no live site is left in its timezone — that zone's day salts),
+sheds the site from its owners and from every token and viewer scope — a
+grant left naming no site is revoked — and enqueues the chunked, watermarked
+purge of the bulk rows (`jobs/site-purge.ts`: events, sessions, the bot and
+exclusion drop counters, every rollup table), which bumps the data epoch on
+completion. `routes/site-delete.test.ts` enumerates every `site_id` and
+`site_scope` column from the live schema and requires each to come out clean. The tombstoned row is never
+deleted: `sites.id` is a plain `INTEGER PRIMARY KEY`, so a removed row would
+let SQLite hand the id to the next site created, and anything still naming it
+would silently start naming the newcomer.
+
 **Annotations** (`/api/admin/annotations`): operator notes pinned to a UTC
 instant — `GET` lists (optional `?site=` keeps that site's plus the
 install-wide null-site notes), `POST`/`PUT /:id`/`DELETE /:id` write
@@ -930,8 +948,9 @@ chokepoint; the whole `/api/admin/*` write surface answers 403.
 **Users: password-holding accounts that own and manage sites (R23).** A user
 is an email plus an owned site set (the `user_sites` join table; ownership
 also grows atomically when the user creates a site, and a deleted site sheds
-its owners). Managed admin-only: `GET /api/admin/users` lists them with their
-sites, `POST /api/admin/users {email, sites?}` creates one — or re-invites an
+its owners — see **Site deletion** above). Managed admin-only:
+`GET /api/admin/users` lists them with their sites,
+`POST /api/admin/users {email, sites?}` creates one — or re-invites an
 existing email, restoring a disabled account — and mints a **single-use
 invite link** (raw token `fsu_<43 base64url>`, sha256-at-rest, 7-day expiry)
 whose claim path `/welcome/<token>` appears exactly once in the response;

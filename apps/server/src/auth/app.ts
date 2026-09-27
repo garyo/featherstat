@@ -195,6 +195,7 @@ export function createSecuredApp(options: SecuredAppOptions = {}): SecuredApp {
       '/',
       createAdminRoutes(db, createdAuth, {
         propRegistry: pipeline?.props,
+        identity: pipeline?.identity,
         campaignAliases: pipeline?.campaignAliases,
         exclusions: pipeline?.exclusions,
         refreshExclusions: options.refreshExclusions,

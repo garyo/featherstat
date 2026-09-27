@@ -1,6 +1,14 @@
 import type { Hit, HitContext } from '@featherstat/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { type Db, getSetting, openDb, setSetting, withWriteTransaction } from '../db/index.ts';
+import {
+  createSite,
+  type Db,
+  getSetting,
+  openDb,
+  setSetting,
+  tombstoneSite,
+  withWriteTransaction,
+} from '../db/index.ts';
 import { Identity, uidEnabledKey } from './identity.ts';
 
 /** Midday in New York on two consecutive site-local days. */
@@ -203,3 +211,55 @@ function settingKeys(): string[] {
     .pluck()
     .all() as string[];
 }
+
+describe('forgetting a deleted site', () => {
+  function liveSite(siteId: number, timezone: string): void {
+    withWriteTransaction(db, () =>
+      createSite(db, { id: siteId, name: `s${siteId}`, domains: [], timezone }),
+    );
+  }
+
+  function forget(siteId: number, timezone: string): boolean {
+    return withWriteTransaction(db, () => {
+      tombstoneSite(db, siteId, DAY1);
+      return identity.forgetSite(siteId, timezone);
+    });
+  }
+
+  it('drops the uid opt-in and salt, and the day salts of a zone nothing lives in', () => {
+    liveSite(1, TOKYO);
+    liveSite(2, NY);
+    withWriteTransaction(db, () => setSetting(db, uidEnabledKey(1), '1'));
+    id({ uid: 'gary' }, {}, TOKYO);
+    id({}, {}, TOKYO);
+    id({ siteId: 2 }, {}, NY);
+    expect(settingKeys()).toEqual([`salt:${NY}:2026-07-26`, `salt:${TOKYO}:2026-07-27`]);
+
+    expect(forget(1, TOKYO)).toBe(true);
+
+    expect(getSetting(db, uidEnabledKey(1))).toBeUndefined();
+    expect(getSetting(db, 'uidsalt:1')).toBeUndefined();
+    expect(settingKeys()).toEqual([`salt:${NY}:2026-07-26`]);
+  });
+
+  it('keeps a zone another live site still keys into', () => {
+    liveSite(1, NY);
+    liveSite(2, NY);
+    id({}, {});
+
+    expect(forget(1, NY)).toBe(false);
+    expect(settingKeys()).toEqual([`salt:${NY}:2026-07-26`]);
+  });
+
+  it('evicts the cached salt of an abandoned zone, so a later site there persists its own', () => {
+    liveSite(1, TOKYO);
+    id({}, {}, TOKYO);
+    forget(1, TOKYO);
+    liveSite(3, TOKYO);
+
+    const after = id({ siteId: 3 }, {}, TOKYO);
+
+    // A restart must agree with the running process: the salt in use is the stored one.
+    expect(hex(new Identity(db).visitorId(hit({ siteId: 3 }), ctx(), TOKYO))).toBe(after);
+  });
+});

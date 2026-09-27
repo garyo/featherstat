@@ -358,13 +358,22 @@ function decodeSite(row: SiteColumns): Site {
 const SQL_TOMBSTONE_SITE = 'UPDATE sites SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL';
 
 /**
- * Marks a site deleted (docs/04 § 5). The row itself stays until the purge job
- * has drained the site's data — deleting it first would orphan every chunk the
- * purge has yet to reach. False when the site is unknown or already tombstoned.
+ * Marks a site deleted (docs/04 § 5). The row itself stays forever: `sites.id`
+ * has no AUTOINCREMENT, so SQLite hands out `MAX(id) + 1` and a removed row
+ * would let the next site inherit its id — and with it every grant, setting
+ * and straggling row that still named the old one. False when the site is
+ * unknown or already tombstoned.
  */
 export function tombstoneSite(db: Db, id: number, now: number): boolean {
   assertWritable(db);
   return stmt(db, SQL_TOMBSTONE_SITE).run(now, id).changes > 0;
+}
+
+const SQL_TOMBSTONED_SITE_IDS = 'SELECT id FROM sites WHERE deleted_at IS NOT NULL';
+
+/** Every tombstoned site id — the batcher's last gate for hits queued before a delete. */
+export function tombstonedSiteIds(db: Db): Set<number> {
+  return new Set(stmt<number>(db, SQL_TOMBSTONED_SITE_IDS).pluck().all() as number[]);
 }
 
 /** The small per-site config tables the delete route clears inline — one short
@@ -1246,6 +1255,7 @@ const SQL_LIST_API_TOKENS = `SELECT ${API_TOKEN_COLUMNS} FROM api_tokens ORDER B
 const SQL_REVOKE_API_TOKEN =
   'UPDATE api_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL';
 const SQL_TOUCH_API_TOKEN = 'UPDATE api_tokens SET last_used_at = ? WHERE id = ?';
+const SQL_SET_API_TOKEN_SCOPE = 'UPDATE api_tokens SET site_scope = ? WHERE id = ?';
 
 export function insertApiToken(
   db: Db,
@@ -1282,6 +1292,12 @@ export function touchApiToken(db: Db, id: number, now: number): void {
   stmt(db, SQL_TOUCH_API_TOKEN).run(now, id);
 }
 
+/** Narrows a token's scope in place — site deletion's companion; minting never widens one. */
+export function setApiTokenScope(db: Db, id: number, siteScope: string): void {
+  assertWritable(db);
+  stmt(db, SQL_SET_API_TOKEN_SCOPE).run(siteScope, id);
+}
+
 export interface ViewerRow {
   id: number;
   email: string;
@@ -1301,6 +1317,7 @@ const SQL_INSERT_VIEWER =
 // Re-inviting is a decision to restore access, so it clears any revocation.
 const SQL_REINVITE_VIEWER = `UPDATE viewers SET site_scope = ?, revoked_at = NULL WHERE id = ? RETURNING ${VIEWER_COLUMNS}`;
 const SQL_REVOKE_VIEWER = 'UPDATE viewers SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL';
+const SQL_SET_VIEWER_SCOPE = 'UPDATE viewers SET site_scope = ? WHERE id = ?';
 
 export function getViewer(db: Db, id: number): ViewerRow | undefined {
   return stmt<ViewerRow>(db, SQL_GET_VIEWER).get(id);
@@ -1347,6 +1364,12 @@ export function reinviteViewer(db: Db, id: number, siteScope: string): ViewerRow
 export function revokeViewer(db: Db, id: number, now: number): boolean {
   assertWritable(db);
   return stmt(db, SQL_REVOKE_VIEWER).run(now, id).changes > 0;
+}
+
+/** Narrows a viewer's scope in place, leaving any revocation as it is. */
+export function setViewerScope(db: Db, id: number, siteScope: string): void {
+  assertWritable(db);
+  stmt(db, SQL_SET_VIEWER_SCOPE).run(siteScope, id);
 }
 
 export interface MagicLinkRow {

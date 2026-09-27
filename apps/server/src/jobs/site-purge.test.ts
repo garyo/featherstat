@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { binId, event, openTestDb, session, syncRollups } from '../../test/rows.ts';
 import {
+  createSite,
   type Db,
   dataVersion,
   getSite,
@@ -83,7 +84,7 @@ describe('the tombstone', () => {
 });
 
 describe('runSitePurges', () => {
-  it('drains every table for the site, deletes its row last, and bumps the epoch', async () => {
+  it('drains every table for the site, keeps its tombstone, and bumps the epoch', async () => {
     seedBothSites();
     const before = dataVersion(db);
     // The presence tables are empty for a day this old (PRESENCE_HORIZON_DAYS),
@@ -101,7 +102,13 @@ describe('runSitePurges', () => {
       expect(countFor(table, 1), table).toBe(0);
       expect(countFor(table, 2), `${table} (survivor)`).toBe(site2Before[table]);
     }
-    expect(db.prepare('SELECT COUNT(*) FROM sites WHERE id = 1').pluck().get()).toBe(0);
+    // The tombstone outlives the purge, so the next site created cannot take id 1.
+    expect(
+      db
+        .prepare('SELECT COUNT(*) FROM sites WHERE id = 1 AND deleted_at IS NOT NULL')
+        .pluck()
+        .get(),
+    ).toBe(1);
     // Rewritten history: every pre-purge ETag must expire (invariant 10).
     expect(dataVersion(db)).toBeGreaterThan(before);
   });
@@ -129,6 +136,16 @@ describe('runSitePurges', () => {
     expect(
       db.prepare('SELECT COUNT(*) FROM settings WHERE key = ?').pluck().get('site_purge:junk'),
     ).toBe(0);
+  });
+
+  it('never hands a purged site id to the next site created', async () => {
+    tombstone(2);
+    await runSitePurges(db);
+
+    const created = withWriteTransaction(db, () => createSite(db, { name: 'Next', domains: [] }));
+
+    expect(created.id).toBe(3);
+    expect(getSite(db, 2)).toBeUndefined();
   });
 
   it('the ingest path drops a deleted site like an unknown one — getSite is the gate', () => {

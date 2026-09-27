@@ -1,7 +1,14 @@
 import { BATCH_INTERVAL_MS } from '@featherstat/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { event, session } from '../../test/rows.ts';
-import { type Db, getBotDrops, openDb } from '../db/index.ts';
+import {
+  createSite,
+  type Db,
+  getBotDrops,
+  openDb,
+  tombstoneSite,
+  withWriteTransaction,
+} from '../db/index.ts';
 import { WriteBatcher } from './batcher.ts';
 
 function count(db: Db, table: 'events' | 'sessions'): number {
@@ -110,5 +117,37 @@ describe('WriteBatcher', () => {
     batcher.addEvent(event({ seq: 2 }));
     vi.advanceTimersByTime(BATCH_INTERVAL_MS * 3);
     expect(count(db, 'events')).toBe(1); // timer is gone; nothing flushed it
+  });
+
+  it('drops what a site deleted since it queued — rows, drops, rollups — and lands the rest', () => {
+    withWriteTransaction(db, () => {
+      createSite(db, { id: 1, name: 'one', domains: [] });
+      createSite(db, { id: 2, name: 'two', domains: [] });
+    });
+    batcher.addEvent(event({ site_id: 1 }));
+    batcher.addSession(session({ site_id: 1 }));
+    batcher.addBotDrop(1, '2023-11-14');
+    batcher.addExcludedDrop(1, '2023-11-14');
+    batcher.addEvent(event({ site_id: 2 }));
+    batcher.addSession(session({ id: new Uint8Array(8).fill(9), site_id: 2 }));
+    withWriteTransaction(db, () => tombstoneSite(db, 1, 0));
+
+    const summary = batcher.flush();
+
+    expect(summary).toEqual({
+      events: 1,
+      sessions: 1,
+      botDrops: 0,
+      excludedDrops: 0,
+      siteIds: [2],
+    });
+    expect(batcher.pending).toBe(0);
+    for (const table of ['events', 'sessions', 'bot_drops', 'excluded_drops', 'rollup_dim_day']) {
+      const rows = db.prepare(`SELECT COUNT(*) FROM ${table} WHERE site_id = 1`).pluck().get();
+      expect(rows, table).toBe(0);
+    }
+    expect(
+      db.prepare('SELECT COUNT(*) FROM rollup_dim_day WHERE site_id = 2').pluck().get(),
+    ).not.toBe(0);
   });
 });

@@ -30,6 +30,8 @@ export interface Pipeline {
   onFlush(hook: FlushHook): void;
   /** The live prop registry — the admin delete route invalidates through it. */
   props: PropRegistry;
+  /** The live visitor-identity salts — a site delete evicts the site's through it. */
+  identity: Identity;
   /** The live campaign-alias cache — the admin alias routes invalidate through it. */
   campaignAliases: AliasCache;
   /** The live exclusion set — the admin route replaces its rules, the refresh job resolves its hostnames. */
@@ -129,6 +131,7 @@ export function createPipeline(db: Db, options: PipelineOptions = {}): Pipeline 
     },
     onFlush: (hook) => batcher.onFlush(hook),
     props,
+    identity,
     campaignAliases,
     exclusions,
   };
