@@ -467,11 +467,22 @@ async function saveExclusions(): Promise<void> {
     {#each xDraft as rule, i (i)}
       {@const resolution = resolutionOf(rule.value)}
       <div class="xrow">
-        <input class="xvalue" placeholder="IP, range, or hostname" bind:value={rule.value} />
-        <input class="xnote" placeholder="note" bind:value={rule.note} />
+        <input
+          class="xvalue"
+          placeholder="IP, range, or hostname"
+          aria-label="Excluded address {i + 1}"
+          bind:value={rule.value}
+        />
+        <input
+          class="xnote"
+          placeholder="note"
+          aria-label="Note for excluded address {i + 1}"
+          bind:value={rule.note}
+        />
         <button
           class="btn subtle danger"
           type="button"
+          aria-label="Remove excluded address {i + 1}"
           onclick={() => (xDraft = xDraft.filter((_, at) => at !== i))}
         >
           Remove

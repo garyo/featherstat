@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { AdminError, OFFLINE_STATUS } from './admin.ts';
-import { panelFailure, SIGNED_OUT_MESSAGE, UNREACHABLE_MESSAGE } from './admin-failure.ts';
+import {
+  notAllowedMessage,
+  panelFailure,
+  SIGNED_OUT_MESSAGE,
+  UNREACHABLE_MESSAGE,
+} from './admin-failure.ts';
 
 /**
  * The mapping a panel renders. The two urgent cases are the ones that shipped a
@@ -8,11 +13,20 @@ import { panelFailure, SIGNED_OUT_MESSAGE, UNREACHABLE_MESSAGE } from './admin-f
  */
 
 describe('panelFailure', () => {
-  it.each([401, 403])('reads %d as a lost session, urgently', (status) => {
-    expect(panelFailure(new AdminError(status, 'unauthorized'), 'nope')).toEqual({
+  it('reads 401 as a lost session, urgently', () => {
+    expect(panelFailure(new AdminError(401, 'unauthorized'), 'nope')).toEqual({
       message: SIGNED_OUT_MESSAGE,
       urgent: true,
     });
+  });
+
+  // A signed-in user refused an admin-only write was told to log in again.
+  it('reads 403 as a refusal of this account, with the server’s reason', () => {
+    expect(panelFailure(new AdminError(403, 'admin only'), 'nope')).toEqual({
+      message: notAllowedMessage('admin only'),
+      urgent: true,
+    });
+    expect(notAllowedMessage('admin only')).not.toContain('signed in');
   });
 
   it('reads an unanswered request as an unreachable server, urgently', () => {

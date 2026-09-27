@@ -75,3 +75,20 @@ describe('Retention & backups', () => {
     expect(card.querySelector('[role="alert"]')?.textContent).toContain('how many backups');
   });
 });
+
+describe('Excluded traffic', () => {
+  it('names every rule input, since the row has no visible label', async () => {
+    const { admin } = fakeAdmin({
+      'GET /api/admin/exclusions': () => ({
+        rules: [{ value: '198.51.100.0/24', note: 'office' }],
+        resolutions: [],
+      }),
+    });
+    component = mount(DataPanels, { target: document.body, props: { admin, sites: [] } });
+    await settle();
+    const labels = [...document.querySelectorAll('.xrow input')].map((input) =>
+      input.getAttribute('aria-label'),
+    );
+    expect(labels).toEqual(['Excluded address 1', 'Note for excluded address 1']);
+  });
+});
