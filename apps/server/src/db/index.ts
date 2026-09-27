@@ -1242,6 +1242,7 @@ const API_TOKEN_COLUMNS =
 const SQL_INSERT_API_TOKEN =
   'INSERT INTO api_tokens (name, token_hash, site_scope, created_at, created_by_user_id) VALUES (?, ?, ?, ?, ?)';
 const SQL_GET_API_TOKEN = `SELECT ${API_TOKEN_COLUMNS} FROM api_tokens WHERE token_hash = ?`;
+const SQL_GET_API_TOKEN_BY_ID = `SELECT ${API_TOKEN_COLUMNS} FROM api_tokens WHERE id = ?`;
 const SQL_LIST_API_TOKENS = `SELECT ${API_TOKEN_COLUMNS} FROM api_tokens ORDER BY id`;
 const SQL_REVOKE_API_TOKEN =
   'UPDATE api_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL';
@@ -1266,6 +1267,10 @@ export function insertApiToken(
 
 export function getApiTokenByHash(db: Db, tokenHash: Uint8Array): ApiTokenRow | undefined {
   return stmt<ApiTokenRow>(db, SQL_GET_API_TOKEN).get(tokenHash);
+}
+
+export function getApiToken(db: Db, id: number): ApiTokenRow | undefined {
+  return stmt<ApiTokenRow>(db, SQL_GET_API_TOKEN_BY_ID).get(id);
 }
 
 export function listApiTokens(db: Db): ApiTokenRow[] {

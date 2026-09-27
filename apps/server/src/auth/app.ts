@@ -168,6 +168,7 @@ export function createSecuredApp(options: SecuredAppOptions = {}): SecuredApp {
     // a token keeps a single budget however it asks.
     const queryLimits = createQueryRateLimits();
     appOptions.queryLimits = queryLimits;
+    appOptions.refreshPrincipal = createdAuth.refresh;
     app.use('/api/*', corsOnBearer);
     app.use('/mcp', corsOnBearer);
     app.use('/api/*', (c, next) =>

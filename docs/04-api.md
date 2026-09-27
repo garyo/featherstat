@@ -764,6 +764,14 @@ fails closed, never widening to every site.
   proxies from reaping the stream. A connection that stops draining is
   dropped once ~1000 frames are queued for it; reconnecting with
   `Last-Event-ID` recovers what the ring still holds.
+- **A stream is re-authorized, not just authorized once.** The gate
+  resolves the principal at connect, but a stream outlives its request, so
+  every `active` tick re-reads it (`Auth.refresh`) and closes the stream once
+  the session, token, user or viewer is gone or its scope would now cover
+  different sites; the client's reconnect then meets the gate like any
+  request. One session or token holds at most 16 streams at once
+  (`MAX_STREAMS_PER_PRINCIPAL`) — each is a subscriber every ingested hit
+  fans out to — and the next answers 429.
 
 This feeds the live counter, the realtime feed, and the map/globe from a
 single stream.
@@ -909,7 +917,8 @@ revocation — and mints a **single-use magic link** (raw token
 `fsv_<43 base64url>`, sha256-at-rest like every other token, 7-day expiry);
 `POST /api/admin/viewers/:id/invite` re-mints; `DELETE /api/admin/viewers/:id`
 revokes the viewer and expires their outstanding links (live sessions die at
-the gate, which re-reads the viewer row on every request). The mint response
+the gate, which re-reads the viewer row on every request, and an open realtime
+stream closes on its next tick). The mint response
 carries the claim path `/invite/<token>` **exactly once** — the admin copies
 it out of band. `deliverInvite` (routes/viewers.ts) is the one-function seam
 where SMTP/ntfy delivery slots in later.

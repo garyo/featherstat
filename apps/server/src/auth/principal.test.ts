@@ -6,6 +6,10 @@ import {
   type Db,
   disableUser,
   insertUser,
+  insertViewer,
+  revokeApiToken,
+  revokeViewer,
+  setViewerScope,
   withWriteTransaction,
 } from '../db/index.ts';
 import { createPipeline, type Pipeline } from '../pipeline/index.ts';
@@ -16,6 +20,7 @@ import {
   canReadSite,
   isManager,
   narrowScope,
+  type Principal,
   parseSiteScope,
   readableSites,
   serializeSiteScope,
@@ -296,6 +301,43 @@ describe('token principals', () => {
     for (const scheme of ['Bearerish', 'Basic', 'Bear']) {
       expect((await bearerRequest(minted.token, '/api/sites', { scheme })).status).toBe(401);
     }
+  });
+});
+
+describe('Auth.refresh — the principal as it stands now', () => {
+  it('follows a token, a viewer and a session to their revocation', async () => {
+    const auth = secured.auth;
+    if (auth === undefined) throw new Error('secured app without auth');
+    const minted = await mintToken([1, 2]);
+    const token = { kind: 'token', tokenId: minted.id, sites: new Set([1, 2]) } as const;
+    expect(auth.refresh(token)).toEqual(token);
+
+    const viewerId = withWriteTransaction(db, () => {
+      const row = insertViewer(db, {
+        email: 'client@example.com',
+        site_scope: serializeSiteScope([1, 2]),
+        created_at: T0,
+      });
+      return row.id;
+    });
+    const session = issueSession(db, ensureAuthSecret(db), T0, { kind: 'viewer', viewerId });
+    const viewer: Principal = {
+      kind: 'viewer',
+      sessionId: session.id,
+      viewerId,
+      sites: new Set([1, 2]),
+    };
+    withWriteTransaction(db, () => {
+      setViewerScope(db, viewerId, serializeSiteScope([2]));
+      revokeApiToken(db, minted.id, T0);
+    });
+    expect(auth.refresh(viewer)).toEqual({ ...viewer, sites: new Set([2]) });
+    expect(auth.refresh(token)).toBeUndefined();
+
+    withWriteTransaction(db, () => revokeViewer(db, viewerId, T0));
+    expect(auth.refresh(viewer)).toBeUndefined();
+    // A session that is gone (logout, expiry) is gone for every kind.
+    expect(auth.refresh({ kind: 'admin', sessionId: 'no-such-session' })).toBeUndefined();
   });
 });
 

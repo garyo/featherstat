@@ -171,7 +171,8 @@ export function createViewerRoutes(
     const id = parseDashboardId(c.req.param('id'));
     if (id === undefined) return c.json({ error: 'invalid viewer id' }, 400);
     // Viewer and links revoke together; live sessions die at the gate, which
-    // re-reads the viewer row on every request (auth.ts, principal.test.ts).
+    // re-reads the viewer row on every request, and an open realtime stream
+    // closes on its next tick (auth.ts `refresh`, realtime/sse.ts).
     const revoked = withWriteTransaction(db, () => {
       const viewer = getViewer(db, id);
       if (viewer === undefined || !ownsMint(c, viewer.created_by_user_id)) return false;
