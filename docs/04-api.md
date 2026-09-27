@@ -532,8 +532,9 @@ buckets rather than the top groups; the schema refuses that combination with a
   construction (a read-equivalence ratchet holds both stores row-for-row
   equal). One visible edge exists — the retention raw floor: once
   `retention_days` has pruned old raw rows, a query only raw rows can answer
-  (a raw-only dimension like `title`, `dim2`, joint filters, a cross-day
-  distinct, session-scoped filters, the sequence kinds) refuses a window
+  (a raw-only dimension like `title`, two rolled dimensions grouped or filtered
+  together, a cross-day distinct, session-scoped filters, the sequence kinds)
+  refuses a window
   reaching below the floor with the per-query
   `{ "error": { "code": "unsupported", "message": "raw events for part of
   this range have been pruned…" } }` — never partial numbers. Rollup-served

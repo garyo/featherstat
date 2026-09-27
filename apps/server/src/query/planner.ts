@@ -27,9 +27,11 @@ import {
  * Why each rule exists:
  *
  * - **Marginals, not joints.** `rollup_dim_day` / `rollup_sessions_day` store
- *   one dimension per row, so grouping + filtering may reference at most ONE
- *   rolled dimension between them. `site`, `weekday` and the bucket are rollup
- *   keys (or functions of them), and don't count.
+ *   one dimension per row, so grouping (`dim` and `dim2`) + filtering may
+ *   reference at most ONE rolled dimension between them. `site`, `weekday`,
+ *   `local_hour` and the bucket are rollup keys (or functions of them), and
+ *   don't count — so `local_hour × weekday` (the overview heatmap) and
+ *   `path × site` both roll up.
  * - **Distinct honesty** (docs/03): per-day distincts are exact but have no
  *   lawful sum across days — uid-stable visitor ids recur — so `visitors` (and
  *   the events-side `visits`) route to rollups only at day buckets or over a
@@ -62,7 +64,6 @@ export function planMetricRoute(
   windows: readonly SiteWindow[],
   context: PlanContext = {},
 ): QueryRoute {
-  if (query.dim2 !== undefined) return 'raw';
   if (windows.length === 0) return 'raw';
   if (windows.some((window) => window.fromTs !== undefined)) return 'raw';
   // The fail-safe over the metric axis too: anything outside the built-in enum
@@ -81,7 +82,7 @@ export function planMetricRoute(
   // and at most one may be rolled. `prop:` dims are never rolled — raw only —
   // and any other string outside ROLLUP_DIMS falls through to raw the same way.
   const rolled = new Set<BaseDimension>();
-  for (const dim of [query.dim, ...leaves.map((leaf) => leaf.dim)]) {
+  for (const dim of [query.dim, query.dim2, ...leaves.map((leaf) => leaf.dim)]) {
     if (dim === undefined) continue;
     if (isPropDimension(dim)) return 'raw';
     const entry = ROLLUP_DIMS[dim] as (typeof ROLLUP_DIMS)[BaseDimension] | undefined;
@@ -94,7 +95,10 @@ export function planMetricRoute(
   // `local_hour` exists only on rollup_traffic_hour, which has no dim rows:
   // an hour bucket or an hour dimension excludes every rolled dimension.
   const hourShape =
-    query.bucket === 'hour' || query.dim === 'local_hour' || leaves.some(isLocalHourLeaf);
+    query.bucket === 'hour' ||
+    query.dim === 'local_hour' ||
+    query.dim2 === 'local_hour' ||
+    leaves.some(isLocalHourLeaf);
   if (hourShape && rolledDim !== undefined) return 'raw';
 
   // Σ(per-day distinct) is only lawful where every group covers one day…
@@ -121,7 +125,7 @@ export function planMetricRoute(
       // only plain top-level equality leaves are guaranteed row-preserving
       // (`any`/`not` trees and multi-value ops can span rows the same visitor
       // touched twice).
-      if (rolledDim !== undefined && query.dim !== rolledDim) {
+      if (rolledDim !== undefined && query.dim !== rolledDim && query.dim2 !== rolledDim) {
         if (!filters.every(isLeaf)) return 'raw';
         for (const leaf of leaves) {
           if (leaf.dim === rolledDim && leaf.op !== 'eq' && leaf.op !== 'is_null') return 'raw';

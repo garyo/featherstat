@@ -855,17 +855,20 @@ function buildStatement(
   };
 }
 
-/** Buckets read in time order; breakdowns lead with the first metric, ties in group order.
+/** Buckets read in time order; breakdowns lead with the first metric, ties broken
+ * on every group column in order, so a LIMIT cuts at one deterministic row.
  * Shared with the rollup compiler: both stores must return rows in the same order. */
 export function orderClause(
   groupKeys: readonly string[],
   firstMetric: Metric | undefined,
 ): string | null {
   if (groupKeys.length === 0 || firstMetric === undefined) return null;
+  const positions = groupKeys.map((_, i) => i + 1);
   if (groupKeys[0] === 'bucket') {
-    return groupKeys.length === 1 ? 'ORDER BY 1' : `ORDER BY 1, "${firstMetric}" DESC`;
+    if (groupKeys.length === 1) return 'ORDER BY 1';
+    return `ORDER BY 1, "${firstMetric}" DESC, ${positions.slice(1).join(', ')}`;
   }
-  return `ORDER BY "${firstMetric}" DESC, 1`;
+  return `ORDER BY "${firstMetric}" DESC, ${positions.join(', ')}`;
 }
 
 /** The one refusal a well-typed tree can still earn: a list value on a single-value op. */

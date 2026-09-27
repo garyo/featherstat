@@ -669,11 +669,13 @@ and to raw the moment anything is in doubt (fail-safe: unknown dimensions,
 new ops and rolling windows are slow before they are ever wrong). The rules:
 
 - Metric-kind queries only (journeys/dwell/adjacency/distribution always walk
-  raw rows); no `dim2`; every referenced dimension rolled or derivable from
-  rollup keys (`site`, `weekday`, the bucket); grouping + filters together
-  touch at most ONE rolled dimension — rollups store marginals, not joints.
-  Filtering the same dimension a query groups by is fine (still marginal).
-- Hour shapes (`bucket: 'hour'` or the `local_hour` dimension) answer from
+  raw rows); every referenced dimension (`dim`, `dim2`, filters) rolled or
+  derivable from rollup keys (`site`, `weekday`, `local_hour`, the bucket);
+  grouping + filters together touch at most ONE rolled dimension — rollups
+  store marginals, not joints. So `local_hour × weekday` (the overview
+  heatmap) and `path × site` roll up; `path × country` does not. Filtering
+  the same dimension a query groups by is fine (still marginal).
+- Hour shapes (`bucket: 'hour'` or `local_hour` as either dimension) answer from
   `rollup_traffic_hour`, which has no dim rows, no distincts and no session
   columns: additive event metrics only, no rolled dimension in play. A SESSION
   metric by hour is answerable — sessions carry `local_hour`, the hour the
@@ -757,8 +759,8 @@ Age-based pruning of raw rows is safe now that the rollup read path is live
 (§ Rollups): rollups are never pruned — outliving raw is their point — and the
 retention job records the raw floor in `rollup_meta.raw_horizon_ts` before it
 deletes anything. Below that floor, rollup-answerable queries keep answering;
-a question only raw rows can answer (a raw-only dimension, `dim2`, joint
-filters, a cross-day distinct, session-scoped filters, the sequence kinds)
+a question only raw rows can answer (a raw-only dimension, a joint of two
+rolled dimensions, joint filters, a cross-day distinct, session-scoped filters, the sequence kinds)
 returns an honest per-query `unsupported` error instead of partial numbers.
 The same run ages the prop registry: keys (with their values) last seen before
 the horizon and `prop_drops` counters older than it describe rows the prune is
