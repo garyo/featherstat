@@ -173,7 +173,12 @@ function buildServer(
         resolveGoals(db, expanded),
       );
       if ('refused' in response) return refusal(response.refused);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(response) }] };
+      // A token is never the admin: the instance-wide write counter stays
+      // out of its answers, exactly as on /api/query.
+      const meta = { ...response.meta, dataVersion: 0 };
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({ ...response, meta }) }],
+      };
     },
   );
 

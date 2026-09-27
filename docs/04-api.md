@@ -243,6 +243,9 @@ transaction.
 
 Response:
 `{ results: { [id]: { rows, compare?, bucket?, axis?, measures? } | { error } }, meta: { generatedInMs, dataVersion, windows } }`.
+`dataVersion` is the instance-wide write counter the ETag hashes; it is
+readable only by the admin — every other principal (and the share route, and
+MCP) gets `0`, since the counter moves with every site's traffic.
 A query the vocabulary cannot answer honestly (e.g. `bounce_rate` × `title`) or
 a kind that ships in a later milestone yields a per-query `error` entry — the
 batch itself still succeeds, and never returns wrong numbers.

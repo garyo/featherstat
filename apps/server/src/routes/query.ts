@@ -231,6 +231,10 @@ export function createQueryRoutes(db: Db, options: QueryRouteOptions = {}): Hono
     }
     // Re-derived from the executed snapshot's version, in case a flush landed in between.
     const tag = etag(response.meta.dataVersion, schema, canonicalBody, windows, now);
+    // The version counts writes across EVERY site: inside the hashed ETag it
+    // only revalidates, but readable it would meter other tenants' traffic, so
+    // only the admin — who reads every site anyway — sees it.
+    if (who !== undefined && who.kind !== 'admin') response.meta.dataVersion = 0;
     if (csvQuery !== undefined) {
       const entry = response.results[csvQuery.id];
       if (entry === undefined || isQueryError(entry)) {

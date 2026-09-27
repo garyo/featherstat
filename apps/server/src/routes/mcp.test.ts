@@ -228,6 +228,8 @@ describe('query tool', () => {
     const response = JSON.parse(textOf(answered)) as QueryResponse;
     const rows = (response.results.pv as { rows: Array<{ pageviews: number }> }).rows;
     expect(rows[0]?.pageviews).toBe(2);
+    // The instance-wide write counter is the admin's alone (docs/04 § 3).
+    expect(response.meta.dataVersion).toBe(0);
   });
 
   it('answers an out-of-scope site exactly like a nonexistent one', async () => {

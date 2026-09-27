@@ -1,6 +1,6 @@
 import type { ApiTokenMinted } from '@featherstat/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { openTestDb, T0 } from '../../test/rows.ts';
+import { DESKTOP_UA, openTestDb, T0 } from '../../test/rows.ts';
 import {
   addUserSite,
   type Db,
@@ -193,6 +193,33 @@ describe('token principals', () => {
       expect(missing.status, list).toBe(404);
       expect(await missing.json()).toEqual({ error: 'unknown site 99' });
     }
+  });
+
+  it("never sees the instance-wide data version — other sites' traffic moves it", async () => {
+    const hit = await secured.app.request(
+      '/matomo.php?idsite=2&rec=1&send_image=0&url=https%3A%2F%2Ftwo.test%2F',
+      { headers: { 'user-agent': DESKTOP_UA, 'x-forwarded-for': '203.0.113.7' } },
+    );
+    expect(hit.status).toBe(204);
+    pipeline.flush();
+    const versionOf = async (res: Response): Promise<number> =>
+      ((await res.json()) as { meta: { dataVersion: number } }).meta.dataVersion;
+
+    const admin = await adminSession();
+    const asAdmin = await secured.app.request('/api/query', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: admin.cookie },
+      body: queryBody(1),
+    });
+    expect(await versionOf(asAdmin)).toBeGreaterThan(0);
+
+    const minted = await mintToken([1]);
+    const asToken = await bearerRequest(minted.token, '/api/query', {
+      method: 'POST',
+      body: queryBody(1),
+    });
+    expect(asToken.status).toBe(200);
+    expect(await versionOf(asToken)).toBe(0);
   });
 
   it('posts queries without a CSRF token — Bearer carries no ambient credential', async () => {
