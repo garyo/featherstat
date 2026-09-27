@@ -8,6 +8,7 @@ import { runCampaignBackfill } from '../jobs/campaign-backfill.ts';
 import { AliasCache } from '../pipeline/campaigns.ts';
 import { createAdminRoutes } from './admin.ts';
 import { createCampaignRoutes } from './campaigns.ts';
+import { createQueryRoutes } from './query.ts';
 
 const PASSWORD = 'a-decent-password';
 
@@ -22,7 +23,8 @@ beforeEach(async () => {
   aliasCache = new AliasCache(db);
   app = new Hono<AuthEnv>()
     .route('/', createAdminRoutes(db, auth))
-    .route('/', createCampaignRoutes(db, auth, { aliasCache }));
+    .route('/', createCampaignRoutes(db, auth, { aliasCache }))
+    .route('/', createQueryRoutes(db));
   await auth.setPassword(PASSWORD);
 });
 
@@ -193,5 +195,62 @@ describe('campaigns registry', () => {
     expect((await mutate(session, 'POST', '/api/admin/campaigns?site=1', CAMPAIGN)).status).toBe(
       409,
     );
+  });
+});
+
+/**
+ * `campaign_status` reads the registry at query time, so a registry write
+ * changes answers without moving `dataVersion`. The ETag of a request that uses
+ * the dimension must move with every write, or the hygiene card would keep
+ * revalidating 304 on "unregistered"; a request that never uses it keeps its tag.
+ */
+describe('campaigns registry versions the ETag', () => {
+  const range = { from: '2026-07-01', to: '2026-07-31' };
+  const statusBody = {
+    site: 1,
+    range,
+    queries: [{ id: 'hygiene', metrics: ['visits'], dim: 'campaign_status' }],
+  };
+  const plainBody = { site: 1, range, queries: [{ id: 'kpis', metrics: ['visits'] }] };
+  const tagOf = async (body: unknown): Promise<string> => {
+    const res = await app.request('/api/query', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    expect(res.status).toBe(200);
+    return res.headers.get('etag') ?? '';
+  };
+
+  it('expires a campaign_status answer on create, update and delete — and no other', async () => {
+    const session = await login();
+    const plain = await tagOf(plainBody);
+    const tags = [await tagOf(statusBody)];
+
+    const created = (await (
+      await mutate(session, 'POST', '/api/admin/campaigns?site=1', CAMPAIGN)
+    ).json()) as CampaignInfo;
+    tags.push(await tagOf(statusBody));
+    await mutate(session, 'PUT', `/api/admin/campaigns/${created.id}`, {
+      ...CAMPAIGN,
+      endsAt: null,
+    });
+    tags.push(await tagOf(statusBody));
+    await mutate(session, 'DELETE', `/api/admin/campaigns/${created.id}`);
+    tags.push(await tagOf(statusBody));
+
+    expect(new Set(tags).size).toBe(tags.length);
+    expect(await tagOf(plainBody)).toBe(plain);
+  });
+
+  it('holds the tag across a refused write', async () => {
+    const session = await login();
+    await mutate(session, 'POST', '/api/admin/campaigns?site=1', CAMPAIGN);
+    const before = await tagOf(statusBody);
+    expect((await mutate(session, 'POST', '/api/admin/campaigns?site=1', CAMPAIGN)).status).toBe(
+      409,
+    );
+    expect((await mutate(session, 'DELETE', '/api/admin/campaigns/999')).status).toBe(404);
+    expect(await tagOf(statusBody)).toBe(before);
   });
 });

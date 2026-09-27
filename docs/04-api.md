@@ -648,6 +648,11 @@ buckets rather than the top groups; the schema refuses that combination with a
   - **`annotations_version` joins the hash only for annotation-opted
     requests** (below): an annotation edit expires exactly the cached answers
     that show notes, and no others.
+  - **`campaigns_version` joins the hash only for requests that use
+    `campaign_status`** (as a dimension or in any filter, segment or goal
+    definition). That dimension reads the campaigns registry at query time, so
+    every registry write bumps the counter; without it the hygiene card would
+    revalidate 304 on a stale "unregistered" forever.
 - **Annotations ride the batch, opt-in.** `"annotations": true` on the request
   adds `meta.annotations`: `[{ id, siteId, ts, text }]`, filtered to the
   request's sites (a null-site note matches every site) and to the resolved

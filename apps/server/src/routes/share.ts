@@ -25,7 +25,7 @@ import {
 import { executeQueryRequest, resolveSiteWindows, UnknownSiteError } from '../query/executor.ts';
 import { expandSegments, resolveDerived } from '../query/stored.ts';
 import { parseDashboardId, siteOf, writableBy } from './dashboards.ts';
-import { batchEtag, canonicalize, ifNoneMatchHits } from './etag.ts';
+import { batchEtag, canonicalize, ifNoneMatchHits, withRegistryVersions } from './etag.ts';
 import { clientIp } from './track.ts';
 
 /**
@@ -176,12 +176,10 @@ export function createShareRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
 
     // ETag exactly like /api/query, with the dashboard's identity and edit time
     // folded in — a layout change must expire caches even when data didn't move.
-    const canonical = canonicalize({
-      id: dashboard.id,
-      updatedAt: dashboard.updated_at,
-      request,
-      derived,
-    });
+    const canonical = withRegistryVersions(
+      db,
+      canonicalize({ id: dashboard.id, updatedAt: dashboard.updated_at, request, derived }),
+    );
     const schema = schemaVersion(db);
     const current = batchEtag(dataVersion(db), schema, canonical, windows, now);
     if (ifNoneMatchHits(c.req.header('if-none-match'), current)) {

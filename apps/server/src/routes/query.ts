@@ -26,7 +26,7 @@ import { executeQueryRequest, resolveSiteWindows, UnknownSiteError } from '../qu
 import type { GoalDefinitions } from '../query/goals.ts';
 import { PoolSaturatedError } from '../query/pool/pool.ts';
 import { expandSegments, resolveDerived, resolveGoals } from '../query/stored.ts';
-import { batchEtag, canonicalize, ifNoneMatchHits } from './etag.ts';
+import { batchEtag, canonicalize, ifNoneMatchHits, withRegistryVersions } from './etag.ts';
 import { clientIp } from './track.ts';
 
 /**
@@ -179,14 +179,17 @@ export function createQueryRoutes(db: Db, options: QueryRouteOptions = {}): Hono
     // `annotations_version` joins the hash ONLY for annotation-opted requests
     // (the flag itself is in `request`): an annotation edit must expire the
     // dashboards that show notes, not every cached batch on the instance.
-    const canonicalBody = canonicalize({
-      request,
-      compareFilter: expansion.compareFilter,
-      derived,
-      goals,
-      format: csvQuery === undefined ? undefined : `csv:${csvQuery.id}`,
-      annotationsVersion: request.annotations === true ? annotationsVersion(db) : undefined,
-    });
+    const canonicalBody = withRegistryVersions(
+      db,
+      canonicalize({
+        request,
+        compareFilter: expansion.compareFilter,
+        derived,
+        goals,
+        format: csvQuery === undefined ? undefined : `csv:${csvQuery.id}`,
+        annotationsVersion: request.annotations === true ? annotationsVersion(db) : undefined,
+      }),
+    );
     const schema = schemaVersion(db);
     const current = batchEtag(dataVersion(db), schema, canonicalBody, windows, now);
     if (ifNoneMatchHits(c.req.header('if-none-match'), current)) {

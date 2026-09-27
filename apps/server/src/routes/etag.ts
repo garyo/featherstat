@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { localClock, type SiteWindow } from '@featherstat/shared';
+import { campaignsVersion, type Db } from '../db/index.ts';
 
 /**
  * ETag plumbing shared by every route that revalidates: the batch routes
@@ -61,6 +62,21 @@ export function batchEtag(
     .update(`${version}|${schema}|${canonicalBody}|${windowTag(windows, now)}`)
     .digest('base64url');
   return `"${hash}"`;
+}
+
+/**
+ * `campaign_status` is computed at query time from the campaigns registry
+ * (query/compiler.ts), so a registry edit changes answers while `dataVersion`
+ * stands still. A request that uses the dimension anywhere — a dim, a filter,
+ * an expanded segment, a goal definition — folds the registry's version into
+ * its canonical body; every other request's tag ignores registry edits. A
+ * substring test over the canonical text sees all of those at once; its only
+ * false positive, a filter value that happens to contain the name, costs one
+ * cache miss.
+ */
+export function withRegistryVersions(db: Db, canonicalBody: string): string {
+  if (!canonicalBody.includes('campaign_status')) return canonicalBody;
+  return `${canonicalBody}|campaigns:${campaignsVersion(db)}`;
 }
 
 /** JSON with object keys sorted, so key order alone can never produce a distinct ETag. */
