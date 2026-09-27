@@ -8,6 +8,7 @@ import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { event, openTestDb, T0 } from '../../test/rows.ts';
 import { type Auth, type AuthEnv, createAuth } from '../auth/auth.ts';
+import { hashPassword } from '../auth/password.ts';
 import {
   createDashboard,
   type Db,
@@ -27,7 +28,7 @@ import { runPropScrubs } from '../jobs/prop-scrub.ts';
 import { runSitePurges } from '../jobs/site-purge.ts';
 import { ExclusionMatcher, type Resolver, refreshResolutions } from '../pipeline/exclusions.ts';
 import { PropRegistry } from '../pipeline/props.ts';
-import { createAdminRoutes } from './admin.ts';
+import { createAdminRoutes, DECOY_HASH } from './admin.ts';
 
 const PASSWORD = 'a-decent-password';
 
@@ -158,6 +159,13 @@ describe('sites CRUD', () => {
     expect((await mutate(session, 'PATCH', '/api/admin/sites/zero', { name: 'X' })).status).toBe(
       400,
     );
+  });
+});
+
+describe('login timing', () => {
+  it('verifies unknown emails against a decoy that costs what a real hash costs', async () => {
+    const params = (stored: string): string[] => stored.split('$').slice(0, 4);
+    expect(params(DECOY_HASH)).toEqual(params(await hashPassword('any')));
   });
 });
 

@@ -94,8 +94,10 @@ import { clientIp } from './track.ts';
 /**
  * A well-formed hash no password derives to: verified against when a user
  * login names no usable account, so every failure costs the same one scrypt.
+ * Its parameters must be `hashPassword`'s own (`admin.test.ts` holds it to
+ * that): a cheaper decoy would answer an unknown email faster than a known one.
  */
-const DECOY_HASH =
+export const DECOY_HASH =
   'scrypt$32768$8$1$rpiLzxaemhczP2Fh-2tuLpDKFLW31mwfTOiFKCAY4iA$' +
   'woSL-ofmP1MBrXZHifGcdrjFR_D4VGDXqbLd4cdHL7E-MgYA0VteYb4D0MiJhauhhzB1W6oCLJ2lLfnY66XECQ';
 
