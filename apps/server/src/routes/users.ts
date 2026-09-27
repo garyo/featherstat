@@ -43,6 +43,7 @@ import {
 } from '../db/index.ts';
 import { parseDashboardId } from './dashboards.ts';
 import { clientIp } from './track.ts';
+import { jsonOnly } from './viewers.ts';
 
 /**
  * Users (docs/04 § 5): password-holding accounts that own and manage sites.
@@ -186,7 +187,7 @@ export function createUserRoutes(
     return c.json({ ok: true });
   });
 
-  app.post('/claim/:token', bodyLimit({ maxSize: MAX_USER_BODY_BYTES }), async (c) => {
+  app.post('/claim/:token', bodyLimit({ maxSize: MAX_USER_BODY_BYTES }), jsonOnly, async (c) => {
     if (!ipClaims.allow(clientIp(c), auth.now()) || !globalClaims.allow('*', auth.now())) {
       return c.json({ error: 'too many attempts — try again in a minute' }, 429, {
         'Retry-After': '60',

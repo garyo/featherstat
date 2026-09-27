@@ -914,10 +914,16 @@ carries the claim path `/invite/<token>` **exactly once** — the admin copies
 it out of band. `deliverInvite` (routes/viewers.ts) is the one-function seam
 where SMTP/ntfy delivery slots in later.
 
-Visiting `GET /invite/:token` (public, per-IP rate-limited like
-`/share/:token`) consumes the link atomically — used, expired, unknown,
+Opening `/invite/<token>` only loads the SPA page — a chat app or mail
+scanner that fetches the link to unfurl it spends nothing — and the page's
+button sends `POST /invite/:token` (public, per-IP rate-limited like
+`/share/:token`), which consumes the link atomically — used, expired, unknown,
 malformed and revoked-viewer all answer the same 410, so a probe learns
-nothing — issues a viewer session and 302s to `/`. Viewer sessions get their
+nothing — issues a viewer session and answers `{ok, csrf}` like `/claim`.
+Both claim POSTs refuse anything but `application/json` with a 415: a
+cross-site form cannot send that type, and a cross-origin script cannot
+without a preflight nothing answers, so no other page can plant a session
+(login CSRF). Viewer sessions get their
 own **90-day sliding TTL** (admin sessions keep 14 fixed days): a viewer
 cannot log back in, their link was single-use, so an active viewer's session
 renews itself whenever it has burned half its life, and only 90 days of true

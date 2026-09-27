@@ -147,6 +147,13 @@ describe('user lifecycle', () => {
     expect((await claim(`/welcome/fsu_${'A'.repeat(43)}`)).status).toBe(410);
     // A viewer link never claims a password, whatever its shape.
     expect((await claim(`/welcome/fsv_${'A'.repeat(43)}`)).status).toBe(410);
+    // A cross-site form cannot claim: the body must be JSON.
+    const form = await secured.app.request(minted.url.replace('/welcome/', '/claim/'), {
+      method: 'POST',
+      headers: { 'content-type': 'text/plain' },
+      body: JSON.stringify({ password: USER_PASSWORD }),
+    });
+    expect(form.status).toBe(415);
     clock = minted.expiresAt; // expiry is exclusive: expires_at > now must fail
     expect((await claim(minted.url)).status).toBe(410);
   });

@@ -1,7 +1,7 @@
 import { mount } from 'svelte';
 import App from './App.svelte';
 import { shareTokenFromPath } from './lib/share.ts';
-import { welcomeTokenFromPath } from './lib/welcome.ts';
+import { claimLinkFromPath } from './lib/welcome.ts';
 import './theme.css';
 import './lib/layout.css';
 import './lib/forms.css';
@@ -13,11 +13,12 @@ const target = document.getElementById('app');
 if (!target) throw new Error('missing #app mount point');
 
 const shareToken = shareTokenFromPath(window.location.pathname);
-const welcomeToken = welcomeTokenFromPath(window.location.pathname);
-if (welcomeToken !== undefined) {
-  // An invite claim carries no session either: same pre-auth mount as share.
-  void import('./welcome/welcome.ts').then(({ WelcomeView }) =>
-    mount(WelcomeView, { target, props: { token: welcomeToken } }),
+const claimLink = claimLinkFromPath(window.location.pathname);
+if (claimLink !== undefined) {
+  // A claim link carries no session either: same pre-auth mount as share.
+  const { kind, token } = claimLink;
+  void import('./welcome/welcome.ts').then(({ WelcomeView, InviteView }) =>
+    mount(kind === 'user' ? WelcomeView : InviteView, { target, props: { token } }),
   );
 } else if (shareToken === undefined) {
   mount(App, { target });

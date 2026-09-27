@@ -218,7 +218,7 @@ export function createSecuredApp(options: SecuredAppOptions = {}): SecuredApp {
     // Minting/revoking are admin surfaces; `GET /share/:token` rides in the same
     // router and stays public — it is not under `/api/`, so the prefix gate skips it.
     app.route('/', createShareRoutes(db, createdAuth));
-    // Same shape again: viewer admin under the wall, `GET /invite/:token` public.
+    // Same shape again: viewer admin under the wall, `POST /invite/:token` public.
     app.route('/', createViewerRoutes(db, createdAuth));
     // And again: users admin under the wall, `POST /claim/:token` public.
     app.route('/', createUserRoutes(db, createdAuth));

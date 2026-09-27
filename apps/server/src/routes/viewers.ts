@@ -5,7 +5,7 @@ import {
   type ViewerInfo,
   ViewerInviteSchema,
 } from '@featherstat/shared';
-import { type Context, Hono } from 'hono';
+import { type Context, Hono, type MiddlewareHandler } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { Auth, AuthEnv } from '../auth/auth.ts';
 import { canGrantScope, parseSiteScope, serializeSiteScope } from '../auth/principal.ts';
@@ -31,8 +31,11 @@ import { clientIp } from './track.ts';
 
 /**
  * Viewers (docs/04 § 5): invited read-only principals, claimed without SMTP.
- * The admin mints a single-use magic link and delivers it out of band; visiting
- * `GET /invite/:token` consumes it and issues a 90-day sliding viewer session.
+ * The admin mints a single-use magic link and delivers it out of band. Visiting
+ * `/invite/<token>` only loads the SPA page; its button POSTs `/invite/:token`,
+ * which consumes the link and issues a 90-day sliding viewer session — so a
+ * link unfurler's GET cannot burn it, and a cross-site form cannot plant a
+ * session (the POST must be JSON, which no form can send without a preflight).
  * Mint/list/revoke live under the admin wall; the claim route is public — it is
  * not under `/api/`, so the prefix gate skips it, exactly like `/share/:token`.
  *
@@ -180,7 +183,7 @@ export function createViewerRoutes(
     return c.json({ ok: true });
   });
 
-  app.get('/invite/:token', (c) => {
+  app.post('/invite/:token', jsonOnly, (c) => {
     if (!ipClaims.allow(clientIp(c), auth.now()) || !globalClaims.allow('*', auth.now())) {
       return c.json({ error: 'too many attempts — try again in a minute' }, 429, {
         'Retry-After': '60',
@@ -200,12 +203,25 @@ export function createViewerRoutes(
       return viewer.id;
     });
     if (viewerId === undefined) return deadLink(c);
-    auth.login(c, { kind: 'viewer', viewerId });
-    return c.redirect('/', 302);
+    const issued = auth.login(c, { kind: 'viewer', viewerId });
+    return c.json({ ok: true, csrf: issued.csrfToken });
   });
 
   return app;
 }
+
+/**
+ * The public claim routes sign someone in, so a cross-site page must not be
+ * able to fire them: a form can only send form or text bodies, and a
+ * cross-origin `application/json` POST needs a preflight nothing here answers.
+ */
+export const jsonOnly: MiddlewareHandler = async (c, next) => {
+  const type = c.req.header('content-type') ?? '';
+  if (!type.toLowerCase().startsWith('application/json')) {
+    return c.json({ error: 'send the claim as application/json' }, 415);
+  }
+  await next();
+};
 
 function sha256(token: string): Buffer {
   return createHash('sha256').update(token).digest();
