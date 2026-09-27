@@ -37,6 +37,7 @@ import {
   type SourceFile,
   webSourceFiles,
 } from '../../apps/web/src/ownership.guard.ts';
+import { widgetIoBreaches } from '../../apps/web/src/widget-io.guard.ts';
 import { buildAll, bundleBreaches } from '../../packages/tracker/src/build.ts';
 import { responseSizeBreaches } from '../contract/response-size.guard.ts';
 import {
@@ -363,6 +364,38 @@ const markupOwnership = defineGuard<SourceFile[]>({
   },
 });
 
+const widgetIo = defineGuard<SourceFile[]>({
+  id: 'widget-io',
+  binds: 'no widget fetches, holds a query or admin client, or opens a stream of its own',
+  source: 'apps/web/src/widget-io.guard.ts',
+  tier: 'cheap',
+  stage: () => webSourceFiles(),
+  holds: (files) => widgetIoBreaches(files).length === 0,
+  violations: {
+    'a widget fetches its own query': (files) => {
+      files.push({
+        name: 'widgets/Rogue.svelte',
+        source: "<script>const res = await fetch('/api/query');</script>",
+      });
+    },
+    'a widget takes the query client': (files) => {
+      files.push({
+        name: 'widgets/Rogue.svelte',
+        source: "<script>import type { QueryClient } from '../lib/api.ts';</script>",
+      });
+    },
+    'a widget opens its own stream': (files) => {
+      files.push({
+        name: 'widgets/nested/Rogue.svelte',
+        source: "<script>const live = new EventSource('/api/live');</script>",
+      });
+    },
+    'the tree walk stops finding widgets': (files) => {
+      files.splice(0, files.length);
+    },
+  },
+});
+
 const matomoCorpus = defineGuard<string>({
   id: 'matomo-corpus',
   binds: 'the golden Matomo corpus only ever gains cases, and every case asserts something',
@@ -538,6 +571,7 @@ export const GUARDS: readonly Guard[] = [
   webBundles,
   trackerBundles,
   markupOwnership,
+  widgetIo,
   matomoCorpus,
   responseSize,
   epochDiscipline,

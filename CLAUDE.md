@@ -102,12 +102,14 @@ list to actually hold in your head.
 
 - **1 · Widgets declare queries; views batch them.** One `/api/query` request
   per view state. Never per-widget fetching — that's the Matomo failure mode
-  this project exists to fix. *Guarded half*: `collectBatch` lives in
+  this project exists to fix. *Guarded*: `collectBatch` lives in
   `packages/shared`, so server and client cannot build different batches
   (`views/batch.test.ts`, `layout.test.ts`, and the batch invariants the
-  dashboard write path validates). *Unguarded half*: nothing stops a new widget
-  importing a fetch. Widgets read `env` and nothing else; wanting a query client
-  inside one means the view is wrong.
+  dashboard write path validates), and `apps/web/src/widget-io.test.ts` refuses
+  any file under `widgets/` that calls `fetch`, imports `lib/api`, `lib/admin`
+  or `lib/live`, or opens a stream. Widgets read `env` and nothing else; wanting
+  a query client inside one means the view is wrong. *Unguarded*: that a view
+  sends one request per state — nothing stops a view splitting its batch.
 - **3 · Raw IP is transient.** Used for the visitor hash + GeoIP lookup in
   memory, then discarded. *Guarded half*: no column holds one, and
   `realtime/hub.test.ts` proves nothing IP-shaped reaches the wire. *Unguarded
@@ -139,9 +141,9 @@ list to actually hold in your head.
   Extract and decorate; never teach a second file the markup. Registration is
   typed: `registry.ts` must cover every `VizType` not on its `PLANNED` list, so
   an unregistered viz fails the type-check. *Unguarded*: that a new drawing file
-  lands in `widgets/` and becomes a `VizType` at all. The Journeys sankey and flows table are the standing exception
-  (their edge-click and depth controls are coupled) — open work, not licence for
-  the next one.
+  lands in `widgets/` and becomes a `VizType` at all. The Journeys sankey and
+  flows table are the standing exception (their edge-click and depth controls
+  are coupled) — open work, not licence for the next one.
 
 ## Conventions
 
