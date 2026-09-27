@@ -145,7 +145,7 @@ export function goalHourRefusal(
 export function appendGoalStatements(
   compiled: CompiledQuery,
   goals: readonly PreparedGoal[],
-  query: Pick<CompilableMetricQuery, 'dim' | 'dim2' | 'bucket'>,
+  query: Pick<CompilableMetricQuery, 'dim' | 'dim2' | 'bucket' | 'filters'>,
   requestFilters: readonly FilterNode[],
   windows: readonly SiteWindow[],
 ): CompiledQuery | CompileError {

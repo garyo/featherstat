@@ -352,7 +352,8 @@ buckets rather than the top groups; the schema refuses that combination with a
     filters — `COUNT(DISTINCT session_id)`, compiled as one extra events-table
     statement per goal through the same filter compiler as every client filter
     and merged with the query's own statements on the group keys. Request
-    filters apply inside it, so "conversions from mobile" is just a filter.
+    filters and the query's own filters apply inside it, exactly as they apply
+    to its `visits`, so "conversions from mobile" is just a filter.
   - A conversion's **bucket is the completing event's local date** — a
     deliberate simplification from "the session's start date": the day the
     completing event happened is the honest reading of *when did this

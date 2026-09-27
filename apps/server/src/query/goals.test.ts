@@ -201,6 +201,21 @@ describe('goal metrics', () => {
     expect(rows[0]?.[`goal:${signupGoal}:conversions`]).toBe(3);
   });
 
+  it("applies the query's own filters to conversions, as to its visits", () => {
+    // Sessions 1 and 2 visited /a; only session 1 went on to /signup.
+    const { rows } = resultOfQ(
+      ask({
+        metrics: [`goal:${signupGoal}:conversions`, `goal:${signupGoal}:cr`],
+        filters: [{ dim: 'path', op: 'eq', value: '/a', scope: 'session' }],
+      }),
+    );
+    expect(rows[0]).toMatchObject({
+      visits: 2,
+      [`goal:${signupGoal}:conversions`]: 1,
+      [`goal:${signupGoal}:cr`]: 1 / 2,
+    });
+  });
+
   it('refuses hour shapes honestly', () => {
     for (const shape of [{ bucket: 'hour' }, { dim: 'local_hour' }]) {
       const entry = ask({ metrics: [`goal:${signupGoal}:conversions`], ...shape }).results.q;

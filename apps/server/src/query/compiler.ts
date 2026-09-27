@@ -640,20 +640,20 @@ export interface GoalStatementSpec {
 
 /**
  * One goal's statement: `COUNT(DISTINCT e.session_id)` over non-ping events
- * matching the goal's filters AND the request's, grouped exactly like the
- * query so the executor's merge joins rows on the same keys. Events table
- * only — a completion is an event, and the day it lands in is the completing
- * EVENT's local date (docs/04 § 3 states this deliberate simplification).
+ * matching the goal's filters AND the request's AND the query's own, grouped
+ * exactly like the query so the executor's merge joins rows on the same keys.
+ * Events table only — a completion is an event, and the day it lands in is the
+ * completing EVENT's local date (docs/04 § 3 states this deliberate simplification).
  * The goal's stored AST compiles through the same `filterNodeSql` as every
  * client filter (invariant 9): identifiers from `DIMS`, every value bound.
  */
 export function compileGoalStatement(
   goal: GoalStatementSpec,
-  query: Pick<CompilableMetricQuery, 'dim' | 'dim2' | 'bucket'>,
+  query: Pick<CompilableMetricQuery, 'dim' | 'dim2' | 'bucket' | 'filters'>,
   requestFilters: readonly FilterNode[],
   windows: readonly SiteWindow[],
 ): CompiledStatement | CompileError {
-  const allFilters = [...requestFilters, ...goal.filters];
+  const allFilters = [...requestFilters, ...(query.filters ?? []), ...goal.filters];
   const invalid = invalidLeaf(allFilters.flatMap(filterLeaves));
   if (invalid !== undefined) return invalid;
 
