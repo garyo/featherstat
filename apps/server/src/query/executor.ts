@@ -33,7 +33,7 @@ import {
   stmt,
   withReadSnapshot,
 } from '../db/index.ts';
-import { rawHorizonTs, rollupNeedsRebuild } from '../rollup/apply.ts';
+import { rawHorizonTs, sessionRollupsStale as rollupsStale } from '../rollup/apply.ts';
 import { type CompiledAdjacency, compileAdjacencyQuery } from './adjacency.ts';
 import { runChangesQuery } from './changes.ts';
 import {
@@ -148,7 +148,7 @@ export function executeQueryRequest(
     // The rollup routing inputs, read once inside the snapshot: whether the
     // session rollups are suspended (stale bounce definition), and the raw
     // floor retention has pruned to (docs/03 § Rollups).
-    const sessionRollupsStale = rollupNeedsRebuild(db);
+    const sessionRollupsStale = rollupsStale(db);
     const horizonTs = rawHorizonTs(db);
 
     const results: QueryResponse['results'] = {};
@@ -584,16 +584,22 @@ export function runCompiled(
 /** Mirrors the SQL ordering of single-statement queries (compiler.orderClause). */
 function sortRows(rows: ResultRow[], compiled: CompiledQuery): ResultRow[] {
   const metric = compiled.metrics[0];
-  const dimKey = compiled.groupKeys[0];
-  if (metric === undefined || dimKey === undefined) return rows;
+  const keys = compiled.groupKeys;
+  if (metric === undefined || keys.length === 0) return rows;
+  const byKeys = (a: ResultRow, b: ResultRow, from: number): number => {
+    for (const key of keys.slice(from)) {
+      const order = compareValues(a[key], b[key]);
+      if (order !== 0) return order;
+    }
+    return 0;
+  };
   rows.sort((a, b) => {
     if (compiled.hasBucket) {
       const byBucket = compareValues(a.bucket, b.bucket);
-      if (byBucket !== 0 || compiled.groupKeys.length === 1) return byBucket;
-      return compareMetric(a[metric], b[metric]);
+      if (byBucket !== 0 || keys.length === 1) return byBucket;
+      return compareMetric(a[metric], b[metric]) || byKeys(a, b, 1);
     }
-    const byMetric = compareMetric(a[metric], b[metric]);
-    return byMetric !== 0 ? byMetric : compareValues(a[dimKey], b[dimKey]);
+    return compareMetric(a[metric], b[metric]) || byKeys(a, b, 0);
   });
   return rows;
 }

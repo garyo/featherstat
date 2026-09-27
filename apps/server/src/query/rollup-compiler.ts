@@ -94,19 +94,19 @@ export function compileRollupMetricQuery(
   globalFilters: readonly FilterNode[],
   windows: readonly SiteWindow[],
 ): CompiledQuery {
-  if (query.dim2 !== undefined) throw new Error('a dim2 query reached the rollup compiler');
   const filters = [...globalFilters, ...(query.filters ?? [])];
   const leaves = filters.flatMap(filterLeaves);
 
   // The single rolled dimension in play (planner rule: at most one), and
   // whether this is an hour shape (rollup_traffic_hour, which has no dim rows).
-  const rolledDim = [query.dim, ...leaves.map((leaf) => leaf.dim)].find(
+  const rolledDim = [query.dim, query.dim2, ...leaves.map((leaf) => leaf.dim)].find(
     (dim): dim is BaseDimension =>
       dim !== undefined && !isPropDimension(dim) && typeof ROLLUP_DIMS[dim] === 'object',
   );
   const hourShape =
     query.bucket === 'hour' ||
     query.dim === 'local_hour' ||
+    query.dim2 === 'local_hour' ||
     leaves.some((l) => l.dim === 'local_hour');
 
   const blockers = tableBlockers(query, filters);
@@ -120,10 +120,7 @@ export function compileRollupMetricQuery(
     else assigned.push(metric);
   }
 
-  const groupKeys: string[] = [];
-  if (query.bucket !== undefined) groupKeys.push('bucket');
-  if (query.dim !== undefined) groupKeys.push(query.dim);
-
+  const groupKeys = groupKeysOf(query);
   const single = byTable.size === 1;
   const statements: CompiledStatement[] = [];
   for (const [table, tableMetrics] of byTable) {
@@ -137,6 +134,7 @@ export function compileRollupMetricQuery(
       buildStatement(source, table, tableMetrics, query, filters, rolledDim, windows, {
         orderAndLimit: single,
         firstMetric: metrics[0],
+        groupKeys,
       }),
     );
   }
@@ -155,6 +153,15 @@ export function compileRollupMetricQuery(
 interface StatementOptions {
   orderAndLimit: boolean;
   firstMetric: Metric | undefined;
+  groupKeys: readonly string[];
+}
+
+/** The raw compiler's group order: bucket, then `dim`, then `dim2`. */
+function groupKeysOf(query: CompilableMetricQuery): string[] {
+  const keys: string[] = [];
+  if (query.bucket !== undefined) keys.push('bucket');
+  for (const dim of [query.dim, query.dim2]) if (dim !== undefined) keys.push(dim);
+  return keys;
 }
 
 function buildStatement(
@@ -171,11 +178,11 @@ function buildStatement(
   const metricSql = table === 'sessions' ? SESSION_METRIC_SQL : EVENT_METRIC_SQL;
 
   const select: string[] = [];
-  const groupCount = (query.bucket !== undefined ? 1 : 0) + (query.dim !== undefined ? 1 : 0);
   if (query.bucket !== undefined) select.push(`${BUCKET_EXPRS[query.bucket]} AS "bucket"`);
-  if (query.dim !== undefined) {
-    select.push(`${keyExpr(query.dim, source, rolledDim).sql} AS "${query.dim}"`);
+  for (const dim of [query.dim, query.dim2]) {
+    if (dim !== undefined) select.push(`${keyExpr(dim, source, rolledDim).sql} AS "${dim}"`);
   }
+  const groupCount = options.groupKeys.length;
   for (const metric of metrics) {
     const sql = metricSql[metric];
     if (sql === undefined)
@@ -185,11 +192,19 @@ function buildStatement(
 
   const where: string[] = [];
   // The dimension-table statements read one rolled group's rows: the query's
-  // rolled dimension, or the undimensioned dim_id 0 totals. A server constant,
-  // bound anyway (invariant 9's posture).
+  // rolled dimension (a server constant, bound anyway — invariant 9's
+  // posture), or the undimensioned totals. Those are written as the literal
+  // the partial covering index `…_total` is defined over (migration 105):
+  // SQLite chooses a partial index only when the query implies its WHERE, and
+  // a bound value implies it only through a STAT4 re-prepare — a plan this
+  // hot should not depend on how the library was compiled.
   if (source !== 'rollup_traffic_hour') {
-    where.push(`${ALIAS}.dim_id = ?`);
-    params.push(rolledDim === undefined ? NO_DIM_ID : dimIdOf(rolledDim));
+    if (rolledDim === undefined) {
+      where.push(`${ALIAS}.dim_id = ${NO_DIM_ID}`);
+    } else {
+      where.push(`${ALIAS}.dim_id = ?`);
+      params.push(dimIdOf(rolledDim));
+    }
   }
   for (const node of filters) where.push(filterNodeSql(node, source, rolledDim, params));
 
@@ -204,10 +219,7 @@ function buildStatement(
     lines.push(`GROUP BY ${Array.from({ length: groupCount }, (_, i) => i + 1).join(', ')}`);
   }
   if (options.orderAndLimit) {
-    const groupKeys: string[] = [];
-    if (query.bucket !== undefined) groupKeys.push('bucket');
-    if (query.dim !== undefined) groupKeys.push(query.dim);
-    const order = orderClause(groupKeys, options.firstMetric);
+    const order = orderClause(options.groupKeys, options.firstMetric);
     if (order !== null) lines.push(order);
     if (query.limit !== undefined) {
       lines.push('LIMIT ?');

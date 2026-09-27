@@ -373,10 +373,11 @@ function tableOrder(spec: MetricSpec): readonly Table[] {
 export function queryMeasures(compiled: CompiledQuery): Measures {
   const measures: Measures = {};
   for (const statement of compiled.statements) {
-    for (const metric of statement.metrics) {
+    for (const column of statement.metrics) {
       // Goal statements carry `goal:` keys, whose measures the executor
       // declares itself (query/goals.ts) — only built-ins are described here.
-      if (isBuiltinMetric(metric)) measures[metric] = measureOf(metric, statement.table);
+      const metric = statement.sources?.[column] ?? column;
+      if (isBuiltinMetric(metric)) measures[column] = measureOf(metric, statement.table);
     }
   }
   return measures;
@@ -494,6 +495,8 @@ export interface CompiledStatement {
   /** The result columns this statement answers, each aliased to its own name in
    * the row: built-in metrics, or `goal:` keys on a goal statement. */
   metrics: readonly string[];
+  /** Columns that answer a built-in metric under another key, by column. */
+  sources?: Readonly<Record<string, Metric>>;
   /** The routing decision: which table this statement aggregates over. */
   table: Table;
 }
@@ -640,20 +643,20 @@ export interface GoalStatementSpec {
 
 /**
  * One goal's statement: `COUNT(DISTINCT e.session_id)` over non-ping events
- * matching the goal's filters AND the request's, grouped exactly like the
- * query so the executor's merge joins rows on the same keys. Events table
- * only — a completion is an event, and the day it lands in is the completing
- * EVENT's local date (docs/04 § 3 states this deliberate simplification).
+ * matching the goal's filters AND the request's AND the query's own, grouped
+ * exactly like the query so the executor's merge joins rows on the same keys.
+ * Events table only — a completion is an event, and the day it lands in is the
+ * completing EVENT's local date (docs/04 § 3 states this deliberate simplification).
  * The goal's stored AST compiles through the same `filterNodeSql` as every
  * client filter (invariant 9): identifiers from `DIMS`, every value bound.
  */
 export function compileGoalStatement(
   goal: GoalStatementSpec,
-  query: Pick<CompilableMetricQuery, 'dim' | 'dim2' | 'bucket'>,
+  query: Pick<CompilableMetricQuery, 'dim' | 'dim2' | 'bucket' | 'filters'>,
   requestFilters: readonly FilterNode[],
   windows: readonly SiteWindow[],
 ): CompiledStatement | CompileError {
-  const allFilters = [...requestFilters, ...goal.filters];
+  const allFilters = [...requestFilters, ...(query.filters ?? []), ...goal.filters];
   const invalid = invalidLeaf(allFilters.flatMap(filterLeaves));
   if (invalid !== undefined) return invalid;
 
@@ -690,6 +693,38 @@ export function compileGoalStatement(
     lines.push(`GROUP BY ${Array.from({ length: groupCount }, (_, i) => i + 1).join(', ')}`);
   }
   return { sql: lines.join('\n'), params, metrics, table: 'events' };
+}
+
+/**
+ * A goal's `cr` denominator under a multi-site scope (docs/04 § 3): the
+ * query's ordinary `visits`, restricted to the goal's own site and answered
+ * as `key`. Conversions only ever come from that site, so dividing them by
+ * every site's visits would report a fraction of a rate.
+ */
+export function compileSiteVisits(
+  key: string,
+  siteId: number,
+  query: Pick<CompilableMetricQuery, 'dim' | 'dim2' | 'bucket' | 'filters'>,
+  requestFilters: readonly FilterNode[],
+  windows: readonly SiteWindow[],
+): CompiledStatement | CompileError {
+  const siteLeaf: FilterLeaf = { dim: 'site', op: 'eq', value: String(siteId) };
+  const filters = [...requestFilters, ...(query.filters ?? []), siteLeaf];
+  const invalid = invalidLeaf(filters.flatMap(filterLeaves));
+  if (invalid !== undefined) return invalid;
+  const table = routeTable('visits', tableBlockers(query, filters));
+  if (table === null) {
+    return unsupported("a goal's cr divides by visits, which this query's shape cannot answer");
+  }
+  return buildStatement(
+    table,
+    ['visits'],
+    queryGroups(query),
+    filters,
+    windows,
+    { orderAndLimit: false, firstMetric: undefined, limit: undefined },
+    { visits: key },
+  );
 }
 
 function pickTable(spec: MetricSpec, sessionsUsable: boolean, eventsUsable: boolean): Table | null {
@@ -765,7 +800,10 @@ function buildStatement(
   filters: readonly FilterNode[],
   windows: readonly SiteWindow[],
   options: StatementOptions,
+  /** Result columns answered under a key other than the metric's own. */
+  renamed: Partial<Record<Metric, string>> = {},
 ): CompiledStatement {
+  const columnOf = (metric: Metric): string => renamed[metric] ?? metric;
   const alias = table === 'events' ? 'e' : 's';
   const params: (string | number)[] = [];
 
@@ -781,7 +819,7 @@ function buildStatement(
     const spec = METRICS[metric][table];
     if (spec === undefined) throw new Error(`'${metric}' was routed to a table it cannot answer`);
     const expr = metricSql(spec, alias);
-    select.push(`${expr.sql} AS "${metric}"`);
+    select.push(`${expr.sql} AS "${columnOf(metric)}"`);
     params.push(...expr.params);
   }
 
@@ -805,20 +843,32 @@ function buildStatement(
       params.push(options.limit);
     }
   }
-  return { sql: lines.join('\n'), params, metrics, table };
+  const sources = metrics
+    .filter((metric) => renamed[metric] !== undefined)
+    .map((metric) => [columnOf(metric), metric] as const);
+  return {
+    sql: lines.join('\n'),
+    params,
+    metrics: metrics.map(columnOf),
+    table,
+    ...(sources.length > 0 ? { sources: Object.fromEntries(sources) } : {}),
+  };
 }
 
-/** Buckets read in time order; breakdowns lead with the first metric, ties in group order.
+/** Buckets read in time order; breakdowns lead with the first metric, ties broken
+ * on every group column in order, so a LIMIT cuts at one deterministic row.
  * Shared with the rollup compiler: both stores must return rows in the same order. */
 export function orderClause(
   groupKeys: readonly string[],
   firstMetric: Metric | undefined,
 ): string | null {
   if (groupKeys.length === 0 || firstMetric === undefined) return null;
+  const positions = groupKeys.map((_, i) => i + 1);
   if (groupKeys[0] === 'bucket') {
-    return groupKeys.length === 1 ? 'ORDER BY 1' : `ORDER BY 1, "${firstMetric}" DESC`;
+    if (groupKeys.length === 1) return 'ORDER BY 1';
+    return `ORDER BY 1, "${firstMetric}" DESC, ${positions.slice(1).join(', ')}`;
   }
-  return `ORDER BY "${firstMetric}" DESC, 1`;
+  return `ORDER BY "${firstMetric}" DESC, ${positions.join(', ')}`;
 }
 
 /** The one refusal a well-typed tree can still earn: a list value on a single-value op. */
@@ -866,12 +916,22 @@ export function filterNodeSql(
 
 /**
  * A session-scoped leaf: "the session containing this row has ≥1 non-ping event
- * matching the predicate". On the sessions table that is a correlated EXISTS
- * riding ix_events_session; on the events table, a semi-join through the same
- * bounds CTE the statement already scopes with — so the subquery walks the
- * window, never all history. The predicate itself always reads the events
- * table (aliased e2), which is what lets an event-only dimension like `path`
- * scope a session-shaped question honestly.
+ * matching the predicate" — ANY of the session's events, not only those inside
+ * the window (docs/04 § 3), so the two tables agree about a session that
+ * crosses a window edge: a visit the sessions table counts never loses its
+ * pageviews on the events table because the matching hit fell outside.
+ *
+ * On the sessions table that is a correlated EXISTS riding ix_events_session.
+ * On the events table it is a semi-join in two halves: the sessions with a
+ * match inside the window (the window scan the statement makes anyway), plus
+ * the sessions reaching past the window whose match lies outside it. Those
+ * second ones are few and findable cheaply: consecutive events of a session
+ * are at most `SESSION_REVIVAL_MS` apart (docs/03), far less than a local day,
+ * so a session with events on both sides of an edge has one ON the edge's
+ * date. Only the sessions touching the two edge dates are re-read whole —
+ * never all history, and not every session of a 90-day window. The predicate
+ * itself always reads the events table (aliased e2/e4), which is what lets an
+ * event-only dimension like `path` scope a session-shaped question honestly.
  */
 function sessionLeafSql(
   leaf: FilterLeaf,
@@ -879,27 +939,34 @@ function sessionLeafSql(
   windows: readonly SiteWindow[],
   params: (string | number)[],
 ): string {
+  const edgeSessions =
+    'SELECT e3.session_id FROM events e3 JOIN bounds ON e3.site_id = bounds.site_id ' +
+    'AND e3.local_date IN (bounds.from_date, bounds.to_date)';
   // A session-only dimension (entry/exit page) IS a session attribute — there
   // is no event to range over. On the sessions table the leaf reads the column
-  // directly; on the events table it reaches the session through the same
-  // bounds CTE, so the subquery walks the window, never all history.
+  // directly; on the events table it reads the sessions that started in the
+  // window, plus those reaching into it from before.
   if (sessionOnlyDimension(leaf.dim)) {
-    const pred = filterSql(leaf, 'sessions', params);
-    if (table === 'sessions') return `(${pred})`;
+    if (table === 'sessions') return `(${filterSql(leaf, 'sessions', params)})`;
+    const started = filterSql(leaf, 'sessions', params);
+    const reaching = filterSql(leaf, 'sessions', params);
     return [
-      'e.session_id IN (SELECT s.id',
-      `FROM ${boundsJoin('sessions', windows)}`,
-      `WHERE ${pred})`,
+      `e.session_id IN (SELECT s.id FROM ${boundsJoin('sessions', windows)} WHERE ${started}`,
+      `UNION SELECT s.id FROM sessions s WHERE ${reaching} AND s.id IN (${edgeSessions}))`,
     ].join(' ');
   }
-  const pred = filterSql(leaf, 'events', params, 'e2');
   if (table === 'sessions') {
+    const pred = filterSql(leaf, 'events', params, 'e2');
     return `EXISTS (SELECT 1 FROM events e2 WHERE e2.session_id = s.id AND e2.type != 'ping' AND ${pred})`;
   }
+  const inside = filterSql(leaf, 'events', params, 'e2');
+  const anywhere = filterSql(leaf, 'events', params, 'e4');
   return [
     'e.session_id IN (SELECT e2.session_id',
     `FROM ${boundsJoin('events', windows, 'e2')}`,
-    `WHERE e2.type != 'ping' AND ${pred})`,
+    `WHERE e2.type != 'ping' AND ${inside}`,
+    `UNION SELECT e4.session_id FROM events e4 WHERE e4.type != 'ping' AND ${anywhere}`,
+    `AND e4.session_id IN (${edgeSessions}))`,
   ].join(' ');
 }
 

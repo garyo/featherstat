@@ -25,8 +25,8 @@ export const SESSION_TIMEOUT_MS = 30 * 60_000;
  * may reach to revive the visitor's own last session instead of opening a new one.
  * A ping is a continuation signal, so the reader who leaves a tab open over lunch
  * and comes back is continuing a visit, not starting one; past this they are
- * arriving. `visitor_id` rotates at 00:00 UTC, so the effective reach is always
- * `min(this, time since the last UTC midnight)`.
+ * arriving. `visitor_id` rotates at site-local midnight, so the effective reach is always
+ * `min(this, time since the site's last local midnight)`.
  */
 export const SESSION_REVIVAL_MS = 4 * 60 * 60_000;
 /** A session with less engaged time than this (and 1 pageview, no events) is a bounce. */
@@ -314,22 +314,37 @@ export const EVENT_ONLY_METRICS = [
   'event_value_sum',
 ] as const satisfies readonly Metric[];
 
-export const MetricQuerySchema = z.object({
-  id: z.string().min(1).max(64),
-  /** Built-in metrics plus `d:<name>` references to stored derived metrics and
-   * `goal:<id>:<aspect>` goal metrics (docs/04 § 3). The cap counts what was
-   * ASKED for; a derived metric's components ride under a separate internal
-   * ceiling in the executor. */
-  metrics: z
-    .array(z.union([MetricSchema, DerivedMetricRefSchema, GoalMetricRefSchema]))
-    .min(1)
-    .max(MAX_METRICS_PER_QUERY),
-  dim: DimensionSchema.optional(),
-  dim2: DimensionSchema.optional(),
-  bucket: BucketSchema.optional(),
-  filters: FiltersSchema.optional(),
-  limit: z.number().int().min(1).max(1000).optional(),
-});
+export const MetricQuerySchema = z
+  .object({
+    id: z.string().min(1).max(64),
+    /** Built-in metrics plus `d:<name>` references to stored derived metrics and
+     * `goal:<id>:<aspect>` goal metrics (docs/04 § 3). The cap counts what was
+     * ASKED for; a derived metric's components ride under a separate internal
+     * ceiling in the executor. */
+    metrics: z
+      .array(z.union([MetricSchema, DerivedMetricRefSchema, GoalMetricRefSchema]))
+      .min(1)
+      .max(MAX_METRICS_PER_QUERY),
+    dim: DimensionSchema.optional(),
+    dim2: DimensionSchema.optional(),
+    bucket: BucketSchema.optional(),
+    filters: FiltersSchema.optional(),
+    limit: z.number().int().min(1).max(1000).optional(),
+  })
+  .superRefine((query, ctx) => {
+    // Bucketed rows order by time first, so a LIMIT would keep the earliest
+    // buckets rather than the top groups — a truncation that reads as data.
+    const dimensioned = query.dim !== undefined || query.dim2 !== undefined;
+    if (query.limit !== undefined && query.bucket !== undefined && dimensioned) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['limit'],
+        message:
+          "'limit' cannot combine with 'bucket' and a dimension: it would cut by time, " +
+          'keeping only the earliest buckets — drop the limit or the bucket',
+      });
+    }
+  });
 export type MetricQuery = z.infer<typeof MetricQuerySchema>;
 
 /** Sequence queries (journeys, docs/04): shapes that don't fit metric × dimension. */
@@ -459,10 +474,32 @@ const isoDate = z
 export const RangePresetSchema = z.enum(['today', '24h', '7d', '30d', '90d', 'mtd']);
 export type RangePreset = z.infer<typeof RangePresetSchema>;
 
-export const RangeSchema = z.union([
-  z.object({ preset: RangePresetSchema }),
-  z.object({ from: isoDate, to: isoDate }),
-]);
+/**
+ * The longest explicit `{from, to}` window, in inclusive days — ten years. The
+ * presets top out at 90 days; this bounds what one custom range can ask of a
+ * worker, because a statement the pool times out still runs to completion
+ * (better-sqlite3 cannot interrupt one), so an unbounded range is unbounded
+ * work nobody can cancel.
+ */
+export const MAX_RANGE_DAYS = 3_653;
+
+/** An explicit inclusive local-date window: ordered, and no longer than `MAX_RANGE_DAYS`. */
+const DateSpanSchema = z.object({ from: isoDate, to: isoDate }).superRefine((span, ctx) => {
+  if (span.from > span.to) {
+    ctx.addIssue({ code: 'custom', path: ['to'], message: "'to' must not be before 'from'" });
+    return;
+  }
+  const days = (Date.parse(`${span.to}T00:00:00Z`) - Date.parse(`${span.from}T00:00:00Z`)) / DAY_MS;
+  if (days + 1 > MAX_RANGE_DAYS) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['to'],
+      message: `an explicit range spans at most ${MAX_RANGE_DAYS} days`,
+    });
+  }
+});
+
+export const RangeSchema = z.union([z.object({ preset: RangePresetSchema }), DateSpanSchema]);
 export type Range = z.infer<typeof RangeSchema>;
 
 /**
@@ -476,7 +513,7 @@ export type Range = z.infer<typeof RangeSchema>;
 export const CompareSchema = z.union([
   z.enum(['previous', 'year']),
   z.object({ segment: z.number().int().positive() }),
-  z.object({ from: isoDate, to: isoDate }),
+  DateSpanSchema,
 ]);
 export type Compare = z.infer<typeof CompareSchema>;
 

@@ -23,9 +23,11 @@ import {
   withWriteTransaction,
 } from '../db/index.ts';
 import { executeQueryRequest, resolveSiteWindows, UnknownSiteError } from '../query/executor.ts';
-import { expandSegments, resolveDerived } from '../query/stored.ts';
+import { PoolSaturatedError } from '../query/pool/pool.ts';
+import { expandSegments, resolveDerived, resolveGoals } from '../query/stored.ts';
 import { parseDashboardId, siteOf, writableBy } from './dashboards.ts';
-import { windowTag } from './query.ts';
+import { batchEtag, canonicalize, ifNoneMatchHits, withRegistryVersions } from './etag.ts';
+import type { ExecuteQuery } from './query.ts';
 import { clientIp } from './track.ts';
 
 /**
@@ -47,12 +49,13 @@ const TOKEN_SHAPE = /^[A-Za-z0-9_-]{43}$/;
 const DEFAULT_SHARE_RANGE = '30d';
 
 /**
- * The one public route that executes a query batch — and better-sqlite3 is
- * synchronous, so each execution briefly owns the event loop that also answers
- * ingest (CLAUDE.md invariant 4). These budgets cap what a link holder can make
- * the server compute: enough for a roomful of people opening a link at once,
- * nowhere near enough to keep the loop saturated. 304 revalidations are free —
- * only executed batches are counted.
+ * The one public route that executes a query batch. It runs through the same
+ * `ExecuteQuery` seam as `/api/query` — the worker pool in production, so a
+ * heavy batch never holds the event loop that answers ingest (CLAUDE.md
+ * invariant 4) — but a pool worker is still finite. These budgets cap what a
+ * link holder can make the server compute: enough for a roomful of people
+ * opening a link at once, nowhere near enough to keep the pool saturated. 304
+ * revalidations are free — only executed batches are counted.
  */
 const SHARE_BATCHES_PER_IP = 30;
 const SHARE_BATCHES_GLOBAL = 240;
@@ -65,7 +68,20 @@ export interface ShareView {
   meta: QueryResponse['meta'];
 }
 
-export function createShareRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
+export interface ShareRouteOptions {
+  /** How a batch runs: inline by default, on the read pool in main.ts. */
+  execute?: ExecuteQuery;
+}
+
+export function createShareRoutes(
+  db: Db,
+  auth: Auth,
+  options: ShareRouteOptions = {},
+): Hono<AuthEnv> {
+  const execute: ExecuteQuery =
+    options.execute ??
+    ((request, now, allowedSites, derived, goals) =>
+      executeQueryRequest(db, request, { now, allowedSites, derived, goals }));
   const app = new Hono<AuthEnv>();
   const ipBatches = new RateLimiter(SHARE_BATCHES_PER_IP, SHARE_WINDOW_MS);
   const globalBatches = new RateLimiter(SHARE_BATCHES_GLOBAL, SHARE_WINDOW_MS);
@@ -110,7 +126,7 @@ export function createShareRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
     return c.json({ revoked });
   });
 
-  app.get('/share/:token', (c) => {
+  app.get('/share/:token', async (c) => {
     const raw = c.req.param('token');
     // Unknown, revoked and malformed all answer identically — a probe learns nothing.
     if (!TOKEN_SHAPE.test(raw)) return unknownLink(c);
@@ -164,6 +180,7 @@ export function createShareRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
     }
     const request = expansion.request;
     const derived = resolveDerived(db, request);
+    const goals = resolveGoals(db, request);
 
     const now = Date.now();
     let windows: SiteWindow[];
@@ -176,26 +193,28 @@ export function createShareRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
 
     // ETag exactly like /api/query, with the dashboard's identity and edit time
     // folded in — a layout change must expire caches even when data didn't move.
-    const canonical = canonicalize({
-      id: dashboard.id,
-      updatedAt: dashboard.updated_at,
-      request,
-      derived,
-    });
+    const canonical = withRegistryVersions(
+      db,
+      canonicalize({ id: dashboard.id, updatedAt: dashboard.updated_at, request, derived, goals }),
+    );
     const schema = schemaVersion(db);
-    const current = etag(dataVersion(db), schema, canonical, windows, now);
-    if (anyMatch(c.req.header('if-none-match'), current)) {
+    const current = batchEtag(dataVersion(db), schema, canonical, windows, now);
+    if (ifNoneMatchHits(c.req.header('if-none-match'), current)) {
       return c.body(null, 304, cacheHeaders(current));
     }
 
     if (!ipBatches.allow(clientIp(c), auth.now()) || !globalBatches.allow('*', auth.now())) {
-      return c.json({ error: 'too many requests — try again in a minute' }, 429, {
-        'Retry-After': '60',
-      });
+      return tooManyRequests(c);
     }
 
-    const response = executeQueryRequest(db, request, { now, derived });
-    const tag = etag(response.meta.dataVersion, schema, canonical, windows, now);
+    let response: QueryResponse;
+    try {
+      response = await execute(request, now, undefined, derived, goals);
+    } catch (error) {
+      if (error instanceof PoolSaturatedError) return tooManyRequests(c);
+      throw error;
+    }
+    const tag = batchEtag(response.meta.dataVersion, schema, canonical, windows, now);
     const body: ShareView = {
       dashboard: layout,
       results: response.results,
@@ -226,6 +245,12 @@ function sha256(token: string): Buffer {
   return createHash('sha256').update(token).digest();
 }
 
+function tooManyRequests(c: Context): Response {
+  return c.json({ error: 'too many requests — try again in a minute' }, 429, {
+    'Retry-After': String(SHARE_WINDOW_MS / 1000),
+  });
+}
+
 function unknownLink(c: Context): Response {
   return c.json({ error: 'unknown share link' }, 404);
 }
@@ -233,37 +258,4 @@ function unknownLink(c: Context): Response {
 /** The token rides in the URL: shared caches must never store what it unlocks. */
 function cacheHeaders(tag: string): Record<string, string> {
   return { ETag: tag, 'Cache-Control': 'private, no-cache' };
-}
-
-// ETag construction matching routes/query.ts — same inputs, same strong-hash shape.
-
-function anyMatch(ifNoneMatch: string | undefined, current: string): boolean {
-  if (ifNoneMatch === undefined) return false;
-  return ifNoneMatch.split(',').some((candidate) => candidate.trim() === current);
-}
-
-function etag(
-  version: number,
-  schema: number,
-  canonicalBody: string,
-  windows: readonly SiteWindow[],
-  now: number,
-): string {
-  const hash = createHash('sha256')
-    .update(`${version}|${schema}|${canonicalBody}|${windowTag(windows, now)}`)
-    .digest('base64url');
-  return `"${hash}"`;
-}
-
-/** JSON with object keys sorted, so key order alone can never produce a distinct ETag. */
-function canonicalize(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalize).join(',')}]`;
-  if (typeof value === 'object' && value !== null) {
-    const parts = Object.entries(value)
-      .filter(([, v]) => v !== undefined)
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-      .map(([k, v]) => `${JSON.stringify(k)}:${canonicalize(v)}`);
-    return `{${parts.join(',')}}`;
-  }
-  return JSON.stringify(value);
 }

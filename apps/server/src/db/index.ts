@@ -976,6 +976,20 @@ export function replaceCampaignAliases(
   for (const row of rows) insert.run(siteId, row.field, row.alias, row.canonical);
 }
 
+// The campaigns registry is read at QUERY time (`campaign_status`,
+// query/compiler.ts), so an edit changes answers without moving `dataVersion`.
+// Every registry write bumps `campaigns_version` in its own transaction, and
+// requests that use the dimension hash it into their ETag (routes/etag.ts).
+const CAMPAIGNS_VERSION_SETTING = 'campaigns_version';
+
+export function campaignsVersion(db: Db): number {
+  return Number(getSetting(db, CAMPAIGNS_VERSION_SETTING) ?? 0);
+}
+
+function bumpCampaignsVersion(db: Db): void {
+  setSetting(db, CAMPAIGNS_VERSION_SETTING, String(campaignsVersion(db) + 1));
+}
+
 export interface CampaignRow {
   id: number;
   site_id: number;
@@ -1025,6 +1039,7 @@ export function createCampaign(db: Db, row: NewCampaign): CampaignRow {
     row.notes,
     row.created_at,
   );
+  bumpCampaignsVersion(db);
   return { id: Number(info.lastInsertRowid), ...row };
 }
 
@@ -1034,7 +1049,7 @@ export function updateCampaign(
   patch: Omit<NewCampaign, 'site_id' | 'created_at'>,
 ): CampaignRow | undefined {
   assertWritable(db);
-  return stmt<CampaignRow>(db, SQL_UPDATE_CAMPAIGN).get(
+  const row = stmt<CampaignRow>(db, SQL_UPDATE_CAMPAIGN).get(
     patch.name,
     patch.expected_sources,
     patch.expected_mediums,
@@ -1043,11 +1058,15 @@ export function updateCampaign(
     patch.notes,
     id,
   );
+  if (row !== undefined) bumpCampaignsVersion(db);
+  return row;
 }
 
 export function deleteCampaign(db: Db, id: number): boolean {
   assertWritable(db);
-  return stmt(db, SQL_DELETE_CAMPAIGN).run(id).changes > 0;
+  const deleted = stmt(db, SQL_DELETE_CAMPAIGN).run(id).changes > 0;
+  if (deleted) bumpCampaignsVersion(db);
+  return deleted;
 }
 
 // ---------------------------------------------------------------------------

@@ -171,7 +171,7 @@ export type Unit = 'count' | 'ms' | 'rate' | 'value';
  * - `sum` — additive: the total is the sum of its buckets.
  * - `distinct` — a distinct count. NOT additive: one person active on two days
  *   is one visitor overall and two across buckets, and the visitor id is salted
- *   per UTC day besides (docs/03 § Visitor identity). It has no total to
+ *   per site-local day besides (docs/03 § Visitor identity). It has no total to
  *   recombine, so `measureTotal` refuses to invent one.
  * - `ratio` — a quotient; re-aggregates by re-weighting on `of.denominator`.
  * - `max` — an extremum; the max of the bucket maxima.

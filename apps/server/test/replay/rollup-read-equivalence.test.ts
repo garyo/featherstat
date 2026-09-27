@@ -173,6 +173,75 @@ describe('rollup read equivalence — metric × dim × bucket over the corpus', 
 });
 
 // ---------------------------------------------------------------------------
+// Matrix C — dim × dim2 pairs: derived keys beside each other and beside one
+// rolled dimension (the overview heatmap is local_hour × weekday)
+// ---------------------------------------------------------------------------
+
+const PAIR_DIMS: readonly Dimension[] = [
+  'local_hour',
+  'weekday',
+  'site',
+  'path',
+  'country',
+  'entry_path',
+];
+
+describe('rollup read equivalence — dim × dim2 pairs', () => {
+  const shapes: Array<{ query: CompilableMetricQuery; label: string }> = [];
+  for (const metric of MetricSchema.options) {
+    for (const dim of PAIR_DIMS) {
+      for (const dim2 of PAIR_DIMS) {
+        if (dim2 === dim) continue;
+        for (const bucket of [undefined, 'day', 'hour'] as const) {
+          shapes.push({
+            query: { id: 'q', metrics: [metric], dim, dim2, bucket },
+            label: `${metric} × ${dim} × ${dim2} @ ${bucket ?? '(total)'}`,
+          });
+        }
+      }
+    }
+  }
+
+  it('every rollup-routed pair answers identically from both stores @ 90d', () => {
+    let routed = 0;
+    for (const { query, label } of shapes) {
+      if (planMetricRoute(query, [], windows90) !== 'rollup') continue;
+      routed += 1;
+      assertEquivalent(query, [], windows90, label);
+    }
+    expect(routed).toBeGreaterThan(100);
+  }, 120_000);
+
+  it('single-day windows: the distinct metrics by a pair — still identical', () => {
+    let routed = 0;
+    for (const { query, label } of shapes) {
+      if (query.bucket !== undefined) continue;
+      if (planMetricRoute(query, [], windowsOneDay) !== 'rollup') continue;
+      routed += 1;
+      assertEquivalent(query, [], windowsOneDay, `${label} (single day)`);
+    }
+    expect(routed).toBeGreaterThan(10);
+  }, 60_000);
+
+  it('a limited pair breakdown cuts at the same row from both stores', () => {
+    // Ties on the metric are broken on every group column, so the cut is one row.
+    const query: CompilableMetricQuery = {
+      id: 'q',
+      metrics: ['pageviews'],
+      dim: 'path',
+      dim2: 'weekday',
+      limit: 7,
+    };
+    expect(planMetricRoute(query, [], windows90)).toBe('rollup');
+    assertEquivalent(query, [], windows90, 'path × weekday, limit 7');
+    const rollup = runCompiled(db, compileRollupMetricQuery(query, [], windows90), windows90);
+    const raw = compileMetricQuery(query, [], windows90);
+    if (isQueryError(raw)) throw new Error('raw refused');
+    expect(rollup).toEqual(runCompiled(db, raw, windows90));
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Matrix B — filter shapes
 // ---------------------------------------------------------------------------
 
@@ -280,6 +349,23 @@ describe('planner decisions', () => {
       plan({ metrics: ['pageviews'], dim: 'path' }, [{ dim: 'path', op: 'eq', value: P }]),
     ).toBe('rollup');
     expect(plan({ metrics: ['pageviews'], dim: 'path', dim2: 'country' })).toBe('raw');
+  });
+
+  it('answers a pair of rollup keys, and one rolled dim beside them', () => {
+    // The overview heatmap.
+    expect(plan({ metrics: ['pageviews'], dim: 'local_hour', dim2: 'weekday' })).toBe('rollup');
+    expect(plan({ metrics: ['pageviews'], dim: 'weekday', dim2: 'site' })).toBe('rollup');
+    expect(plan({ metrics: ['pageviews'], dim: 'path', dim2: 'site' })).toBe('rollup');
+    expect(plan({ metrics: ['visits'], dim: 'entry_path', dim2: 'weekday' })).toBe('rollup');
+    // Hour grain has no dim rows, and no distincts or session columns.
+    expect(plan({ metrics: ['pageviews'], dim: 'path', dim2: 'local_hour' })).toBe('raw');
+    expect(plan({ metrics: ['visitors'], dim: 'local_hour', dim2: 'weekday' })).toBe('raw');
+    expect(plan({ metrics: ['visits'], dim: 'local_hour', dim2: 'weekday' })).toBe('raw');
+    // A distinct over a multi-day group sums across days — never.
+    expect(plan({ metrics: ['visitors'], dim: 'path', dim2: 'site' })).toBe('raw');
+    expect(plan({ metrics: ['visitors'], dim: 'path', dim2: 'site', bucket: 'day' })).toBe(
+      'rollup',
+    );
   });
 
   it('sends raw-only dims, session scope, and rolling windows to raw', () => {

@@ -115,6 +115,11 @@ describe('POST /api/query', () => {
     expect(res.headers.get('etag')).not.toBe(etag);
   });
 
+  it('revalidates a weakened tag too — If-None-Match compares weakly', async () => {
+    const etag = (await post(BODY)).headers.get('etag') as string;
+    expect((await post(BODY, { 'if-none-match': `W/${etag}` })).status).toBe(304);
+  });
+
   it('revalidates with 304 and executes no queries', async () => {
     const first = await post(BODY);
     const etag = first.headers.get('etag');
@@ -252,6 +257,15 @@ describe('POST /api/query', () => {
     // V8 would silently read Feb 30 as Mar 2 and shift the compare window.
     const badDay = await post({ ...BODY, range: { from: '2026-02-30', to: '2026-03-02' } });
     expect(badDay.status).toBe(400);
+  });
+
+  it('rejects a limit over a bucketed breakdown with 400 rather than truncating by time', async () => {
+    const res = await post({
+      ...BODY,
+      queries: [{ id: 'q', metrics: ['pageviews'], bucket: 'day', dim: 'path', limit: 5 }],
+    });
+    expect(res.status).toBe(400);
+    expect(JSON.stringify(await res.json())).toContain('earliest buckets');
   });
 
   it("rejects a filter whose value does not fit its op ('is_null' vs the rest)", async () => {

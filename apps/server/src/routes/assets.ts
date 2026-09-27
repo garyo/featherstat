@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Hono } from 'hono';
+import { ifNoneMatchHits } from './etag.ts';
 
 /** Built by `bun run --cwd packages/tracker build`. */
 const DEFAULT_DIST = fileURLToPath(new URL('../../../../packages/tracker/dist/', import.meta.url));
@@ -53,7 +54,8 @@ export function createAssetRoutes({ dir = DEFAULT_DIST }: AssetRoutesOptions = {
       const asset = load(cache, dir, file);
       if (asset === undefined) return c.text(`${file} has not been built`, 404);
       const headers = { 'Cache-Control': CACHE_CONTROL, ETag: asset.etag, ...ALLOW_ORIGIN };
-      if (matches(c.req.header('if-none-match'), asset.etag)) return c.body(null, 304, headers);
+      if (ifNoneMatchHits(c.req.header('if-none-match'), asset.etag))
+        return c.body(null, 304, headers);
       return c.body(asset.body, 200, { ...headers, 'Content-Type': CONTENT_TYPE });
     });
   }
@@ -72,9 +74,4 @@ function load(cache: Map<string, Asset>, dir: string, file: string): Asset | und
   const asset: Asset = { body, etag: `"${createHash('sha256').update(body).digest('base64url')}"` };
   cache.set(file, asset);
   return asset;
-}
-
-function matches(ifNoneMatch: string | undefined, etag: string): boolean {
-  if (ifNoneMatch === undefined) return false;
-  return ifNoneMatch.split(',').some((candidate) => candidate.trim() === etag);
 }

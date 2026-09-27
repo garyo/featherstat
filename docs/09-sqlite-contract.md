@@ -64,7 +64,7 @@ One row per stored hit — pageviews, custom events, outlinks, downloads, and
 | `site_id` · `ts` | site, UTC unix ms |
 | `local_date` · `local_hour` | `'YYYY-MM-DD'` / 0–23 in the site's zone, computed at ingest — calendar queries are string comparisons, no tz math needed |
 | `type` | `'pageview' \| 'event' \| 'outlink' \| 'download' \| 'ping'` |
-| `visitor_id` | 8 bytes, rotates at 00:00 UTC (docs/03 § Visitor identity) — never sum distincts across days |
+| `visitor_id` | 8 bytes, rotates at site-local midnight (docs/03 § Visitor identity) — never sum distincts across days |
 | `session_id` · `seq` | visit id and this row's 1-based position in it |
 | `hostname` · `path` · `title` | the page; `target_url` the outlink/download destination |
 | `ref_domain` · `ref_type` | referrer, canonicalized to eTLD+1 and classified (`'direct'\|'search'\|'social'\|'referral'\|'campaign'\|'internal'`); `ref_domain_raw` holds the received host ONLY when canonicalization changed it (docs/03 § Attribution) |

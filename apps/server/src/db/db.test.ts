@@ -133,6 +133,8 @@ describe('migrate', () => {
       'ix_events_session',
       'ix_events_site_date_visitor',
       'ix_events_site_ts',
+      'ix_rollup_dim_day_total',
+      'ix_rollup_sessions_day_total',
       'ix_sessions_open',
       'ix_sessions_site_date',
       'ix_share_tokens_dashboard',

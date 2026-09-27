@@ -686,7 +686,12 @@ The tables (see `db/migrations/100-v2-init.ts`, the authoritative DDL):
   included) so the read path emits exactly the groups a raw `GROUP BY` over
   the events table would — a key only heartbeats touched still gets its
   zero-valued row; the metrics are additive event counts over non-ping rows,
-  plus `visitors` / `sessions_touched` — **exact** per-day distincts.
+  plus `visitors` / `sessions_touched` — **exact** per-day distincts. The key
+  leads with `(site_id, local_date)` for the write path; the `dim_id 0` totals
+  every KPI tile and time series reads also sit in a partial covering index
+  (`ix_…_total`, both EAV tables), so those reads never walk the other
+  dimensions' rows. Per-dimension reads stay on the key: an index serving them
+  must carry the counters every flush rewrites (migration 105 has the numbers).
 - `rollup_sessions_day` — day grain × session-capable dimension, keyed by the
   date the session **started**. Every column is an additive numerator or
   denominator (`visits`, `measured_sessions`, `engaged_ms`, `bounced`,
@@ -749,11 +754,13 @@ and to raw the moment anything is in doubt (fail-safe: unknown dimensions,
 new ops and rolling windows are slow before they are ever wrong). The rules:
 
 - Metric-kind queries only (journeys/dwell/adjacency/distribution always walk
-  raw rows); no `dim2`; every referenced dimension rolled or derivable from
-  rollup keys (`site`, `weekday`, the bucket); grouping + filters together
-  touch at most ONE rolled dimension — rollups store marginals, not joints.
-  Filtering the same dimension a query groups by is fine (still marginal).
-- Hour shapes (`bucket: 'hour'` or the `local_hour` dimension) answer from
+  raw rows); every referenced dimension (`dim`, `dim2`, filters) rolled or
+  derivable from rollup keys (`site`, `weekday`, `local_hour`, the bucket);
+  grouping + filters together touch at most ONE rolled dimension — rollups
+  store marginals, not joints. So `local_hour × weekday` (the overview
+  heatmap) and `path × site` roll up; `path × country` does not. Filtering
+  the same dimension a query groups by is fine (still marginal).
+- Hour shapes (`bucket: 'hour'` or `local_hour` as either dimension) answer from
   `rollup_traffic_hour`, which has no dim rows, no distincts and no session
   columns: additive event metrics only, no rolled dimension in play. A SESSION
   metric by hour is answerable — sessions carry `local_hour`, the hour the
@@ -765,8 +772,12 @@ new ops and rolling windows are slow before they are ever wrong). The rules:
   and the read-equivalence suite carries a uid-stable visitor spanning days to
   prove the wrong route yields the wrong number.
 - Session metrics route to `rollup_sessions_day` unless `rollup_meta` says the
-  stored `bounced` is stale (`needs_rebuild`) — then they fall back to raw
-  until the rebuild runs, so bounce numbers are never quietly wrong.
+  stored `bounced` is stale — `needs_rebuild`, or an `engagement_threshold_ms`
+  other than the code's (the read path checks it itself: the flush path only
+  notices a changed threshold on its first apply after boot) — then they fall
+  back to raw until the rebuild runs, so bounce numbers are never quietly
+  wrong. The threshold also joins the batch ETag, so answers cached under the
+  old definition expire on the deploy that changes it.
 - The rolling `24h` preset always goes to raw: its edges cut inside local
   dates, and mapping instants onto rollup keys is DST-fraught. Correctness
   first; the shape is cheap on raw.
@@ -838,10 +849,10 @@ itself is kept entire, so a day is either complete or absent and at least
 `retention_days` of history always survive. Sessions go by their start date —
 the day their `rollup_sessions_day` row is keyed on — however late their last
 hit. At or below the floor's local date, rollup-answerable queries keep
-answering; a question only raw rows can answer (a raw-only dimension, `dim2`,
-joint filters, a cross-day distinct, session-scoped filters, the sequence
-kinds) returns an honest per-query `unsupported` error instead of partial
-numbers.
+answering; a question only raw rows can answer (a raw-only dimension, a joint
+of two rolled dimensions, joint filters, a cross-day distinct, session-scoped
+filters, the sequence kinds) returns an honest per-query `unsupported` error
+instead of partial numbers.
 
 **Rebuilds stop at the same date** (`rawCoversDay` in `rollup/rebuild.ts`):
 a per-day recompute there would replace the only surviving record of the day

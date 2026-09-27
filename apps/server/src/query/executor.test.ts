@@ -1,4 +1,5 @@
 import {
+  ENGAGEMENT_THRESHOLD_MS,
   localClock,
   type QueryRequest,
   type QueryResponse,
@@ -17,7 +18,7 @@ import {
   upsertSessions,
   withWriteTransaction,
 } from '../db/index.ts';
-import { META_RAW_HORIZON, setRollupMeta } from '../rollup/apply.ts';
+import { META_ENGAGEMENT_THRESHOLD, META_RAW_HORIZON, setRollupMeta } from '../rollup/apply.ts';
 import { executeQueryRequest, UnknownSiteError } from './executor.ts';
 
 /**
@@ -988,6 +989,140 @@ describe("the rolling '24h' window", () => {
       ).meta.windows[0];
     expect(windowAt(AT + 29 * 60_000)).toEqual(windowAt(AT));
     expect(windowAt(AT + 3_600_000)).not.toEqual(windowAt(AT));
+  });
+});
+
+/**
+ * Invariant 5 on the read side: `rollup_sessions_day.bounced` bakes in the
+ * threshold it was built under. A deploy that changes ENGAGEMENT_THRESHOLD_MS
+ * leaves `needs_rebuild` unset until the first flush notices — reads before
+ * then must already refuse the stale rollups and answer bounce from raw rows.
+ */
+describe('a changed engagement threshold on the read path', () => {
+  let stale: Db;
+  const D = '2026-07-27';
+
+  beforeAll(() => {
+    stale = openDb(':memory:');
+    withWriteTransaction(stale, () => {
+      createSite(stale, { id: 1, name: 'one', domains: ['one.test'], timezone: 'UTC' });
+      const ts = Date.parse(`${D}T12:00:00Z`);
+      insertEvents(stale, [event({ ts, local_date: D })]);
+      upsertSessions(stale, [session({ started_at: ts, last_seen_at: ts, local_date: D })]);
+    });
+    syncRollups(stale);
+    // A rollup that disagrees with raw — as one built under another threshold would.
+    withWriteTransaction(stale, () =>
+      stale.prepare('UPDATE rollup_sessions_day SET bounced = 0').run(),
+    );
+  });
+
+  const bounce = (): unknown =>
+    resultOf(
+      executeQueryRequest(stale, {
+        site: 1,
+        range: { from: D, to: D },
+        queries: [{ id: 'q', metrics: ['bounce_rate'] }],
+      }),
+      'q',
+    ).rows[0]?.bounce_rate;
+
+  it('answers bounce from raw rows while the stored threshold differs from the code', () => {
+    withWriteTransaction(stale, () =>
+      setRollupMeta(stale, META_ENGAGEMENT_THRESHOLD, String(ENGAGEMENT_THRESHOLD_MS + 1)),
+    );
+    expect(bounce()).toBe(1); // the one raw session is a bounce
+    // The guard has teeth: under the matching threshold the rollup answers.
+    withWriteTransaction(stale, () =>
+      setRollupMeta(stale, META_ENGAGEMENT_THRESHOLD, String(ENGAGEMENT_THRESHOLD_MS)),
+    );
+    expect(bounce()).toBe(0);
+  });
+});
+
+/**
+ * `scope: 'session'` asks about the whole session (docs/04 § 3), on both
+ * tables. A session crossing a window edge — here, visits that run over local
+ * midnight, as imported history can — must not be counted by the sessions
+ * table while the events table drops its pageviews because the matching hit
+ * fell outside the window.
+ */
+describe('session scope at a window edge', () => {
+  const D = '2026-07-27';
+  let edge: Db;
+
+  function seedHits(sess: number, hits: ReadonlyArray<{ at: string; path: string }>): void {
+    const rows = hits.map(({ at, path }, i) => {
+      const ts = Date.parse(at);
+      const clock = localClock('UTC', ts);
+      return event({
+        ts,
+        local_date: clock.date,
+        local_hour: clock.hour,
+        path,
+        visitor_id: binId(sess),
+        session_id: binId(sess),
+        seq: i + 1,
+      });
+    });
+    const first = rows[0];
+    if (first === undefined) return;
+    insertEvents(edge, rows);
+    upsertSessions(edge, [
+      session({
+        id: binId(sess),
+        visitor_id: binId(sess),
+        started_at: first.ts,
+        last_seen_at: rows[rows.length - 1]?.ts ?? first.ts,
+        local_date: first.local_date,
+        pageviews: rows.length,
+        entry_path: first.path ?? null,
+      }),
+    ]);
+  }
+
+  beforeAll(() => {
+    edge = openDb(':memory:');
+    withWriteTransaction(edge, () => {
+      createSite(edge, { id: 1, name: 'one', domains: ['one.test'], timezone: 'UTC' });
+      // Starts inside the window; its /pricing hit lands after it closes.
+      seedHits(1, [
+        { at: `${D}T23:50:00Z`, path: '/a' },
+        { at: `${D}T23:55:00Z`, path: '/b' },
+        { at: '2026-07-28T00:05:00Z', path: '/pricing' },
+      ]);
+      // Starts (at /pricing) before the window and reaches into it.
+      seedHits(2, [
+        { at: '2026-07-26T23:55:00Z', path: '/pricing' },
+        { at: `${D}T00:03:00Z`, path: '/c' },
+      ]);
+      // Wholly inside, never at /pricing.
+      seedHits(3, [{ at: `${D}T12:00:00Z`, path: '/a' }]);
+    });
+    syncRollups(edge);
+  });
+
+  const ask = (filter: QueryRequest['filters'], metrics: ('visits' | 'pageviews')[]) =>
+    resultOf(
+      executeQueryRequest(edge, {
+        site: 1,
+        range: { from: D, to: D },
+        filters: filter,
+        queries: [{ id: 'q', metrics }],
+      }),
+      'q',
+    ).rows;
+
+  it('counts the in-window pageviews of every session with a match anywhere', () => {
+    const pricing = [{ dim: 'path', op: 'eq', value: '/pricing', scope: 'session' }] as const;
+    // Visits: session 1 (started in the window). Pageviews: session 1's /a and
+    // /b, and session 2's /c — each session's match lies outside the window.
+    expect(ask([...pricing], ['visits', 'pageviews'])).toEqual([{ visits: 1, pageviews: 3 }]);
+  });
+
+  it('reads a session-only attribute of a session that started before the window', () => {
+    const entered = [{ dim: 'entry_path', op: 'eq', value: '/pricing', scope: 'session' }] as const;
+    expect(ask([...entered], ['pageviews'])).toEqual([{ pageviews: 1 }]);
   });
 });
 

@@ -18,6 +18,7 @@ import {
   type CompiledQuery,
   type CompileError,
   compileGoalStatement,
+  compileSiteVisits,
   unsupported,
 } from './compiler.ts';
 
@@ -41,6 +42,10 @@ import {
  * - Hour shapes refuse: distinct sessions per hour do not sum to the day
  *   (a session spans hours as a matter of course), so an hour bucket — or the
  *   `local_hour` dimension — would manufacture recombinable-looking numbers.
+ * - A goal belongs to one site. Under `site: "all"` its `cr` divides by that
+ *   site's visits alone (its own `goal:<id>:visits` column, not the query's
+ *   `visits` over every site), and a row grouped by another site reads null
+ *   for every aspect: the goal does not exist there.
  */
 
 /** The definition shape shipped across the pool protocol, keyed by decimal id.
@@ -61,11 +66,16 @@ export interface PreparedGoal {
   filters: FilterNode[];
   valueExpr: GoalValueExpr;
   aspects: ReadonlySet<GoalAspect>;
+  /** The column `cr` divides by: the query's `visits` when the request is
+   * scoped to the goal's site, else the goal's own site-restricted visits. */
+  denominator: string;
 }
 
 function keyOf(id: number, aspect: GoalAspect): string {
   return `goal:${id}:${aspect}`;
 }
+
+const SCOPE_VISITS = 'visits';
 
 /**
  * Splits a query's `goal:` refs from its other metrics and resolves each
@@ -106,15 +116,16 @@ export function prepareGoals(
       filters: parsed.data,
       valueExpr: parseGoalValueExpr(def.valueExpr),
       aspects: new Set([aspect]),
+      denominator: site === 'all' ? `goal:${id}:visits` : SCOPE_VISITS,
     });
   }
   return [...goals.values()];
 }
 
-/** True when any goal asks for `cr` — the executor then folds `visits` in as
- * the denominator, exactly as a derived metric folds its components in. */
+/** True when a goal's `cr` divides by the query's own `visits` — the executor
+ * then folds it in, exactly as a derived metric folds its components in. */
 export function goalsNeedVisits(goals: readonly PreparedGoal[]): boolean {
-  return goals.some((goal) => goal.aspects.has('cr'));
+  return goals.some((goal) => goal.aspects.has('cr') && goal.denominator === SCOPE_VISITS);
 }
 
 /**
@@ -145,13 +156,25 @@ export function goalHourRefusal(
 export function appendGoalStatements(
   compiled: CompiledQuery,
   goals: readonly PreparedGoal[],
-  query: Pick<CompilableMetricQuery, 'dim' | 'dim2' | 'bucket'>,
+  query: Pick<CompilableMetricQuery, 'dim' | 'dim2' | 'bucket' | 'filters'>,
   requestFilters: readonly FilterNode[],
   windows: readonly SiteWindow[],
 ): CompiledQuery | CompileError {
   const statements = [...compiled.statements];
   const metrics = [...compiled.metrics];
   for (const goal of goals) {
+    if (goal.aspects.has('cr') && goal.denominator !== SCOPE_VISITS) {
+      const visits = compileSiteVisits(
+        goal.denominator,
+        goal.siteId,
+        query,
+        requestFilters,
+        windows,
+      );
+      if ('error' in visits) return visits;
+      statements.push(visits);
+      metrics.push(...visits.metrics);
+    }
     const statement = compileGoalStatement(
       {
         conversionsKey: keyOf(goal.id, 'conversions'),
@@ -186,14 +209,15 @@ export function attachGoalMetrics(
     measures[conversionsKey] = { unit: 'count', population: 'actions', aggregate: 'distinct' };
     if (goal.aspects.has('cr')) {
       const crKey = keyOf(goal.id, 'cr');
+      const denominator = goal.denominator;
       applyRows(entry, (row) => {
-        row[crKey] = crOf(row[conversionsKey], row.visits);
+        row[crKey] = crOf(row[conversionsKey], row[denominator]);
       });
       measures[crKey] = {
         unit: 'rate',
         population: 'sessions',
         aggregate: 'ratio',
-        of: { numerator: conversionsKey, denominator: 'visits' },
+        of: { numerator: conversionsKey, denominator },
       };
     }
     if (goal.aspects.has('value')) {
@@ -211,6 +235,11 @@ export function attachGoalMetrics(
         measures[valueKey] = { unit: 'value', population: 'actions', aggregate: 'computed' };
       }
     }
+    const aspectKeys = [...goal.aspects].map((aspect) => keyOf(goal.id, aspect));
+    applyRows(entry, (row) => {
+      if (row.site === undefined || row.site === goal.siteId) return;
+      for (const key of [conversionsKey, ...aspectKeys]) row[key] = null;
+    });
   }
 }
 

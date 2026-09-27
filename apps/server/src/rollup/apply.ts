@@ -88,6 +88,20 @@ export function rollupNeedsRebuild(db: Db): boolean {
   return getRollupMeta(db, META_NEEDS_REBUILD) === '1';
 }
 
+/**
+ * The read side's guard (invariant 5): session metrics must not be answered
+ * from `rollup_sessions_day` while its `bounced` column is stale — a rebuild
+ * is pending, OR the stored threshold differs from the code's. The flush path
+ * only notices a changed threshold on its first apply after boot, so without
+ * the second test a deploy that changes it would serve the old bounce
+ * definition from rollups until a hit arrived.
+ */
+export function sessionRollupsStale(db: Db): boolean {
+  if (rollupNeedsRebuild(db)) return true;
+  const stored = getRollupMeta(db, META_ENGAGEMENT_THRESHOLD);
+  return stored !== undefined && Number(stored) !== ENGAGEMENT_THRESHOLD_MS;
+}
+
 /** Whether this connection may apply session rollups — resolved once, then cached. */
 const sessionRollupsBlocked = new WeakMap<Db, boolean>();
 

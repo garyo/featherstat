@@ -426,6 +426,14 @@ describe('compileMetricQuery', () => {
       'events e2 JOIN bounds ON e2.site_id = bounds.site_id\n  AND e2.local_date BETWEEN bounds.from_date AND bounds.to_date',
     );
     expect(sql).toContain("WHERE e2.type != 'ping' AND e2.path = ?");
+    // …and the whole session is asked about, through the sessions touching the
+    // window's two edge dates only — still never all history.
+    expect(sql).toContain(
+      "UNION SELECT e4.session_id FROM events e4 WHERE e4.type != 'ping' AND e4.path = ? " +
+        'AND e4.session_id IN (SELECT e3.session_id FROM events e3 JOIN bounds ON ' +
+        'e3.site_id = bounds.site_id AND e3.local_date IN (bounds.from_date, bounds.to_date))',
+    );
+    expect(compiled.statements[0]?.params.filter((p) => p === '/pricing')).toHaveLength(2);
   });
 
   it('a session-scoped event-only dim never blocks session metrics; hit scope still does', () => {

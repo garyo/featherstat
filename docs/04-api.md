@@ -293,11 +293,20 @@ A query the vocabulary cannot answer honestly (e.g. `bounce_rate` × `title`) or
 a kind that ships in a later milestone yields a per-query `error` entry — the
 batch itself still succeeds, and never returns wrong numbers.
 
+`limit` ranks groups by the first metric. A bucketed breakdown (`bucket` plus
+`dim`/`dim2`) orders by time first, so a limit there would keep the earliest
+buckets rather than the top groups; the schema refuses that combination with a
+400 instead of returning the truncated rows.
+
 - **Ranges: five calendar presets, one rolling one, or explicit dates.**
   `today` · `24h` · `7d` · `30d` · `90d` · `mtd`, or `{from, to}`. Every one of
   them resolves per site timezone (`site: "all"` resolves one window per site),
   and all but `24h` resolve to whole inclusive `local_date` bounds — the tz math
   happened at ingest, so a calendar window is a plain indexed string comparison.
+  An explicit window (range or compare) must have `from ≤ to` and span at most
+  `MAX_RANGE_DAYS` (ten years); anything else is a 400. The cap bounds what one
+  request can ask of a worker: a statement the pool times out still runs to
+  completion, because better-sqlite3 cannot interrupt one.
 
   **`24h` is the rolling one**: the last 24 hour buckets, ending with the one in
   progress. It exists because a calendar day is a bad comparison — *"'today'
@@ -389,7 +398,8 @@ batch itself still succeeds, and never returns wrong numbers.
     filters — `COUNT(DISTINCT session_id)`, compiled as one extra events-table
     statement per goal through the same filter compiler as every client filter
     and merged with the query's own statements on the group keys. Request
-    filters apply inside it, so "conversions from mobile" is just a filter.
+    filters and the query's own filters apply inside it, exactly as they apply
+    to its `visits`, so "conversions from mobile" is just a filter.
   - A conversion's **bucket is the completing event's local date** — a
     deliberate simplification from "the session's start date": the day the
     completing event happened is the honest reading of *when did this
@@ -399,6 +409,12 @@ batch itself still succeeds, and never returns wrong numbers.
   - **`cr`** = conversions / `visits`, declared as a proper `ratio`
     (`of: {numerator, denominator: "visits"}`); the denominator joins the
     compiled set and rides in the rows like a derived metric's components.
+    A goal belongs to one site, so under `site: "all"` the denominator is
+    that site's visits alone: an extra `goal:<id>:visits` column (the ordinary
+    `visits` statement plus `site = <goal's site>`), identified by `of.denominator`
+    so a client re-aggregating buckets divides by the same population. Grouped
+    by `site`, every aspect of the goal reads `null` on another site's row —
+    the goal does not exist there, which is not the same as zero.
   - **`value`** follows the goal's `valueExpr`: `SUM(event_value)` over the
     matching events (`aggregate: "sum"`), fixed × conversions
     (`aggregate: "computed"` — no lawful total), or `null` when the goal
@@ -510,7 +526,7 @@ batch itself still succeeds, and never returns wrong numbers.
     when the result carries both. `max` takes the extremum. **`distinct` has no
     total across buckets at all** and refuses to produce one: a visitor active
     on two days is one visitor and two visitor-days, and the id salt rotates at
-    00:00 UTC besides (03 § Visitor identity). `measureTotal` in
+    site-local midnight besides (03 § Visitor identity). `measureTotal` in
     `packages/shared` returns `undefined` for it, so under TS strict a caller
     must say what it does instead of quietly shipping a number that contradicts
     the same label one screen over.
@@ -551,7 +567,12 @@ batch itself still succeeds, and never returns wrong numbers.
   pattern bound as a parameter, length- and wildcard-capped), and `is_null`
   (no value — matches the NULL group a breakdown returns, e.g. direct traffic
   under `ref_domain`). The compiler maps this vocabulary to parameterized SQL;
-  anything outside it is a 400.
+  anything outside it is a 400. A leaf's `scope` is `hit` (the default: the row
+  itself matches) or `session`: the row's session has ≥ 1 non-ping event
+  matching the leaf — ANY of its events, inside the window or not, on both
+  tables. So a session crossing a window edge is judged the same way whether a
+  session metric (`visits`) or an event metric (`pageviews`) asks, and a visit
+  is never counted while its pageviews are dropped.
 - **Which store answers is invisible.** Per query, the planner
   (`query/planner.ts`, rules in 03 § Rollups) routes eligible metric shapes to
   the rollup tables and everything else to raw rows. The wire never says
@@ -559,8 +580,9 @@ batch itself still succeeds, and never returns wrong numbers.
   construction (a read-equivalence ratchet holds both stores row-for-row
   equal). One visible edge exists — the retention raw floor: once
   `retention_days` has pruned old raw rows, a query only raw rows can answer
-  (a raw-only dimension like `title`, `dim2`, joint filters, a cross-day
-  distinct, session-scoped filters, the sequence kinds) refuses a window
+  (a raw-only dimension like `title`, two rolled dimensions grouped or filtered
+  together, a cross-day distinct, session-scoped filters, the sequence kinds)
+  refuses a window
   reaching below the floor with the per-query
   `{ "error": { "code": "unsupported", "message": "raw events for part of
   this range have been pruned…" } }` — never partial numbers. Rollup-served
@@ -662,14 +684,17 @@ batch itself still succeeds, and never returns wrong numbers.
     retention horizon refuses the whole query honestly.
 - **Click-to-filter falls out for free**: clicking a row in any breakdown adds
   a `filters` entry and re-issues the same batch.
-- **Caching**: response ETag = hash(max event rowid, schema version,
-  canonicalized request body, resolved per-site windows *including their
+- **Caching**: response ETag = hash(max event rowid, schema version, the
+  engagement threshold (a code constant bounce depends on), canonicalized
+  request body, resolved per-site windows *including their
   timezones and any rolling instants* — so a preset like `today` expires at
   site-local midnight even when no data changed, `24h` expires when the site's
   local hour turns and is stable in between, and re-zoning a site expires an
   explicit `from`/`to` range whose bounds did not move but whose hour axis did).
-  Unchanged data → 304 with zero queries executed. Realtime SSE tells the
-  client *when* to revalidate, so there's no polling loop. Two refinements:
+  Unchanged data → 304 with zero queries executed; `If-None-Match` compares
+  weakly (RFC 9110), so a proxy that forwards the tag as `W/"…"` still
+  revalidates. Realtime SSE tells the client *when* to revalidate, so there's
+  no polling loop. Refinements:
   - **The canonical body is the EXPANDED request** — segment refs substituted,
     derived-metric definitions hashed beside it. Editing a segment or a
     derived metric therefore expires every cached answer that used it with
@@ -685,6 +710,11 @@ batch itself still succeeds, and never returns wrong numbers.
   - **`annotations_version` joins the hash only for annotation-opted
     requests** (below): an annotation edit expires exactly the cached answers
     that show notes, and no others.
+  - **`campaigns_version` joins the hash only for requests that use
+    `campaign_status`** (as a dimension or in any filter, segment or goal
+    definition). That dimension reads the campaigns registry at query time, so
+    every registry write bumps the counter; without it the hygiene card would
+    revalidate 304 on a stale "unregistered" forever.
 - **Annotations ride the batch, opt-in.** `"annotations": true` on the request
   adds `meta.annotations`: `[{ id, siteId, ts, text }]`, filtered to the
   request's sites (a null-site note matches every site) and to the resolved
@@ -733,7 +763,8 @@ batch itself still succeeds, and never returns wrong numbers.
   - **Columns**: the group keys as the compiler orders them (`bucket`, then
     `dim`, `dim2`), headed by the vocabulary words themselves, then one column
     per metric in request order; anything else the rows carry (a derived
-    metric's components, a goal `cr`'s `visits` denominator) follows sorted.
+    metric's components, a goal `cr`'s `visits` or `goal:<id>:visits`
+    denominator) follows sorted.
     Sequence kinds use their natural columns — `flows` joins its signature
     with `" > "` into a `steps` column beside its counts; `transitions` is
     `step`, `from`, `to`, `sessions`; `dwell`/`adjacency`/`distribution`
@@ -937,10 +968,13 @@ Read-only
 dashboard access via `GET /share/:token`: the server re-validates the stored
 layout and assembles the SAME batch the in-app view would run (widget queries
 plus derived companions, previous-period compare), so the link cannot be
-turned into the query API — the one client knob is `?range=<preset>`. Because
-this is the one unauthenticated route that executes queries on the
-synchronous SQLite path, executed batches are rate-limited (per-IP plus a
-global budget; 304 revalidations are free) and every `/share` response
+turned into the query API — the one client knob is `?range=<preset>`. It
+resolves derived metrics and goals exactly as `/api/query` does (and hashes
+them into its ETag), and executes through the same seam — the worker pool in
+production, never inline on the event loop. Because this is the one
+unauthenticated route that executes queries, executed batches are
+rate-limited (per-IP plus a global budget; 304 revalidations are free; a
+saturated pool answers 429 like the limiter) and every `/share` response
 carries `X-Robots-Tag: noindex`. Operations: `/healthz` (liveness + last-flush age) and
 Prometheus `/metrics` (ingest rate, batch flush time, query p95, SSE clients,
 bot drops, DB size) for the existing Grafana stack (R15).

@@ -4,7 +4,15 @@ import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { event, openTestDb, session, T0 } from '../../test/rows.ts';
 import { type Auth, type AuthEnv, createAuth } from '../auth/auth.ts';
-import { type Db, insertEvents, upsertSessions, withWriteTransaction } from '../db/index.ts';
+import {
+  createGoal,
+  type Db,
+  insertEvents,
+  updateGoal,
+  upsertSessions,
+  withWriteTransaction,
+} from '../db/index.ts';
+import { executeQueryRequest } from '../query/executor.ts';
 import { createAdminRoutes } from './admin.ts';
 import { createDashboardRoutes } from './dashboards.ts';
 import { createShareRoutes, type ShareView } from './share.ts';
@@ -111,8 +119,8 @@ async function mutate(
 }
 
 /** Creates the LAYOUT dashboard (id 1) and mints a share token for it. */
-async function mintShare(session: Session): Promise<string> {
-  const created = await mutate(session, 'POST', '/api/admin/dashboards', LAYOUT);
+async function mintShare(session: Session, layout: unknown = LAYOUT): Promise<string> {
+  const created = await mutate(session, 'POST', '/api/admin/dashboards', layout);
   expect(created.status).toBe(201);
   const minted = await mutate(session, 'POST', '/api/admin/dashboards/1/share');
   expect(minted.status).toBe(201);
@@ -328,6 +336,75 @@ describe('GET /share/:token', () => {
     });
     expect(after.status).toBe(200);
     expect(after.headers.get('etag')).not.toBe(before);
+  });
+});
+
+describe('execution', () => {
+  const pathFilter = (value?: string) =>
+    JSON.stringify([
+      value === undefined ? { dim: 'path', op: 'is_null' } : { dim: 'path', op: 'eq', value },
+    ]);
+
+  /**
+   * A shared dashboard's goal widget must answer like the in-app one: the
+   * share route resolves goal definitions exactly as /api/query does, and
+   * hashes them, so a goal edit expires the link's cached answer.
+   */
+  it('answers goal widgets and expires its ETag when a goal is edited', async () => {
+    vi.useFakeTimers({ now: SEEDED_NOW, toFake: ['Date'] });
+    const goal = withWriteTransaction(db, () =>
+      createGoal(
+        db,
+        { site_id: 1, name: 'Landed', filters: pathFilter(), value_expr: null, target: null },
+        T0,
+      ),
+    );
+    const conversions = `goal:${goal.id}:conversions`;
+    const token = await mintShare(await login(), {
+      name: 'Goals',
+      site: 1,
+      grid: [
+        {
+          id: 'w-goal',
+          viz: 'bar-list',
+          w: 6,
+          h: 2,
+          query: { id: 'goal', metrics: [conversions], dim: 'device_type' },
+        },
+      ],
+    });
+
+    const res = await app.request(`/share/${token}`);
+    expect(res.status).toBe(200);
+    const view = (await res.json()) as ShareView;
+    expect(view.results.goal).toMatchObject({ rows: [{ [conversions]: 1 }] });
+    const before = res.headers.get('etag') as string;
+
+    withWriteTransaction(db, () =>
+      updateGoal(
+        db,
+        goal.id,
+        { name: 'Landed', filters: pathFilter('/never'), value_expr: null, target: null },
+        T0 + 1,
+      ),
+    );
+    const after = await app.request(`/share/${token}`, { headers: { 'if-none-match': before } });
+    expect(after.status).toBe(200);
+    expect(((await after.json()) as ShareView).results.goal).toMatchObject({ rows: [] });
+  });
+
+  it('runs through the injected executor — the worker pool in production', async () => {
+    vi.useFakeTimers({ now: SEEDED_NOW, toFake: ['Date'] });
+    const execute = vi.fn((request: Parameters<typeof executeQueryRequest>[1], now: number) =>
+      executeQueryRequest(db, request, { now }),
+    );
+    app = new Hono<AuthEnv>()
+      .route('/', createAdminRoutes(db, auth))
+      .route('/', createDashboardRoutes(db, auth))
+      .route('/', createShareRoutes(db, auth, { execute }));
+    const token = await mintShare(await login());
+    expect((await app.request(`/share/${token}`)).status).toBe(200);
+    expect(execute).toHaveBeenCalledOnce();
   });
 });
 
