@@ -16,7 +16,9 @@ import {
   withWriteTransaction,
 } from '../db/index.ts';
 import { writeAlertRules } from '../jobs/alerts.ts';
+import { requestPropScrub } from '../jobs/prop-scrub.ts';
 import { runSitePurges } from '../jobs/site-purge.ts';
+import { requestTimezoneBackfill } from '../jobs/timezone-backfill.ts';
 import { NTFY_SETTING_KEYS } from '../notify/settings.ts';
 import { uidEnabledKey } from '../pipeline/identity.ts';
 import { createPipeline, type Pipeline } from '../pipeline/index.ts';
@@ -212,6 +214,10 @@ function seedEverything(): void {
       });
       setSetting(db, uidEnabledKey(siteId), '1');
       setSetting(db, `uidsalt:${siteId}`, 'aa');
+      // Jobs pending when the delete lands, and the debt one owes.
+      requestTimezoneBackfill(db, siteId);
+      setSetting(db, `tz_backfill_dirty:${siteId}`, '1');
+      requestPropScrub(db, siteId, 'plan');
     }
     insertApiToken(db, {
       name: 'both',
@@ -254,11 +260,17 @@ describe('the purge', () => {
     for (const table of scopes) expect(scopesNaming(table, 1), table).toBe(0);
     expect(scopesNaming('api_tokens', 2)).toBe(1);
 
-    const keys = stmt<string>(db, 'SELECT key FROM settings ORDER BY key')
-      .pluck()
-      .all() as string[];
-    expect(keys.filter((key) => /:1$/.test(key))).toEqual([]);
-    expect(keys).toContain('uid_enabled:2');
+    const keys = stmt<string>(db, 'SELECT key FROM settings ORDER BY key').pluck().all();
+    // Per-site keys carry the id as one `:`-separated segment, wherever it sits.
+    expect(keys.filter((key) => /(?:^|:)1(?::|$)/.test(key))).toEqual([]);
+    expect(keys).toEqual(
+      expect.arrayContaining([
+        'uid_enabled:2',
+        'tz_backfill:2:events',
+        'tz_backfill_dirty:2',
+        'prop_scrub:2:plan',
+      ]),
+    );
     // The abandoned zone's salt goes; the zone site 2 still lives in keeps its own.
     expect(getSetting(db, 'salt:Asia/Tokyo:2026-07-28')).toBeUndefined();
     expect(getSetting(db, 'salt:America/New_York:2026-07-27')).toBe('cc');

@@ -75,10 +75,14 @@ import {
   backupKeep,
   DEFAULT_BACKUP_KEEP,
 } from '../jobs/backup.ts';
-import { requestPropScrub, runPropScrubs } from '../jobs/prop-scrub.ts';
+import { forgetPropScrubs, requestPropScrub, runPropScrubs } from '../jobs/prop-scrub.ts';
 import { RETENTION_DAYS_KEY, retentionDays } from '../jobs/retention.ts';
 import { requestSitePurge, runSitePurges } from '../jobs/site-purge.ts';
-import { requestTimezoneBackfill, runTimezoneBackfills } from '../jobs/timezone-backfill.ts';
+import {
+  forgetTimezoneBackfill,
+  requestTimezoneBackfill,
+  runTimezoneBackfills,
+} from '../jobs/timezone-backfill.ts';
 import { dropSiteFromNtfyRules } from '../notify/settings.ts';
 import type { AliasCache } from '../pipeline/campaigns.ts';
 import type { ExclusionMatcher } from '../pipeline/exclusions.ts';
@@ -323,6 +327,8 @@ export function createAdminRoutes(
       const kept = rules.filter((rule) => rule.site !== id);
       if (kept.length !== rules.length) writeAlertRules(db, kept);
       dropSiteFromNtfyRules(db, id);
+      forgetTimezoneBackfill(db, id);
+      forgetPropScrubs(db, id);
       requestSitePurge(db, id);
       return true;
     });

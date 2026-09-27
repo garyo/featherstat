@@ -8,7 +8,7 @@ import {
   stmt,
   withWriteTransaction,
 } from '../db/index.ts';
-import { requestPropScrub, runPropScrubs } from './prop-scrub.ts';
+import { forgetPropScrubs, requestPropScrub, runPropScrubs } from './prop-scrub.ts';
 
 let db: Db;
 
@@ -86,5 +86,20 @@ describe('runPropScrubs', () => {
     const before = dataVersion(db);
     expect(await runPropScrubs(db)).toEqual({ completed: 0, rows: 0 });
     expect(dataVersion(db)).toBe(before);
+  });
+});
+
+describe('forgetPropScrubs', () => {
+  it("drops every pending scrub of the site, and none of another's", () => {
+    withWriteTransaction(db, () => {
+      requestPropScrub(db, 1, 'plan');
+      requestPropScrub(db, 1, 'tier');
+      requestPropScrub(db, 2, 'plan');
+      forgetPropScrubs(db, 1);
+    });
+    const keys = stmt<string>(db, "SELECT key FROM settings WHERE key LIKE 'prop_scrub:%'")
+      .pluck()
+      .all();
+    expect(keys).toEqual(['prop_scrub:2:plan']);
   });
 });

@@ -15,7 +15,11 @@ import {
 } from '../db/index.ts';
 import { META_RAW_HORIZON, setRollupMeta } from '../rollup/apply.ts';
 import { verifyRollupDay } from '../rollup/verify.ts';
-import { requestTimezoneBackfill, runTimezoneBackfills } from './timezone-backfill.ts';
+import {
+  forgetTimezoneBackfill,
+  requestTimezoneBackfill,
+  runTimezoneBackfills,
+} from './timezone-backfill.ts';
 
 /**
  * The timezone backfill (docs/03 § Timezones): a site's stored local clocks
@@ -187,7 +191,10 @@ describe('timezone backfill', () => {
     seed(db);
     rezone(db, 1, 'Asia/Tokyo');
     withWriteTransaction(db, () => tombstoneSite(db, 1, LATER));
+    const before = dataVersion(db);
     expect(await runTimezoneBackfills(db, { now: () => LATER })).toEqual({ completed: 0, rows: 0 });
+    expect(clocks(db, 'events', 1)).toEqual([newYork, newYork]);
+    expect(dataVersion(db)).toBe(before);
     expect(getSetting(db, 'tz_backfill:1:events')).toBeUndefined();
     expect(getSetting(db, 'tz_backfill:1:sessions')).toBeUndefined();
     db.close();
@@ -199,6 +206,27 @@ describe('timezone backfill', () => {
     const before = dataVersion(db);
     expect(await runTimezoneBackfills(db)).toEqual({ completed: 0, rows: 0 });
     expect(dataVersion(db)).toBe(before);
+    db.close();
+  });
+});
+
+describe('forgetTimezoneBackfill', () => {
+  it("drops the site's watermarks and debt, and nothing of any other site", () => {
+    const db = openTestDb(2);
+    withWriteTransaction(db, () => {
+      for (const site of [1, 2]) {
+        requestTimezoneBackfill(db, site);
+        setSetting(db, `tz_backfill_dirty:${site}`, '1');
+      }
+      forgetTimezoneBackfill(db, 1);
+    });
+    const keys = stmt<string>(
+      db,
+      "SELECT key FROM settings WHERE key LIKE 'tz_backfill%' ORDER BY 1",
+    )
+      .pluck()
+      .all();
+    expect(keys).toEqual(['tz_backfill:2:events', 'tz_backfill:2:sessions', 'tz_backfill_dirty:2']);
     db.close();
   });
 });
