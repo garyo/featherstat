@@ -5,6 +5,7 @@ import {
   type CompareChoice,
   type CustomRange,
   formatDayRange,
+  latestLocalDay,
   RANGE_LABELS,
   RANGE_PRESETS,
   type RangePreset,
@@ -24,6 +25,9 @@ interface Props {
   segmentNames?: ReadonlyMap<number, string>;
   /** Muted trailing line — the resolved window and compare mode. */
   note?: string;
+  /** The latest date the page's sites have reached (`YYYY-MM-DD`) — the pickers
+   * offer nothing after it. Defaults to the reader's own today. */
+  today?: string;
   onselect: (range: ViewRange) => void;
   oncompare?: (cmp: CompareChoice) => void;
   onremovefilter?: (index: number) => void;
@@ -40,6 +44,7 @@ let {
   filters = [],
   segmentNames,
   note,
+  today = latestLocalDay([], Date.now()),
   onselect,
   oncompare,
   onremovefilter,
@@ -64,7 +69,8 @@ function openEditor(): void {
 
 const valid = $derived(from !== '' && to !== '' && from <= to);
 
-function apply(): void {
+function apply(event: SubmitEvent): void {
+  event.preventDefault();
   if (!valid) return;
   editing = false;
   onselect({ from, to });
@@ -72,6 +78,7 @@ function apply(): void {
 
 function selectPreset(preset: RangePreset): void {
   editing = false;
+  abandonCompare();
   onselect(preset);
 }
 
@@ -99,66 +106,112 @@ function onCompareChange(event: Event): void {
   }
 }
 
-function applyCompare(): void {
+function applyCompare(event: SubmitEvent): void {
+  event.preventDefault();
   if (!cmpValid) return;
   cmpEditing = false;
   oncompare?.({ from: cmpFrom, to: cmpTo });
+}
+
+/** A custom window left unapplied puts the select back on the mode in force —
+ * it must never read "custom" beside a note describing another comparison. */
+function abandonCompare(): void {
+  cmpEditing = false;
+}
+
+/** Focus moving to any other control abandons the unapplied window. */
+function onCompareFocusOut(event: FocusEvent): void {
+  const next = event.relatedTarget;
+  if (next instanceof Node && !(event.currentTarget as HTMLElement).contains(next)) {
+    abandonCompare();
+  }
+}
+
+/** Escape closes a date editor without applying it. */
+function onEditorKey(event: KeyboardEvent, close: () => void): void {
+  if (event.key === 'Escape') close();
 }
 
 const customCmp = $derived(cmp !== undefined && typeof cmp !== 'string');
 </script>
 
 <div class="filters" role="group" aria-label="Date range and filters">
-  {#each RANGE_PRESETS as preset (preset)}
+  <div class="presets">
+    {#each RANGE_PRESETS as preset (preset)}
+      <button
+        class="preset"
+        type="button"
+        aria-pressed={range === preset}
+        onclick={() => selectPreset(preset)}>{RANGE_LABELS[preset]}</button
+      >
+    {/each}
     <button
       class="preset"
       type="button"
-      aria-pressed={range === preset}
-      onclick={() => selectPreset(preset)}>{RANGE_LABELS[preset]}</button
+      aria-pressed={custom}
+      aria-expanded={editing}
+      onclick={openEditor}>{custom ? formatDayRange(range as CustomRange) : 'Custom…'}</button
     >
-  {/each}
-  <button
-    class="preset"
-    type="button"
-    aria-pressed={custom}
-    aria-expanded={editing}
-    onclick={openEditor}>{custom ? formatDayRange(range as CustomRange) : 'Custom…'}</button
-  >
+  </div>
   {#if editing}
-    <span class="range-edit">
-      <input type="date" aria-label="From date" bind:value={from} max={to === '' ? undefined : to} />
-      <input type="date" aria-label="To date" bind:value={to} min={from === '' ? undefined : from} />
-      <button class="preset" type="button" disabled={!valid} onclick={apply}>Apply</button>
-    </span>
+    <!-- A form, so Enter in either date applies it; Escape (heard from the
+         inputs, which are the controls) closes it unapplied. -->
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <form
+      class="range-edit"
+      onsubmit={apply}
+      onkeydown={(event) => onEditorKey(event, () => (editing = false))}
+    >
+      <input
+        type="date"
+        aria-label="From date"
+        bind:value={from}
+        max={to === '' || to > today ? today : to}
+      />
+      <input
+        type="date"
+        aria-label="To date"
+        bind:value={to}
+        min={from === '' ? undefined : from}
+        max={today}
+      />
+      <button class="preset" type="submit" disabled={!valid}>Apply</button>
+    </form>
   {/if}
   {#if oncompare !== undefined}
-    <select class="preset cmp" aria-label="Compare" value={cmpValue} onchange={onCompareChange}>
-      <option value="previous">vs previous</option>
-      <option value="year">vs last year</option>
-      <option value="off">no compare</option>
-      <option value="custom"
-        >{customCmp && !cmpEditing ? `vs ${formatDayRange(cmp as CustomRange)}` : 'vs custom…'}</option
-      >
-    </select>
-    {#if cmpEditing}
-      <span class="range-edit">
-        <input
-          type="date"
-          aria-label="Compare from date"
-          bind:value={cmpFrom}
-          max={cmpTo === '' ? undefined : cmpTo}
-        />
-        <input
-          type="date"
-          aria-label="Compare to date"
-          bind:value={cmpTo}
-          min={cmpFrom === '' ? undefined : cmpFrom}
-        />
-        <button class="preset" type="button" disabled={!cmpValid} onclick={applyCompare}
-          >Apply</button
+    <span class="cmp-group" onfocusout={onCompareFocusOut}>
+      <select class="preset cmp" aria-label="Compare" value={cmpValue} onchange={onCompareChange}>
+        <option value="previous">vs previous</option>
+        <option value="year">vs last year</option>
+        <option value="off">no compare</option>
+        <option value="custom"
+          >{customCmp && !cmpEditing ? `vs ${formatDayRange(cmp as CustomRange)}` : 'vs custom…'}</option
         >
-      </span>
-    {/if}
+      </select>
+      {#if cmpEditing}
+        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+        <form
+          class="range-edit"
+          onsubmit={applyCompare}
+          onkeydown={(event) => onEditorKey(event, abandonCompare)}
+        >
+          <input
+            type="date"
+            aria-label="Compare from date"
+            bind:value={cmpFrom}
+            max={cmpTo === '' || cmpTo > today ? today : cmpTo}
+          />
+          <input
+            type="date"
+            aria-label="Compare to date"
+            bind:value={cmpTo}
+            min={cmpFrom === '' ? undefined : cmpFrom}
+            max={today}
+          />
+          <button class="preset" type="submit" disabled={!cmpValid}>Apply</button>
+        </form>
+      {/if}
+    </span>
   {/if}
   {#each locked as label, i (i)}
     <span class="fchip locked" title="This view is about this — go back to remove it">
@@ -198,6 +251,10 @@ const customCmp = $derived(cmp !== undefined && typeof cmp !== 'string');
 
   .fchip.locked:hover {
     border-color: color-mix(in srgb, var(--s1) 35%, transparent);
+  }
+
+  .cmp-group {
+    display: contents;
   }
 
   .range-edit {

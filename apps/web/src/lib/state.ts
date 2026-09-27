@@ -143,6 +143,18 @@ export function resolveNav(
   return next;
 }
 
+/**
+ * Whether moving between two states takes away the dashboard an editor draft
+ * belongs to: the page leaves the Dashboard view, or the scope or library
+ * selection under it changes. Range, compare, filter and pivot moves keep the
+ * document, so an open draft survives them (it previews in the new context).
+ */
+export function discardsDraft(from: ViewState, to: ViewState): boolean {
+  return (
+    from.view === 'dash' && (to.view !== 'dash' || to.site !== from.site || to.dash !== from.dash)
+  );
+}
+
 /** Exhaustive by construction: a new preset in `packages/shared` fails to compile until it is labeled. */
 export const RANGE_LABELS: Record<RangePreset, string> = {
   today: 'Today',
@@ -166,6 +178,18 @@ export function localDayKey(zones: readonly string[], now: Date): string {
     .sort()
     .map((zone) => elapsedThrough('day', zone, now.getTime()))
     .join('|');
+}
+
+/**
+ * The latest calendar date any of these zones has reached — the most a date
+ * picker may offer, since a site ahead of the reader is already on tomorrow.
+ * With no zones, the reader's own date.
+ */
+export function latestLocalDay(zones: readonly string[], now: number): string {
+  const reader = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return (zones.length === 0 ? [reader] : zones)
+    .map((zone) => elapsedThrough('day', zone, now))
+    .reduce((latest, day) => (day > latest ? day : latest));
 }
 
 /** Widget-title qualifier (mockup: "Traffic by hour · last 30 days"). */
@@ -291,6 +315,28 @@ export function compareNote(range: ViewRange, cmp: CompareChoice): string | unde
   const current = rangeDays(range);
   const against = rangeDays(cmp);
   return current === against ? base : `${base} (${current} days vs ${against} days)`;
+}
+
+/**
+ * The range the response on screen answers: the request it was fetched for,
+ * or the pill's own while nothing has landed. Labels read this, not the pill,
+ * so a refetch or a failed change can never caption held data with the range
+ * being loaded.
+ */
+export function heldRange(held: QueryRequest | undefined, range: ViewRange): ViewRange {
+  if (held === undefined) return range;
+  return 'preset' in held.range ? held.range.preset : held.range;
+}
+
+/**
+ * What a failed batch leaves on screen, in the filter row's words. A change the
+ * reader asked for that never landed (`stale`) says what is shown instead; a
+ * live revalidation that failed still shows the state asked for.
+ */
+export function failureNote(stale: boolean, range: ViewRange, held: ViewRange): string {
+  return stale
+    ? `Couldn't load ${rangeQualifier(range)} — showing ${rangeQualifier(held)}`
+    : 'Live update failed — showing the last good result';
 }
 
 /** Only used to parse relative hrefs; never appears in anything this module returns. */

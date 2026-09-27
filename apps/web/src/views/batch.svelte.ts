@@ -4,7 +4,8 @@ import { canonicalJson, type QueryClient } from '../lib/api.ts';
 /**
  * One in-flight batch per view: a newer run aborts the older, the last response
  * wins, and the previous response is held while refetching so the view dims
- * instead of blanking (docs/05: no skeletons, no layout shift).
+ * instead of blanking (docs/05: no skeletons, no layout shift). A run of the
+ * request already in flight is folded into it rather than re-sent.
  */
 export interface BatchRunner {
   readonly response: QueryResponse | undefined;
@@ -20,13 +21,15 @@ export interface BatchRunner {
   readonly stale: boolean;
   /** True while a re-issue is in flight over a held previous response. */
   readonly refetching: boolean;
+  /** Issues `request` — unless the same request (by value) is already in flight. */
   run(request: QueryRequest): void;
   /**
-   * Re-runs the last request. The recovery path after a failure: the view's
-   * $effect only re-issues when its derived request changes, so re-selecting the
-   * same state would otherwise never retry.
+   * Re-issues the last request unconditionally. The recovery path after a
+   * failure (re-selecting the same state re-derives nothing, so would never
+   * retry), and the revalidation after a data tick — which must not fold into an
+   * identical request in flight, because that one may predate the tick.
    */
-  retry(): void;
+  refresh(): void;
 }
 
 export function createBatchRunner(client: QueryClient): BatchRunner {
@@ -42,12 +45,15 @@ export function createBatchRunner(client: QueryClient): BatchRunner {
   let controller: AbortController | undefined;
   let seq = 0;
   let last: QueryRequest | undefined;
+  /** Canonical body of the request in flight; undefined when none is. */
+  let inFlight: string | undefined;
 
-  const execute = (request: QueryRequest): void => {
+  const execute = (request: QueryRequest, body: string): void => {
     controller?.abort();
     const mine = ++seq;
     const own = new AbortController();
     controller = own;
+    inFlight = body;
     pending += 1;
     busy = true;
     client
@@ -67,6 +73,7 @@ export function createBatchRunner(client: QueryClient): BatchRunner {
         stale = held === undefined || canonicalJson(request) !== canonicalJson(held);
       })
       .finally(() => {
+        if (seq === mine) inFlight = undefined;
         pending -= 1;
         if (pending === 0) busy = false;
       });
@@ -89,11 +96,13 @@ export function createBatchRunner(client: QueryClient): BatchRunner {
       return busy && response !== undefined;
     },
     run(request) {
+      const body = canonicalJson(request);
+      if (body === inFlight) return;
       last = request;
-      execute(request);
+      execute(request, body);
     },
-    retry() {
-      if (last !== undefined) execute(last);
+    refresh() {
+      if (last !== undefined) execute(last, canonicalJson(last));
     },
   };
 }

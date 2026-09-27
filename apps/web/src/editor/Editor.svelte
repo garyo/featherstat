@@ -9,7 +9,7 @@ import {
   type WidgetSpec,
   widgetQueries,
 } from '@featherstat/shared';
-import type { QueryClient } from '../lib/api.ts';
+import { canonicalJson, type QueryClient } from '../lib/api.ts';
 import { widgetData } from '../views/batch.ts';
 import { gridEnv } from '../widgets/env.ts';
 import type { ViewEnv, WidgetData } from '../widgets/types.ts';
@@ -47,10 +47,23 @@ interface Props {
   saveError: string | undefined;
   onsave: (next: Dashboard) => void;
   oncancel: () => void;
+  /** Whether the draft differs from `initial` — a switch away asks only then. */
+  ondirty: (dirty: boolean) => void;
 }
 
-let { initial, client, request, response, error, env, saving, saveError, onsave, oncancel }: Props =
-  $props();
+let {
+  initial,
+  client,
+  request,
+  response,
+  error,
+  env,
+  saving,
+  saveError,
+  onsave,
+  oncancel,
+  ondirty,
+}: Props = $props();
 
 // The draft captures the dashboard at entry; the saved original keeps routing
 // the view batch's answers. Both deliberately read `initial` once.
@@ -60,6 +73,11 @@ let draft = $state<Dashboard>(structuredClone($state.snapshot(initial)));
 const saved = collectBatch(initial);
 // svelte-ignore state_referenced_locally
 const savedSpecs = new Map(initial.grid.map((spec) => [spec.id, JSON.stringify(spec)]));
+// svelte-ignore state_referenced_locally
+const pristine = canonicalJson($state.snapshot(initial));
+
+const dirty = $derived(canonicalJson($state.snapshot(draft)) !== pristine);
+$effect(() => ondirty(dirty));
 
 // The view batch's own windows. A preview re-runs the SAME range and scope
 // (`request`), so its axes are these — a preview cannot show a window the

@@ -16,14 +16,16 @@ import {
   compareParam,
   type DashRef,
   type DetailRef,
+  failureNote,
+  heldRange,
+  latestLocalDay,
   localDayKey,
   type PivotChoice,
-  rangeQualifier,
   toRange,
   type ViewRange,
 } from '../lib/state.ts';
 import { dashboardEnv } from '../widgets/env.ts';
-import { windowLabel } from '../widgets/format.ts';
+import { windowLabel, zoneLabel } from '../widgets/format.ts';
 import type { AppEnv } from '../widgets/types.ts';
 import { createBatchRunner } from './batch.svelte.ts';
 import {
@@ -148,7 +150,7 @@ $effect(() =>
   createRevalidator(
     live,
     () => {
-      if (store.ready) runner.run(request);
+      if (store.ready) runner.refresh();
     },
     {
       site: () => site,
@@ -157,7 +159,9 @@ $effect(() =>
   ),
 );
 
-const dayKey = $derived(localDayKey(timezone === undefined ? [] : [timezone], new Date(app.now)));
+const zones = $derived(timezone === undefined ? [] : [timezone]);
+const dayKey = $derived(localDayKey(zones, new Date(app.now)));
+const today = $derived(latestLocalDay(zones, app.now));
 
 /** Save, then point the URL at the row — editing a template just cloned it. */
 async function save(next: Parameters<typeof mode.save>[0]): Promise<void> {
@@ -182,11 +186,10 @@ function removeFilter(index: number): void {
 }
 
 const failed = $derived(runner.error !== undefined && runner.response !== undefined);
+/** On screen but not this state's: in flight, or held back until the lookup answers. */
+const refetching = $derived(runner.refetching || (!store.ready && runner.response !== undefined));
 /** The range actually on screen — while refetching, the held response's, not the pill's. */
-const heldRange = $derived.by<ViewRange>(() => {
-  if (runner.held === undefined) return range;
-  return 'preset' in runner.held.range ? runner.held.range.preset : runner.held.range;
-});
+const held = $derived(heldRange(runner.held, range));
 /**
  * The window the SERVER resolved for the response on screen (`meta.windows`) —
  * so the label can never describe a different range from the data beside it, and
@@ -194,6 +197,7 @@ const heldRange = $derived.by<ViewRange>(() => {
  * re-runs on `dayKey`). The browser resolves no presets.
  */
 const span = $derived(windowLabel(runner.response?.meta.windows));
+const zone = $derived(zoneLabel(runner.response?.meta.windows));
 /**
  * ONE environment for this page, handed to the dashboard AND to the editor's
  * preview — the preview used to be assembled from a shorter list of props, so
@@ -204,7 +208,7 @@ const span = $derived(windowLabel(runner.response?.meta.windows));
 const env = $derived(
   dashboardEnv(app, {
     scope: site,
-    range: heldRange,
+    range: held,
     onfilter: addFilter,
     ondrill: (dim, value) => onopendetail({ dim, value }),
     onpivot: setPivot,
@@ -214,43 +218,46 @@ const note = $derived.by(() => {
   if (failed) {
     // A user-initiated change that never landed reads differently from a live
     // revalidation failure — and says what is actually on screen.
-    return runner.stale
-      ? `Couldn't load ${rangeQualifier(range)} — showing ${rangeQualifier(heldRange)}`
-      : 'Live update failed — showing the last good result';
+    return failureNote(runner.stale, range, held);
   }
-  const compared = compareNote(heldRange, cmp) ?? 'no comparison';
+  const compared = compareNote(held, cmp) ?? 'no comparison';
   if (span === undefined) return compared.charAt(0).toUpperCase() + compared.slice(1);
-  return `${span} · ${compared}`;
+  return `${span} · ${zone} · ${compared}`;
 });
 </script>
 
 {#if mode.Editor !== undefined}
   {@const Editor = mode.Editor}
-  <Editor
-    initial={dashboard}
-    {client}
-    request={requestFor}
-    response={runner.response}
-    error={runner.error}
-    {env}
-    saving={store.saving}
-    saveError={store.error}
-    onsave={(next) => void save(next)}
-    oncancel={() => mode.close()}
-  />
+  <!-- A draft belongs to one dashboard: a new scope or selection is a new editor. -->
+  {#key `${site}|${store.selection?.ref}`}
+    <Editor
+      initial={dashboard}
+      {client}
+      request={requestFor}
+      response={runner.response}
+      error={runner.error}
+      {env}
+      saving={store.saving}
+      saveError={store.error}
+      onsave={(next) => void save(next)}
+      oncancel={() => mode.close()}
+      ondirty={mode.setDirty}
+    />
+  {/key}
 {:else}
   <div class="toolbar">
     <FilterRow
       {range}
       {cmp}
       {filters}
-  {segmentNames}
-  {oneditfilters}
+      {segmentNames}
+      {oneditfilters}
       {note}
+      {today}
       onselect={onselectrange}
       oncompare={onselectcmp}
       onremovefilter={removeFilter}
-      onretry={runner.error === undefined ? undefined : () => runner.retry()}
+      onretry={runner.error === undefined ? undefined : () => runner.refresh()}
     />
     <button
       class="btn slim tool-btn"
@@ -272,34 +279,19 @@ const note = $derived.by(() => {
     {dashboard}
     response={runner.response}
     error={runner.error}
-    refetching={runner.refetching}
+    {refetching}
     {env}
   />
 {/if}
 
+<!-- The saved layout, not the pivoted one: a pivot is transient view state, and
+     share links ignore it (docs/05 § Pivots). -->
 {#if ShareDialog !== undefined}
   <ShareDialog
     {admin}
     {store}
-    layout={{ ...dashboard, site }}
+    layout={{ ...saved, site }}
     onclose={() => (ShareDialog = undefined)}
   />
 {/if}
 
-<style>
-  .toolbar {
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-  }
-
-  .toolbar > :global(.filters) {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .tool-btn {
-    margin-top: 11px;
-    flex-shrink: 0;
-  }
-</style>

@@ -10,12 +10,15 @@ import {
   compareNote,
   compareParam,
   type DetailRef,
+  failureNote,
+  heldRange,
+  latestLocalDay,
   localDayKey,
   toRange,
   type ViewRange,
 } from '../lib/state.ts';
 import { dashboardEnv } from '../widgets/env.ts';
-import { windowLabel } from '../widgets/format.ts';
+import { windowLabel, zoneLabel } from '../widgets/format.ts';
 import type { AppEnv } from '../widgets/types.ts';
 import { createBatchRunner } from './batch.svelte.ts';
 import {
@@ -98,9 +101,11 @@ $effect(() => {
   runner.run(request);
 });
 $effect(() =>
-  createRevalidator(live, () => runner.run(request), { site: () => site, key: () => request }),
+  createRevalidator(live, () => runner.refresh(), { site: () => site, key: () => request }),
 );
-const dayKey = $derived(localDayKey(timezone === undefined ? [] : [timezone], new Date(app.now)));
+const zones = $derived(timezone === undefined ? [] : [timezone]);
+const dayKey = $derived(localDayKey(zones, new Date(app.now)));
+const today = $derived(latestLocalDay(zones, app.now));
 
 /** Click-to-filter composes ON TOP of the locked entity binding. */
 function addFilter(filter: Filter): void {
@@ -108,26 +113,25 @@ function addFilter(filter: Filter): void {
   onfilters([...filters, filter]);
 }
 
-const heldRange = $derived.by<ViewRange>(() => {
-  if (runner.held === undefined) return range;
-  return 'preset' in runner.held.range ? runner.held.range.preset : runner.held.range;
-});
+/** The range actually on screen — while refetching, the held response's, not the pill's. */
+const held = $derived(heldRange(runner.held, range));
 const env = $derived(
   dashboardEnv(app, {
     scope: site,
-    range: heldRange,
+    range: held,
     onfilter: addFilter,
     ondrill: (dim, value) => onopendetail({ dim, value }),
     onpivot: null,
   }),
 );
 const span = $derived(windowLabel(runner.response?.meta.windows));
+const zone = $derived(zoneLabel(runner.response?.meta.windows));
 const note = $derived.by(() => {
   if (runner.error !== undefined && runner.response !== undefined) {
-    return 'Live update failed — showing the last good result';
+    return failureNote(runner.stale, range, held);
   }
-  const compared = compareNote(heldRange, cmp) ?? 'no comparison';
-  return span === undefined ? compared : `${span} · ${compared}`;
+  const compared = compareNote(held, cmp) ?? 'no comparison';
+  return span === undefined ? compared : `${span} · ${zone} · ${compared}`;
 });
 </script>
 
@@ -143,10 +147,11 @@ const note = $derived.by(() => {
   {segmentNames}
   {oneditfilters}
   {note}
+  {today}
   onselect={onselectrange}
   oncompare={onselectcmp}
   onremovefilter={(index) => onfilters(filters.filter((_, i) => i !== index))}
-  onretry={runner.error === undefined ? undefined : () => runner.retry()}
+  onretry={runner.error === undefined ? undefined : () => runner.refresh()}
 />
 <DashboardGrid
   {dashboard}

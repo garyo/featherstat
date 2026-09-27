@@ -3,7 +3,14 @@ import type { FilterNode, QueryRequest } from '@featherstat/shared';
 import type { QueryClient } from '../lib/api.ts';
 import FilterRow from '../lib/components/FilterRow.svelte';
 import { createRevalidator, type LiveStream } from '../lib/live.ts';
-import { localDayKey, rangeQualifier, toRange, type ViewRange } from '../lib/state.ts';
+import {
+  failureNote,
+  heldRange,
+  latestLocalDay,
+  localDayKey,
+  toRange,
+  type ViewRange,
+} from '../lib/state.ts';
 import FlowsTable from '../widgets/FlowsTable.svelte';
 import type { EdgeRef } from '../widgets/flows.ts';
 import { windowLabel } from '../widgets/format.ts';
@@ -79,13 +86,15 @@ $effect(() => {
 });
 // … and when debounced version ticks say this site's data moved (docs/05 R22).
 $effect(() =>
-  createRevalidator(live, () => runner.run(request), {
+  createRevalidator(live, () => runner.refresh(), {
     site: () => site,
     key: () => request,
   }),
 );
 
-const dayKey = $derived(localDayKey(timezone === undefined ? [] : [timezone], new Date(now)));
+const zones = $derived(timezone === undefined ? [] : [timezone]);
+const dayKey = $derived(localDayKey(zones, new Date(now)));
+const today = $derived(latestLocalDay(zones, now));
 
 /** A clicked sankey edge narrows the table below — client-side (flows.ts). */
 let selected = $state<EdgeRef | undefined>();
@@ -130,17 +139,12 @@ function removeFilter(index: number): void {
 
 const failed = $derived(runner.error !== undefined && runner.response !== undefined);
 /** The range actually on screen — while refetching, the held response's, not the pill's. */
-const heldRange = $derived.by<ViewRange>(() => {
-  if (runner.held === undefined) return range;
-  return 'preset' in runner.held.range ? runner.held.range.preset : runner.held.range;
-});
+const held = $derived(heldRange(runner.held, range));
 /** The server's own resolved window for the response on screen — the same
  * source the dashboard's label reads, so the two views cannot disagree. */
 const note = $derived.by(() => {
   if (failed) {
-    return runner.stale
-      ? `Couldn't load ${rangeQualifier(range)} — showing ${rangeQualifier(heldRange)}`
-      : 'Live update failed — showing the last good result';
+    return failureNote(runner.stale, range, held);
   }
   return windowLabel(runner.response?.meta.windows);
 });
@@ -153,9 +157,10 @@ const note = $derived.by(() => {
   {segmentNames}
   {oneditfilters}
     {note}
+    {today}
     onselect={onselectrange}
     onremovefilter={removeFilter}
-    onretry={runner.error === undefined ? undefined : () => runner.retry()}
+    onretry={runner.error === undefined ? undefined : () => runner.refresh()}
   />
   <div class="depth" role="group" aria-label="Journey depth">
     <span class="depth-label">Steps</span>
@@ -179,17 +184,6 @@ const note = $derived.by(() => {
 </div>
 
 <style>
-  .toolbar {
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-  }
-
-  .toolbar > :global(.filters) {
-    flex: 1;
-    min-width: 0;
-  }
-
   .depth {
     display: flex;
     align-items: center;

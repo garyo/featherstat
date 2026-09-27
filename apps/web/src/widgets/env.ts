@@ -70,14 +70,13 @@ export interface ViewContext {
  * prop the caller had to remember twice.
  */
 export function dashboardEnv(app: AppEnv, view: ViewContext): ViewEnv {
-  return {
-    ...app,
+  return extendEnv(app, {
     scope: view.scope,
     rangeLabel: rangeQualifier(view.range),
     onfilter: view.onfilter,
     ondrill: view.ondrill,
     onpivot: view.onpivot,
-  };
+  });
 }
 
 /**
@@ -86,9 +85,25 @@ export function dashboardEnv(app: AppEnv, view: ViewContext): ViewEnv {
  * axes and markers a widget draws always belong to the answer beside them.
  */
 export function gridEnv(env: ViewEnv, response: QueryResponse | undefined): GridEnv {
-  return {
-    ...env,
+  return extendEnv(env, {
     windows: response?.meta.windows ?? null,
     annotations: response?.meta.annotations ?? null,
-  };
+  });
+}
+
+/**
+ * `{ ...base, ...extra }` that keeps `base`'s getters as getters. The app's
+ * clock and live stream are getters over reactive state (Shell.svelte), so a
+ * widget subscribes to exactly the members it reads; a spread would read them
+ * all while the env is built, and every hit and every clock tick would then
+ * rebuild the env — and so re-derive every widget on the page.
+ */
+export function extendEnv<Base extends object, Extra extends object>(
+  base: Base,
+  extra: Extra,
+): Omit<Base, keyof Extra> & Extra {
+  return Object.defineProperties(
+    {},
+    { ...Object.getOwnPropertyDescriptors(base), ...Object.getOwnPropertyDescriptors(extra) },
+  ) as Omit<Base, keyof Extra> & Extra;
 }

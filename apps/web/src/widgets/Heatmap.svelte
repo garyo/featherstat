@@ -1,4 +1,5 @@
 <script lang="ts">
+import DataTable from './DataTable.svelte';
 import { exactNumber, metricLabel } from './format.ts';
 import { cellTitle, HEATMAP_DAYS, type HeatmapCell, heatmapCells } from './heatmap.ts';
 import { sliceOf, type WidgetProps } from './types.ts';
@@ -82,20 +83,14 @@ function showTip(cell: HeatmapCell, event: PointerEvent): void {
       {/if}
     </div>
   </div>
-  <!-- The accessibility fallback (docs/05): every value reachable without a pointer. -->
-  <div class="sr-only">
-    <table>
-      <caption>{spec.title ?? 'Traffic by hour'} — exact {unit} per hour and weekday</caption>
-      <tbody>
-        {#each HEATMAP_DAYS as day, dayIndex (day)}
-          <tr>
-            <th scope="row">{day}</th>
-            {#each cells.filter((cell) => cell.day === dayIndex) as cell (cell.hour)}
-              <td>{cell.hour}:00 — {exactNumber(cell.value)}</td>
-            {/each}
-          </tr>
-        {/each}
-      </tbody>
-    </table>
-  </div>
+  <DataTable
+    caption="{spec.title ?? 'Traffic by hour'} — exact {unit} per hour and weekday"
+    rows={HEATMAP_DAYS.map((day, dayIndex) => ({
+      key: day,
+      label: day,
+      cells: cells
+        .filter((cell) => cell.day === dayIndex)
+        .map((cell) => `${cell.hour}:00 — ${exactNumber(cell.value)}`),
+    }))}
+  />
 {/if}

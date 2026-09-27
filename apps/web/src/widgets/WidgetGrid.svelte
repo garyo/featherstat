@@ -1,7 +1,7 @@
 <script lang="ts">
 import type { WidgetSpec } from '@featherstat/shared';
 import type { Snippet } from 'svelte';
-import { CAPABILITY_NOTE, missingCapability } from './env.ts';
+import { CAPABILITY_NOTE, extendEnv, missingCapability } from './env.ts';
 import { REGISTRY, spanClass } from './registry.ts';
 import type { GridEnv, WidgetData } from './types.ts';
 
@@ -53,7 +53,7 @@ let { grid, dataFor, card, env, refetching = false, element = $bindable() }: Pro
     {#snippet widget()}
       <!-- A grid never composes a heading or shares a highlight: those belong to
            a page that arranges widgets by hand (the Realtime view). -->
-      {@const widgetEnv = { ...env, data: dataFor(spec), headless: false, highlight: null }}
+      {@const widgetEnv = extendEnv(env, { data: dataFor(spec), headless: false, highlight: null })}
       {@const missing = missingCapability(spec.viz, widgetEnv)}
       {#if entry === undefined}
         <h2>{spec.title ?? spec.viz}</h2>

@@ -1,11 +1,15 @@
-import { RangeSchema } from '@featherstat/shared';
+import { type QueryRequest, RangeSchema } from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
 import {
   applyViewState,
   compareNote,
   compareParam,
   DEFAULT_VIEW_STATE,
+  discardsDraft,
+  failureNote,
   formatDayRange,
+  heldRange,
+  latestLocalDay,
   localDayKey,
   parseDashRef,
   parseDetailRef,
@@ -268,6 +272,69 @@ describe('resolveNav', () => {
       site: 'all',
       view: 'dash',
     });
+  });
+});
+
+describe('what the response on screen answers', () => {
+  const request = (range: QueryRequest['range']): QueryRequest => ({
+    site: 'all',
+    range,
+    queries: [{ id: 'kpis', metrics: ['visitors'] }],
+  });
+
+  it('is the held request range, preset or explicit, and the pill before one lands', () => {
+    expect(heldRange(request({ preset: '7d' }), '30d')).toBe('7d');
+    expect(heldRange(request({ from: '2026-06-01', to: '2026-06-30' }), '30d')).toEqual({
+      from: '2026-06-01',
+      to: '2026-06-30',
+    });
+    expect(heldRange(undefined, '30d')).toBe('30d');
+  });
+
+  it('says what is shown instead when a change never landed', () => {
+    expect(failureNote(true, '7d', '30d')).toBe("Couldn't load last 7 days — showing last 30 days");
+    expect(failureNote(false, '30d', '30d')).toBe(
+      'Live update failed — showing the last good result',
+    );
+  });
+});
+
+describe('discardsDraft', () => {
+  const editing = at({ site: 3, dash: 7 });
+
+  it('is true for every move that takes the edited dashboard away', () => {
+    // Back/forward to another site's dashboard is how a stale draft got saved
+    // onto the wrong scope: the editor stayed mounted over the new one.
+    expect(discardsDraft(editing, at({ site: 1, dash: 1 }))).toBe(true);
+    expect(discardsDraft(editing, at({ site: 3, dash: 8 }))).toBe(true);
+    expect(discardsDraft(editing, at({ site: 3, dash: 't:overview' }))).toBe(true);
+    expect(discardsDraft(editing, { ...editing, view: 'realtime' })).toBe(true);
+    expect(discardsDraft(editing, { ...editing, view: 'detail' })).toBe(true);
+  });
+
+  it('keeps the draft through moves that keep its dashboard', () => {
+    expect(discardsDraft(editing, { ...editing, range: '7d' })).toBe(false);
+    expect(discardsDraft(editing, { ...editing, cmp: 'off' })).toBe(false);
+    expect(
+      discardsDraft(editing, { ...editing, filters: [{ dim: 'country', op: 'eq', value: 'NZ' }] }),
+    ).toBe(false);
+    expect(
+      discardsDraft(editing, { ...editing, pivots: [{ widget: 'pages', dim: 'country' }] }),
+    ).toBe(false);
+  });
+
+  it('has nothing to discard off the Dashboard view', () => {
+    const realtime = at({ site: 3, view: 'realtime' });
+    expect(discardsDraft(realtime, at({ site: 1 }))).toBe(false);
+  });
+});
+
+describe('latestLocalDay', () => {
+  it('is the date of whichever site has reached the furthest', () => {
+    // 23:00 UTC: Auckland is already on the next day, New York is not.
+    const now = Date.UTC(2026, 6, 29, 23, 0, 0);
+    expect(latestLocalDay(['America/New_York', 'Pacific/Auckland'], now)).toBe('2026-07-30');
+    expect(latestLocalDay(['America/New_York'], now)).toBe('2026-07-29');
   });
 });
 

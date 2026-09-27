@@ -482,9 +482,13 @@ pointing the other way, and invisible.
 
 Keyboard: every interactive mark reachable (`tabindex` + focus tooltip);
 filter row and tables fully keyboard-native. Every chart's values are
-reachable without a pointer: bar-lists and KPI tiles are text, the heatmap
-carries a visually-hidden table of exact values; the sortable `table` viz
-(M2) becomes the universal fallback when it lands.
+reachable without a pointer: bar-lists and KPI tiles are text; the line
+chart, heatmap, histogram and sankey each carry a visually-hidden table of
+exact values (`widgets/DataTable.svelte`, the one rendering of it), and the
+line chart is also a focus stop whose arrow keys step the hover crosshair
+bucket by bucket; the sortable `table` viz (M2) becomes the universal
+fallback when it lands. In edit mode a card's drag handle moves it with the
+arrow keys (Home/End to the ends) and announces its new position.
 Legends always present for ≥ 2 series; single series titled, unlegended.
 Color-blind safety is enforced by the palette validator in CI (the palette is
 data, so the check is automatable); texture fill available as the opt-in

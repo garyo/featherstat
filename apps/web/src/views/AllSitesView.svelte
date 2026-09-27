@@ -13,11 +13,15 @@ import {
   compareNote,
   compareParam,
   type DashRef,
+  failureNote,
+  heldRange,
+  latestLocalDay,
   localDayKey,
   toRange,
   type ViewRange,
 } from '../lib/state.ts';
 import { dashboardEnv } from '../widgets/env.ts';
+import { windowLabel, zoneLabel } from '../widgets/format.ts';
 import type { AppEnv } from '../widgets/types.ts';
 import { createBatchRunner } from './batch.svelte.ts';
 import { collectBatch, hourlyWhenIntraday, wantsAnnotations } from './batch.ts';
@@ -67,7 +71,14 @@ const runner = createBatchRunner(client);
  * stored row, or the shipped all-sites template) always follows the LIVE
  * directory for its site-cards.
  */
-const siteIds = $derived(app.sites === null ? [] : [...app.sites.keys()]);
+// Keyed by value: `app` is replaced on every stream update, and a fresh id array
+// each time would make a fresh dashboard, a fresh request, and a fresh batch.
+const siteKey = $derived(app.sites === null ? '' : [...app.sites.keys()].join(','));
+const siteIds = $derived(siteKey === '' ? [] : siteKey.split(',').map(Number));
+/** The batch waits for the directory AND the dashboard lookup. */
+const ready = $derived(app.sites !== null && store.ready);
+/** On screen but not this state's: in flight, or held back until the lookup answers. */
+const refetching = $derived(runner.refetching || (!ready && runner.response !== undefined));
 const dashboard = $derived(
   withLiveSiteIds(
     store.stored ??
@@ -100,24 +111,23 @@ $effect(() => {
   // more when a site rolls into a new local day, because `today` and `mtd`
   // are resolved server-side and their answer changes at that site's midnight.
   void dayKey;
-  if (app.sites !== null && store.ready) runner.run(request);
+  if (ready) runner.run(request);
 });
 $effect(() =>
   createRevalidator(
     live,
     () => {
-      if (app.sites !== null && store.ready) runner.run(request);
+      if (ready) runner.refresh();
     },
     { site: () => 'all', key: () => request },
   ),
 );
 
-const dayKey = $derived(
-  localDayKey(
-    app.sites === null ? [] : [...app.sites.values()].map((entry) => entry.timezone),
-    new Date(app.now),
-  ),
+const zones = $derived(
+  app.sites === null ? [] : [...app.sites.values()].map((entry) => entry.timezone),
 );
+const dayKey = $derived(localDayKey(zones, new Date(app.now)));
+const today = $derived(latestLocalDay(zones, app.now));
 
 /** Save, then point the URL at the row — editing a template just cloned it. */
 async function save(next: Parameters<typeof mode.save>[0]): Promise<void> {
@@ -131,44 +141,54 @@ async function openShare(): Promise<void> {
   ShareDialog = (await loadChunk(() => import('../share/dialog.ts')))?.ShareDialog;
 }
 
+/** The range actually on screen — while refetching, the held response's, not the pill's. */
+const held = $derived(heldRange(runner.held, range));
 /** ONE environment for the dashboard AND the editor's preview (see SiteView).
  * Detail views are per-site, so the all-sites grid offers no drill or pivot. */
 const env = $derived(
-  dashboardEnv(app, { scope: 'all', range, onfilter: null, ondrill: null, onpivot: null }),
+  dashboardEnv(app, { scope: 'all', range: held, onfilter: null, ondrill: null, onpivot: null }),
 );
 
 const note = $derived.by(() => {
   if (runner.error !== undefined && runner.response !== undefined) {
-    return 'Live update failed — showing the last good result';
+    return failureNote(runner.stale, range, held);
   }
-  const compared = compareNote(range, cmp) ?? 'no comparison';
-  return `${compared} · active-now is live`;
+  const compared = compareNote(held, cmp) ?? 'no comparison';
+  const windows = runner.response?.meta.windows;
+  const span = windowLabel(windows);
+  if (span === undefined) return `${compared} · active-now is live`;
+  return `${span} · ${zoneLabel(windows)} · ${compared} · active-now is live`;
 });
 </script>
 
 {#if mode.Editor !== undefined}
   {@const Editor = mode.Editor}
-  <Editor
-    initial={dashboard}
-    {client}
-    request={requestFor}
-    response={runner.response}
-    error={runner.error}
-    {env}
-    saving={store.saving}
-    saveError={store.error}
-    onsave={(next) => void save(next)}
-    oncancel={() => mode.close()}
-  />
+  <!-- A draft belongs to one dashboard: a new selection is a new editor. -->
+  {#key store.selection?.ref}
+    <Editor
+      initial={dashboard}
+      {client}
+      request={requestFor}
+      response={runner.response}
+      error={runner.error}
+      {env}
+      saving={store.saving}
+      saveError={store.error}
+      onsave={(next) => void save(next)}
+      oncancel={() => mode.close()}
+      ondirty={mode.setDirty}
+    />
+  {/key}
 {:else}
   <div class="toolbar">
     <FilterRow
       {range}
       {cmp}
       {note}
+      {today}
       onselect={onselectrange}
       oncompare={onselectcmp}
-      onretry={runner.error === undefined ? undefined : () => runner.retry()}
+      onretry={runner.error === undefined ? undefined : () => runner.refresh()}
     />
     <button
       class="btn slim tool-btn"
@@ -190,7 +210,7 @@ const note = $derived.by(() => {
     {dashboard}
     response={runner.response}
     error={runner.error}
-    refetching={runner.refetching}
+    {refetching}
     {env}
   />
 {/if}

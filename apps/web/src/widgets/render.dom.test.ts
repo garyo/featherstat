@@ -9,7 +9,7 @@ import {
   type SiteInfo,
   upgradeDashboard,
 } from '@featherstat/shared';
-import { mount, unmount } from 'svelte';
+import { flushSync, mount, unmount } from 'svelte';
 import { afterEach, describe, expect, it } from 'vitest';
 import DashboardGrid from '../views/DashboardGrid.svelte';
 import type { ViewEnv } from './types.ts';
@@ -533,5 +533,98 @@ describe('a page that cannot feed a widget says so once, centrally', () => {
   it('names a viz nothing implements yet instead of breaking the dashboard', () => {
     const root = render([{ id: 'x', viz: 'map', w: 6, h: 2, options: {} }], { results: {} });
     expect(text(root.querySelector('.widget-note'))).toBe('The “map” widget isn’t available yet.');
+  });
+});
+
+describe('every chart value is reachable without a pointer (docs/05 § Accessibility)', () => {
+  /** The visually-hidden table a chart carries: header row, then each row's cells. */
+  const table = (root: HTMLElement): string[][] =>
+    [...root.querySelectorAll('.sr-only table tr')].map((row) =>
+      [...row.querySelectorAll('th, td')].map((cell) => text(cell)),
+    );
+
+  const series = [
+    {
+      id: 'series',
+      viz: 'timeseries',
+      w: 12,
+      h: 2,
+      title: 'Traffic',
+      query: { id: 'series', metrics: ['visitors', 'pageviews'], bucket: 'day' },
+    },
+  ];
+  const seriesResult = {
+    series: {
+      bucket: 'day' as const,
+      rows: [
+        { bucket: '2026-07-28', visitors: 40, pageviews: 95 },
+        { bucket: '2026-07-29', visitors: 1_250, pageviews: 3_010 },
+      ],
+    },
+  };
+
+  it('tables a line chart bucket by bucket', () => {
+    const root = render(series, { results: seriesResult });
+    expect(text(root.querySelector('.sr-only caption'))).toBe('Traffic — exact values per bucket');
+    expect(table(root)).toEqual([
+      ['Bucket', 'Visitors', 'Pageviews'],
+      ['Tue, Jul 28', '40', '95'],
+      ['Wed, Jul 29', '1,250', '3,010'],
+    ]);
+  });
+
+  it('steps a line chart with the keyboard, saying each bucket', () => {
+    // happy-dom lays nothing out; give the plot the width a card would.
+    const width = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+      configurable: true,
+      get: () => 600,
+    });
+    try {
+      const root = render(series, { results: seriesResult });
+      flushSync();
+      const plot = root.querySelector<SVGElement>('svg[role="slider"]');
+      expect(plot?.getAttribute('tabindex')).toBe('0');
+      plot?.dispatchEvent(new FocusEvent('focus'));
+      flushSync();
+      expect(plot?.getAttribute('aria-valuetext')).toBe(
+        'Wed, Jul 29: 1,250 visitors, 3,010 pageviews',
+      );
+      plot?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+      flushSync();
+      expect(plot?.getAttribute('aria-valuetext')).toBe('Tue, Jul 28: 40 visitors, 95 pageviews');
+      expect(text(root.querySelector('.chart-tip .tip-title'))).toBe('Tue, Jul 28');
+    } finally {
+      if (width !== undefined) Object.defineProperty(HTMLElement.prototype, 'clientWidth', width);
+    }
+  });
+
+  it('tables a histogram band by band', () => {
+    const root = render(
+      [
+        {
+          id: 'scroll',
+          viz: 'histogram',
+          w: 6,
+          h: 2,
+          title: 'Scroll depth',
+          query: { id: 'scroll', kind: 'distribution', of: 'scroll' },
+        },
+      ],
+      {
+        results: {
+          scroll: {
+            rows: [
+              { bucket: 0, legs: 12 },
+              { bucket: 9, legs: 3_400 },
+            ],
+          },
+        },
+      },
+    );
+    const rows = table(root);
+    expect(rows[0]).toEqual(['Band', 'Views']);
+    expect(rows[1]).toEqual(['0–10%', '12']);
+    expect(rows.at(-1)).toEqual(['90–100%', '3,400']);
   });
 });

@@ -25,14 +25,16 @@ import {
   type DashRef,
   DEFAULT_VIEW_STATE,
   type DetailRef,
+  discardsDraft,
   type PivotChoice,
   resolveNav,
   type SiteScope,
   type ViewName,
   type ViewRange,
+  type ViewStatePatch,
 } from '../lib/state.ts';
 import { toggleTheme } from '../lib/theme.ts';
-import type { AppEnv } from '../widgets/types.ts';
+import type { AppEnv, RealtimeEnv } from '../widgets/types.ts';
 import AllSitesView from './AllSitesView.svelte';
 import JourneysView from './JourneysView.svelte';
 import RealtimeView from './RealtimeView.svelte';
@@ -55,7 +57,9 @@ let { admin, auth }: Props = $props();
  * site — a scoped user's directory may not contain site 1 at all. */
 const firstSite = (): number => directory.sites?.[0]?.id ?? 1;
 
-const view = createViewState();
+// Back/forward is a navigation like any other: it may not take a changed draft
+// away without asking (the refused move is undone — see state.svelte.ts).
+const view = createViewState(window, (from, to) => !discardsDraft(from, to) || guardEdit());
 
 /** Any 401 mid-session flips the app back to the login view (docs/02). */
 const guardedFetch: typeof fetch = async (input, init) => {
@@ -136,20 +140,38 @@ const current = $derived(view.current.view);
 // dash) under an open draft. The editor chunk itself still loads on entry.
 // svelte-ignore state_referenced_locally
 const mode = createEditorMode(dashboards, () => site);
-// Leaving the dashboard view discards the draft, as unmounting the views did
-// when they owned the mode — tabs are not the switcher's confirm flow.
+// Leaving the dashboard view discards the draft — `navigate` has already asked.
 $effect(() => {
   if (current !== 'dash') mode.close();
 });
 
-/** The header pickers ask before a switch would discard an open draft. */
+/** Asks before a move would discard a changed draft; a yes closes the editor. */
 function guardEdit(): boolean {
-  const ok = confirmDashboardSwitch(mode.editing, dashboards.selection?.name, (message) =>
+  const ok = confirmDashboardSwitch(mode.dirty, dashboards.selection?.name, (message) =>
     window.confirm(message),
   );
   if (ok && mode.editing) mode.close();
   return ok;
 }
+
+/**
+ * Every navigation — the header's, a widget's jump, a drill — goes through
+ * here, so none can discard a draft without the same question. (The header's
+ * pickers also ask first, to snap a vetoed select back; by then the editor is
+ * closed and this passes.)
+ */
+function navigate(patch: ViewStatePatch): void {
+  if (discardsDraft(view.current, { ...view.current, ...patch }) && !guardEdit()) return;
+  view.update(patch);
+}
+
+// A changed draft also survives an accidental reload or tab close.
+$effect(() => {
+  if (!mode.dirty) return;
+  const hold = (event: BeforeUnloadEvent): void => event.preventDefault();
+  window.addEventListener('beforeunload', hold);
+  return () => window.removeEventListener('beforeunload', hold);
+});
 
 // The dashboard views hold their batch until the library lookup answers, so
 // the (scope, dash) load belongs to the same owner as the switcher. `dashRef`
@@ -292,24 +314,24 @@ $effect(() => {
 
 /** Opening a scope always lands on its dashboard — one history entry. */
 const selectSite = (next: SiteScope): void =>
-  view.update(resolveNav(view.current, { site: next }, siteTab));
+  navigate(resolveNav(view.current, { site: next }, siteTab));
 /** Journeys is per-site (docs/05): entered from the overview, it opens on the
  * switcher's last-visited site so the URL stays honest. */
 const selectView = (next: ViewName): void =>
-  view.update(resolveNav(view.current, { view: next }, siteTab));
-const selectRange = (range: ViewRange): void => view.update({ range });
-const selectCompare = (cmp: CompareChoice): void => view.update({ cmp });
+  navigate(resolveNav(view.current, { view: next }, siteTab));
+const selectRange = (range: ViewRange): void => navigate({ range });
+const selectCompare = (cmp: CompareChoice): void => navigate({ cmp });
 const selectDash = (dash: DashRef | undefined): void =>
-  view.update(resolveNav(view.current, { dash }, siteTab));
+  navigate(resolveNav(view.current, { dash }, siteTab));
 /** The wordmark: every axis back to its default, which serializes to a bare `/`. */
-const selectHome = (): void => view.update(DEFAULT_VIEW_STATE);
-const setFilters = (filters: FilterNode[]): void => view.update({ filters });
-const setPivots = (pivots: PivotChoice[]): void => view.update({ pivots });
+const selectHome = (): void => navigate(DEFAULT_VIEW_STATE);
+const setFilters = (filters: FilterNode[]): void => navigate({ filters });
+const setPivots = (pivots: PivotChoice[]): void => navigate({ pivots });
 /** A drill is a history push — back returns to the dashboard that was left. */
 const openDetail = (detail: DetailRef): void =>
-  view.update(resolveNav(view.current, { detail }, siteTab));
+  navigate(resolveNav(view.current, { detail }, siteTab));
 const logout = (): void => {
-  void auth.logout();
+  if (guardEdit()) void auth.logout();
 };
 
 /**
@@ -318,15 +340,35 @@ const logout = (): void => {
  * can perform. Assembled ONCE — as separate props, every view remembered a
  * different subset, which is how a site dashboard came to show the live feed
  * beside an `active-now` hero stuck at 0.
+ *
+ * One stable object of getters, never a fresh value: a hit lands several
+ * times a second on a busy site, and only the widgets that read the stream (or
+ * the clock) may re-derive for it — not every card on the page (widgets/env.ts
+ * `extendEnv` carries the getters through).
  */
-const app = $derived<AppEnv>({
-  now,
-  realtime: { active, recent, visitorTimes },
+const realtime: RealtimeEnv = {
+  get active() {
+    return active;
+  },
+  get recent() {
+    return recent;
+  },
+  get visitorTimes() {
+    return visitorTimes;
+  },
+};
+const app: AppEnv = {
+  get now() {
+    return now;
+  },
+  realtime,
   // Null until the directory answers, so a card can tell "loading" from "none".
-  sites: directory.sites === undefined ? null : directory.byId,
+  get sites() {
+    return directory.sites === undefined ? null : directory.byId;
+  },
   onopenrealtime: () => selectView('realtime'),
   onselectsite: selectSite,
-});
+};
 </script>
 
 <main class="shell">
@@ -443,9 +485,7 @@ const app = $derived<AppEnv>({
       library={dashboards.library}
       dash={view.current.dash}
       onchanged={() => dashboards.refresh()}
-      onselectdash={(ref) => {
-        if (guardEdit()) selectDash(ref);
-      }}
+      onselectdash={selectDash}
       onclose={() => (managing = false)}
     />
   {/if}

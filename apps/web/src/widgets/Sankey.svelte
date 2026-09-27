@@ -1,4 +1,5 @@
 <script lang="ts">
+import DataTable from './DataTable.svelte';
 import { type EdgeRef, journeyStep, percent } from './flows.ts';
 import { exactNumber } from './format.ts';
 import {
@@ -236,25 +237,19 @@ const linkAria = (link: SankeyLink): string =>
         </div>
       </div>
     {/if}
-    <!-- The chart's values without a pointer (docs/05 a11y — like the heatmap). -->
-    <div class="sr-only">
-      <table>
-        <caption>Journey transitions</caption>
-        <thead>
-          <tr><th>Step</th><th>From</th><th>To</th><th>Sessions</th></tr>
-        </thead>
-        <tbody>
-          {#each layout.links as link (link.key)}
-            <tr>
-              <td>{link.step}</td>
-              <td>{displayText(link.from, link.fromOther)}</td>
-              <td>{displayText(link.to, link.toOther)}</td>
-              <td>{exactNumber(link.sessions)}</td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    </div>
+    <DataTable
+      caption="Journey transitions"
+      head={['Step', 'From', 'To', 'Sessions']}
+      rows={layout.links.map((link) => ({
+        key: link.key,
+        cells: [
+          String(link.step),
+          displayText(link.from, link.fromOther),
+          displayText(link.to, link.toOther),
+          exactNumber(link.sessions),
+        ],
+      }))}
+    />
   {/if}
 </div>
 
