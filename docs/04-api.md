@@ -1003,6 +1003,8 @@ process (`@modelcontextprotocol/sdk`, MIT), **stateless**: every POST
 constructs its own server + transport and stands alone — no session id, no
 handshake ordering, no load-balancer affinity. Responses are plain JSON
 (`enableJsonResponse`), so a curl-shaped JSON-RPC POST is a complete client.
+Bodies are capped at the query route's 1 MiB (413 past it) — a `query` call
+carries one `QueryRequest`, and nothing else here needs more.
 
 **Auth: the same Bearer API tokens, and ONLY those.** The route runs the
 ordinary gate, then requires `principal.kind === 'token'`: anonymous is 401,

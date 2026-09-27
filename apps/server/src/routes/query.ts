@@ -38,7 +38,7 @@ import { clientIp } from './track.ts';
  * when its window moves even though no data did.
  */
 /** 32 queries × 16 filters of 2 KB values still fit comfortably — beyond this is abuse. */
-const MAX_QUERY_BODY_BYTES = 1024 * 1024;
+export const MAX_QUERY_BODY_BYTES = 1024 * 1024;
 
 /**
  * What a batch is allowed to cost, and how often (docs/04 § 3 "Rate limit").
