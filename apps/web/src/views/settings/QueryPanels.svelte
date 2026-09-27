@@ -26,6 +26,7 @@ import {
   rowsOfNodes,
 } from '../../lib/filter-builder.ts';
 import { createLoader } from '../../lib/loader.svelte.ts';
+import { edited } from '../../lib/settings.ts';
 import FilterBuilder from './FilterBuilder.svelte';
 import LoadState from './LoadState.svelte';
 import PanelError from './PanelError.svelte';
@@ -146,19 +147,23 @@ let segBusy = $state(false);
 let segError = $state<PanelFailure | undefined>(undefined);
 let segRowError = $state<PanelFailure | undefined>(undefined);
 
+/** What an open form would save, and what it held when it opened. */
+const segForm = () => ({ name: segName, rows: seg.rows, json: seg.json });
+let segOpened: unknown;
+
 function openSegment(info?: SegmentInfo): void {
   segOpen = true;
   segEditing = info?.id;
   segName = info?.name ?? '';
   seg = freshFilter();
-  if (info === undefined) return;
-  const rows = rowsOf(info.filter);
-  if (rows === undefined || rows.length === 0) {
+  const rows = info === undefined ? undefined : rowsOf(info.filter);
+  if (info !== undefined && (rows === undefined || rows.length === 0)) {
     seg.advanced = true;
     seg.json = JSON.stringify(info.filter, null, 2);
-  } else {
+  } else if (rows !== undefined) {
     seg.rows = rows;
   }
+  segOpened = $state.snapshot(segForm());
 }
 
 function toggleSegmentEditor(): void {
@@ -237,12 +242,16 @@ let dmBusy = $state(false);
 let dmError = $state<PanelFailure | undefined>(undefined);
 let dmRowError = $state<PanelFailure | undefined>(undefined);
 
+const dmForm = () => ({ name: dmName, expr: dmExpr });
+let dmOpened: unknown;
+
 function openDerived(info?: DerivedMetricInfo): void {
   dmOpen = true;
   dmEditing = info?.id;
   dmName = info?.name ?? '';
   dmExpr = info?.expr ?? '';
   dmError = undefined;
+  dmOpened = dmForm();
 }
 
 async function saveDerived(event: SubmitEvent): Promise<void> {
@@ -291,6 +300,16 @@ $effect(() => {
   if (goalSiteId !== undefined) void goals.load(goalSiteId);
 });
 
+const goalForm = () => ({
+  name: goalName,
+  rows: goal.rows,
+  json: goal.json,
+  value: goalValueKind,
+  fixed: goalFixed,
+  target: goalTarget,
+});
+let goalOpened: unknown;
+
 function openGoal(info?: GoalInfo): void {
   goalOpen = true;
   goalEditing = info?.id;
@@ -301,14 +320,23 @@ function openGoal(info?: GoalInfo): void {
   goalFixed =
     info?.valueExpr != null && info.valueExpr !== 'event_value' ? String(info.valueExpr.fixed) : '';
   goalTarget = info?.target == null ? '' : String(info.target);
-  if (info === undefined) return;
-  const rows = rowsOfNodes(info.filters);
-  if (rows === undefined || rows.length === 0) {
+  const rows = info === undefined ? undefined : rowsOfNodes(info.filters);
+  if (info !== undefined && (rows === undefined || rows.length === 0)) {
     goal.advanced = true;
     goal.json = JSON.stringify(info.filters, null, 2);
-  } else {
+  } else if (rows !== undefined) {
     goal.rows = rows;
   }
+  goalOpened = $state.snapshot(goalForm());
+}
+
+/** An open form holding edits — what a Settings section switch would discard. */
+export function unsaved(): boolean {
+  return (
+    (segOpen && edited(segForm(), segOpened)) ||
+    (dmOpen && edited(dmForm(), dmOpened)) ||
+    (goalOpen && edited(goalForm(), goalOpened))
+  );
 }
 
 function toggleGoalEditor(): void {

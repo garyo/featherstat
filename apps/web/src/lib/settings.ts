@@ -97,3 +97,12 @@ export function dataSettingsBody(
     },
   };
 }
+
+/**
+ * Whether a form's draft differs from what it was opened on — the question a
+ * Settings section switch asks before it discards a panel. Compared as the JSON
+ * each would send, so an edit typed and then undone reads as no edit at all.
+ */
+export function edited(draft: unknown, opened: unknown): boolean {
+  return JSON.stringify(draft) !== JSON.stringify(opened);
+}

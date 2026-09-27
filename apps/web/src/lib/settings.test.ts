@@ -3,6 +3,7 @@ import {
   dataSettingsBody,
   dataSettingsDraft,
   dropTotals,
+  edited,
   formatBytes,
   localInputToMs,
   msToLocalInput,
@@ -103,5 +104,14 @@ describe('dataSettingsBody', () => {
     expect(dataSettingsBody({ retention: 30, backupDir: '', backupKeep: null })).toEqual({
       error: 'say how many backups to keep',
     });
+  });
+});
+
+describe('edited', () => {
+  it('tells a changed draft from an untouched one, and an undone edit from a kept one', () => {
+    const opened = { name: 'Signups', rows: [{ dim: 'path', value: '/thanks' }] };
+    expect(edited(JSON.parse(JSON.stringify(opened)), opened)).toBe(false);
+    expect(edited({ ...opened, name: 'Sign-ups' }, opened)).toBe(true);
+    expect(edited({ ...opened, name: 'Signups' }, opened)).toBe(false);
   });
 });

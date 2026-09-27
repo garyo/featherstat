@@ -12,6 +12,7 @@ import {
   type NtfyErrors,
   settingsBody,
 } from '../lib/ntfy.ts';
+import { edited } from '../lib/settings.ts';
 import LoadState from './settings/LoadState.svelte';
 import PanelError from './settings/PanelError.svelte';
 
@@ -116,6 +117,12 @@ function addRule(): void {
 function removeRule(index: number): void {
   if (draft === undefined) return;
   draft.rules = draft.rules.filter((_, i) => i !== index);
+}
+
+/** Edits a Settings section switch would discard. */
+export function unsaved(): boolean {
+  const view = stored.value;
+  return view !== undefined && draft !== undefined && edited(draft, draftFrom(view));
 }
 </script>
 

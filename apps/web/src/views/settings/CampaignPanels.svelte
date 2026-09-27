@@ -6,6 +6,7 @@ import { adminObjects } from '../../lib/admin-objects.ts';
 import type { AuthRole } from '../../lib/auth.svelte.ts';
 import ConfirmButton from '../../lib/components/ConfirmButton.svelte';
 import { createLoader } from '../../lib/loader.svelte.ts';
+import { edited } from '../../lib/settings.ts';
 import {
   buildUtmUrl,
   emptyUtmDraft,
@@ -58,6 +59,8 @@ const listOf = (text: string): string[] | null => {
   return entries.length === 0 ? null : entries;
 };
 
+let regOpened: unknown;
+
 function openCampaign(info?: CampaignInfo): void {
   regOpen = true;
   regEditing = info?.id;
@@ -70,6 +73,7 @@ function openCampaign(info?: CampaignInfo): void {
     endsAt: info?.endsAt ?? '',
     notes: info?.notes ?? '',
   };
+  regOpened = $state.snapshot(regDraft);
 }
 
 async function saveCampaign(event: SubmitEvent): Promise<void> {
@@ -145,6 +149,14 @@ async function saveAliases(event: SubmitEvent): Promise<void> {
   } finally {
     aliasBusy = false;
   }
+}
+
+/** Edits a Settings section switch would discard; the link builder stores nothing. */
+export function unsaved(): boolean {
+  return (
+    (regOpen && edited(regDraft, regOpened)) ||
+    (aliases.value !== undefined && edited(aliasDraft, aliases.value))
+  );
 }
 
 // ---------- UTM link builder (client-only) ----------

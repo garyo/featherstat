@@ -10,6 +10,7 @@ import {
   dataSettingsBody,
   dataSettingsDraft,
   dropTotals,
+  edited,
   formatBytes,
   localInputToMs,
   msToLocalInput,
@@ -71,6 +72,8 @@ let annError = $state<PanelFailure | undefined>(undefined);
 /** The row verbs report beside the rows; the form has its own line. */
 let annRowError = $state<PanelFailure | undefined>(undefined);
 
+let annOpened: unknown;
+
 function openAnnotation(info?: AnnotationInfo): void {
   annOpen = true;
   annEditing = info?.id;
@@ -80,6 +83,7 @@ function openAnnotation(info?: AnnotationInfo): void {
     when: msToLocalInput(info?.ts ?? Date.now()),
     text: info?.text ?? '',
   };
+  annOpened = $state.snapshot(annDraft);
 }
 
 async function saveAnnotation(event: SubmitEvent): Promise<void> {
@@ -181,6 +185,17 @@ async function saveExclusions(): Promise<void> {
   } finally {
     xBusy = false;
   }
+}
+
+/** Edits a Settings section switch would discard. */
+export function unsaved(): boolean {
+  const settings = dataSettings.value;
+  const rules = exclusions.value?.rules;
+  return (
+    (annOpen && edited(annDraft, annOpened)) ||
+    (settings !== undefined && edited(dsDraft, dataSettingsDraft(settings))) ||
+    (rules !== undefined && edited(xDraft, rules))
+  );
 }
 </script>
 

@@ -3,7 +3,8 @@ import type { SiteInfo } from '@featherstat/shared';
 import type { AdminClient } from '../lib/admin.ts';
 import { type PanelFailure, panelFailure } from '../lib/admin-failure.ts';
 import type { AuthRole } from '../lib/auth.svelte.ts';
-import { parseDomains, trackingSnippet } from '../lib/settings.ts';
+import { edited, parseDomains, trackingSnippet } from '../lib/settings.ts';
+import type { SettingsSection } from '../lib/state.ts';
 import AccessPanels from './settings/AccessPanels.svelte';
 import CampaignPanels from './settings/CampaignPanels.svelte';
 import DataPanels from './settings/DataPanels.svelte';
@@ -38,12 +39,23 @@ interface Props {
   role?: AuthRole;
   /** Sites changed server-side — the directory (header, cards) must reload. */
   onsiteschanged: () => void;
+  /** The section the URL names (`?section=`); undefined opens the first. */
+  section?: SettingsSection;
+  /** Puts a chosen section in the URL. Without it, the choice stays local to this view. */
+  onselectsection?: (section: SettingsSection) => void;
 }
 
-let { admin, sites, role = 'admin', onsiteschanged }: Props = $props();
+let {
+  admin,
+  sites,
+  role = 'admin',
+  onsiteschanged,
+  section: requested,
+  onselectsection,
+}: Props = $props();
 
 // ---------- sections ----------
-type Section = 'sites' | 'access' | 'users' | 'query' | 'campaigns' | 'notify' | 'data';
+type Section = SettingsSection;
 const ALL_SECTIONS: ReadonlyArray<{ id: Section; label: string; adminOnly?: boolean }> = [
   { id: 'sites', label: 'Sites & tracking' },
   { id: 'access', label: 'Access' },
@@ -54,7 +66,12 @@ const ALL_SECTIONS: ReadonlyArray<{ id: Section; label: string; adminOnly?: bool
   { id: 'data', label: 'Data', adminOnly: true },
 ];
 const SECTIONS = $derived(ALL_SECTIONS.filter((s) => role === 'admin' || s.adminOnly !== true));
-let section = $state<Section>('sites');
+let chosen = $state<Section | undefined>(undefined);
+/** A section this role does not hold (a hand-edited URL) opens the first one. */
+const section = $derived.by(() => {
+  const want = requested ?? chosen;
+  return SECTIONS.find((entry) => entry.id === want)?.id ?? 'sites';
+});
 
 /** Panel props are uniform, so one component slot serves every section. */
 const PANELS: Record<Exclude<Section, 'sites'>, typeof AccessPanels> = {
@@ -66,6 +83,28 @@ const PANELS: Record<Exclude<Section, 'sites'>, typeof AccessPanels> = {
   data: DataPanels,
 };
 const Panel = $derived(section === 'sites' ? undefined : PANELS[section]);
+let panel = $state<ReturnType<typeof AccessPanels> | undefined>(undefined);
+
+/** Whether leaving the section on screen would throw away an edit. */
+export function unsaved(): boolean {
+  if (section !== 'sites') return panel?.unsaved() ?? false;
+  return (
+    (draft !== undefined && edited(draft, draftOpened)) ||
+    currentPassword !== '' ||
+    nextPassword !== '' ||
+    confirmPassword !== ''
+  );
+}
+
+function selectSection(next: Section): void {
+  if (next === section) return;
+  const label = ALL_SECTIONS.find((entry) => entry.id === section)?.label ?? 'this section';
+  if (unsaved() && !window.confirm(`Leave ${label}? Your unsaved changes there will be lost.`)) {
+    return;
+  }
+  if (onselectsection === undefined) chosen = next;
+  else onselectsection(next);
+}
 
 // ---------- sites ----------
 interface Draft {
@@ -77,6 +116,7 @@ interface Draft {
 }
 
 let draft = $state<Draft | undefined>(undefined);
+let draftOpened: Draft | undefined;
 let siteBusy = $state(false);
 let siteError = $state<PanelFailure | undefined>(undefined);
 /** The typed-confirmation gate: the name must be re-typed exactly to delete. */
@@ -94,6 +134,7 @@ function startEdit(site: SiteInfo): void {
     domains: site.domains.join(', '),
     timezone: site.timezone,
   };
+  draftOpened = $state.snapshot(draft);
 }
 
 function startAdd(): void {
@@ -104,6 +145,7 @@ function startAdd(): void {
     domains: '',
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   };
+  draftOpened = $state.snapshot(draft);
 }
 
 async function saveDraft(event: SubmitEvent): Promise<void> {
@@ -212,7 +254,7 @@ const nameOf = (id: number): string => sites?.find((s) => s.id === id)?.name ?? 
         class:primary={section === entry.id}
         type="button"
         aria-current={section === entry.id ? 'page' : undefined}
-        onclick={() => (section = entry.id)}
+        onclick={() => selectSection(entry.id)}
       >
         {entry.label}
       </button>
@@ -359,7 +401,7 @@ const nameOf = (id: number): string => sites?.find((s) => s.id === id)?.name ?? 
       </form>
     </div>
   {:else if Panel !== undefined}
-    <Panel {admin} {sites} {role} />
+    <Panel bind:this={panel} {admin} {sites} {role} />
   {/if}
 </div>
 

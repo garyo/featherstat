@@ -5,6 +5,7 @@ import { type PanelFailure, panelFailure } from '../../lib/admin-failure.ts';
 import { adminObjects } from '../../lib/admin-objects.ts';
 import { type AlertDraft, draftsOf, emptyAlert, rulesOf } from '../../lib/alerts.ts';
 import { createLoader } from '../../lib/loader.svelte.ts';
+import { edited } from '../../lib/settings.ts';
 import NtfyPanel from '../NtfyPanel.svelte';
 import LoadState from './LoadState.svelte';
 import PanelError from './PanelError.svelte';
@@ -25,6 +26,7 @@ let { admin, sites }: Props = $props();
 const api = adminObjects(admin);
 
 let drafts = $state<AlertDraft[]>([]);
+let ntfy = $state<ReturnType<typeof NtfyPanel> | undefined>(undefined);
 const rules = createLoader(() => api.alertRules(), {
   onload: (stored) => {
     drafts = draftsOf(stored);
@@ -55,9 +57,15 @@ async function save(event: SubmitEvent): Promise<void> {
     busy = false;
   }
 }
+
+/** Edits a Settings section switch would discard — here or in the ntfy card. */
+export function unsaved(): boolean {
+  const stored = rules.value;
+  return (ntfy?.unsaved() ?? false) || (stored !== undefined && edited(drafts, draftsOf(stored)));
+}
 </script>
 
-<NtfyPanel {admin} {sites} />
+<NtfyPanel bind:this={ntfy} {admin} {sites} />
 
 <div class="card c12">
   <h2>Alert rules</h2>

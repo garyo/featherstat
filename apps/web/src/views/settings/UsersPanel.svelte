@@ -106,6 +106,11 @@ async function copySecret(secret: string): Promise<void> {
     // No secure context — the link is selectable right there.
   }
 }
+
+/** A typed invite, a site assignment being edited, or a claim link still on screen. */
+export function unsaved(): boolean {
+  return email.trim() !== '' || assigning !== undefined || invite !== undefined;
+}
 </script>
 
 <div class="card c12">

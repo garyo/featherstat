@@ -142,6 +142,16 @@ async function copySecret(secret: string): Promise<void> {
     // No secure context — the secret is selectable right there.
   }
 }
+
+/** Typed mint forms, or a secret still on screen that no reload can show again. */
+export function unsaved(): boolean {
+  return (
+    tokenName.trim() !== '' ||
+    viewerEmail.trim() !== '' ||
+    minted !== undefined ||
+    invite !== undefined
+  );
+}
 </script>
 
 {#snippet scopePicker(draft: ScopeDraft, kind: string)}
