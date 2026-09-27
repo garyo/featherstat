@@ -53,7 +53,12 @@ caps, unknown parameters ignored. Full parameter mapping in
 
 ### Enrichment pipeline (pure functions, in-process)
 
-1. **Validate** — known site id, sane URL, clamp field lengths.
+1. **Validate** — known site id, sane URL, clamp field lengths. The site
+   comes from an in-memory copy (`pipeline/site-cache.ts`), not a table read
+   per hit: the db helpers that write `sites` bump a generation it checks,
+   and SQLite's `data_version` tells it when another process (the importer)
+   committed. The site-local clock is computed once per hit and shared by the
+   drop counters, the prop registry, the day salt and the sessionizer.
 2. **Exclusions** — the client address against the configured rules (docs/03
    § Exclusions) → drop, increment a per-site counter. Literal addresses and
    CIDR prefixes match directly; hostname rules match an address set a timer

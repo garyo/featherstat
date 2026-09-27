@@ -30,3 +30,15 @@ export function classifyLink(
   }
   return target.hostname === hostname ? undefined : { kind: 'link', url: target.href };
 }
+
+const MIDDLE_BUTTON = 1;
+
+/**
+ * Whether a click on a link is the visitor following it. `click` is the primary
+ * button, modifier keys included; every other button arrives as `auxclick`, and
+ * of those only the middle one opens anything — a right click opens a context
+ * menu, which is not leaving.
+ */
+export function isLinkActivation(event: Event): boolean {
+  return event.type === 'click' || (event as MouseEvent).button === MIDDLE_BUTTON;
+}

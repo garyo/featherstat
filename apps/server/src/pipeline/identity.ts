@@ -94,17 +94,22 @@ export class Identity {
 
   constructor(private readonly db: Db) {}
 
-  visitorId(hit: Hit, ctx: HitContext, timezone: string): Uint8Array {
+  /** `date` is the site-local date of `ctx.receivedAt`; the pipeline passes the one it already has. */
+  visitorId(
+    hit: Hit,
+    ctx: HitContext,
+    timezone: string,
+    date: string = localClock(timezone, ctx.receivedAt).date,
+  ): Uint8Array {
     if (hit.uid !== undefined && this.isUidEnabled(hit.siteId)) {
       return hash8(this.uidSalt(hit.siteId), hit.uid);
     }
-    const salt = this.currentDaySalt(timezone, ctx.receivedAt);
+    const salt = this.currentDaySalt(timezone, date);
     const fingerprint = hit.visitorId ?? `${ctx.ip}\n${ctx.userAgent}`;
     return hash8(salt, `${hit.siteId}\n${fingerprint}`);
   }
 
-  private currentDaySalt(timezone: string, now: number): Buffer {
-    const date = localClock(timezone, now).date;
+  private currentDaySalt(timezone: string, date: string): Buffer {
     const current = this.daySalts.get(timezone);
     // Forward-only, on the ISO dates' own lexicographic order: a hit timed before
     // the last rotation keeps the current salt — its own day's salt is already

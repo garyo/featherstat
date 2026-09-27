@@ -16,12 +16,16 @@ ignored, never errors — a tracker must be impossible to break from the tag sid
 | --- | --- | --- |
 | `idsite` | site id | `site_id` (unknown id → 204, dropped; never 4xx to a browser beacon) |
 | `rec=1` | "record this" | required, else ignored |
-| `url` | page URL | split → `hostname`, `path` (query string kept minus the closed tracking-param list, fragment dropped — docs/03 § Page identity) |
+| `url` | page URL | split → `hostname`, `path` (query string kept minus the closed tracking-param list, fragment dropped — docs/03 § Page identity). Past 2048 chars (`MAX_URL_CHARS`) it is **cut, not dropped**: tracking params first, so an ad click with a long query still attributes, then the page's own params while they fit, never a pair cut mid-value. `urlref`, `link` and `download` are bounded the same way |
 | `action_name` | page title | `title`; with no `url` it still records a pageview (Matomo title-only actions) |
 | `urlref` | referrer | attribution pipeline |
 | `e_c`,`e_a`,`e_n`,`e_v` | event cat/action/name/value | `type='event'` + fields |
 | `link` / `download` | outlink / download URL | `type='outlink'|'download'`, `target_url` |
 | `ping=1` | heartbeat | `type='ping'` (session/engagement only) |
+| `ca=1` | "custom action": not a page view (Matomo's spec) | with no event/link/download/ping in it, **nothing is recorded** — it is a request type this system does not model (media, forms, heatmaps). matomo.js sends every event with `ca=1`; the event still records |
+| `idgoal` | goal conversion (`0` = ecommerce) | nothing recorded — no pageview is booked for the page it fired on |
+| `c_n`, `c_i` | content impression / interaction | nothing recorded; a `link=` click carrying its interaction is still the outlink |
+| `search` | site search | recorded as the page view it arrives with |
 | `pv_id` | pageview id | accepted, ignored (sessions cover our model) |
 | `res` | screen resolution | `screen` |
 | `h`,`m`,`s`,`cdt` | client time | ignored — server clock is authoritative |
@@ -34,6 +38,10 @@ ignored, never errors — a tracker must be impossible to break from the tag sid
 
 Also honored: `POST` bodies in both form-encoded and Matomo's JSON bulk format
 (`{"requests": ["?idsite=1&…", …]}`), because `sendBeacon` and SDKs use them.
+
+A `HEAD` gets the answer its `GET` would, and records nothing: no beacon is
+ever sent as `HEAD`, so one is a probe — an uptime check, a link unfurler —
+and counting it would book a page view for a request nobody's browser made.
 
 Semantics: respond immediately after normalization; enrichment and storage are
 asynchronous (see 02). Any parse failure inside a hit degrades to "record what
@@ -97,7 +105,10 @@ a prerendered document is its own realm holding its own tracker, so two of them
 are two first views rather than one announced twice. So the first page view
 waits for the arrival instead: `document.prerendering` says the document is only
 being speculated on, and `prerenderingchange` fires once, when the visitor
-actually comes. The native tracker defers its opening `page()`; the shim defers
+actually comes. The native tracker defers its opening `page()` and installs its history hook
+only then — a router hydrating the speculated page rewrites its URL before
+anyone has arrived, and a hook listening already would announce that as a
+view; the shim defers
 *taking over* `_paq.push`, which leaves the tag's commands accumulating in the
 plain array they were always pushed into and drains them, in order, on arrival —
 so the view carries the moment of arrival, not of speculation. A browser that
@@ -144,6 +155,24 @@ the vocabulary, the populations, the corpus and the replay generator, while a
 custom event already counts, filters by `event_category`/`event_action`, and
 shows in the live feed — for a milestone that is exactly an event.
 
+A read is **depth and attention**, not depth alone: the milestone waits until
+the page view has held the reader through at least one heartbeat (which is
+itself focus- and idle-gated), then fires on the first reading at or past
+90 % — a heartbeat's or a scroll's. Every page view restarts the heartbeat,
+so that first beat is a whole interval after the view even when an SPA route
+lands a second before the old cycle's next tick. A page that fits the viewport is 100 % the
+moment it loads, and firing then made every visit to a short page "read" before
+anyone had looked at it. `page()` takes no reading of its own for the same
+reason on an SPA route change: until the router has swapped the document and
+moved the scroll position, both still belong to the page before, and the new
+route would inherit its end-of-page depth.
+
+The pair is reserved (`READ_MILESTONE` in `packages/shared`), and it **does not
+count against bounce**: the tracker sent it, not the visitor, so the sessionizer
+stores the row but leaves it out of `sessions.events` — the "no events" in the
+bounce test (docs/03 § Derived metrics). Engagement already has its own
+witness in `engaged_ms`.
+
 ### Compatibility contract
 
 The golden corpus in `apps/server/test/fixtures/matomo/` (real access-log
@@ -175,7 +204,9 @@ Props are a native-collector feature only (§ 2).
   declare `visitorId`, `uid` or `clientIpOverride`, because identity and geo
   are the server's to decide (invariant 3).
 
-- **Degradation is per hit, never per request** (invariant 4). A malformed
+- **Degradation is per hit, never per request** (invariant 4). A URL
+  field past `MAX_URL_CHARS` is cut to fit exactly as on matomo.php (§ 1);
+  only past `MAX_RECEIVED_URL_CHARS` (16 KiB) is the field itself lost. A malformed
   entry is dropped and the rest of its batch recorded; an optional field the
   schema rejects costs itself and not the hit carrying it; a batch longer than
   `MAX_COLLECT_HITS` (50) is truncated rather than refused. The endpoint
@@ -193,10 +224,22 @@ Props are a native-collector feature only (§ 2).
 
 - `packages/tracker` ships `tracker.js` (< 2 KB gz, ESM):
   `init({site, endpoint})`, auto pageviews with a `history` hook (opt-out),
-  auto outlink/download, focus-gated engagement pings,
+  auto outlink/download (a primary or middle click — both trackers ignore a
+  right click, which opens a menu rather than the link), focus-gated
+  engagement pings,
   `track(action, {category, name, value, props})`,
   `page(url?, title?, props?)` — auto pageviews send no props —
   and scroll depth (below).
+- **What the history hook counts as a page view** (`navigation.ts`): a
+  change of path, however it happened; a change of query when pushed or
+  reached by back/forward, since the query is page identity; never a fragment
+  — an in-page anchor is the same page, and the server strips it from `path`
+  anyway. A `replaceState` that rewrites only the query is the app keeping
+  state in the address bar — a search box on every keystroke, a filter, a
+  sort — and is not a view. Plausible ignores `replaceState` entirely, which
+  also misses a router's redirect; Matomo leaves SPA tracking to the tag
+  author. Counting the path change and dropping the typing keeps the redirect
+  and loses nothing a reader would call a page.
 - **Every hit is addressed to the page as REPORTED**, not to `location.href`:
   once a view is announced under its own URL (an SPA naming its route, or a
   404 page reporting itself as one canonical `/404`), its pings, read

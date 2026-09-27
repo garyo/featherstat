@@ -18,8 +18,8 @@ describe('client IP resolution (feeds the visitor hash — invariant 3 material)
   it('takes the LAST x-forwarded-for entry with one trusted hop — the leading entries are client-typed', async () => {
     const { app, contexts } = capture();
     await app.request(QUERY, {
-      // A spoofer sends "6.6.6.6"; the (one) trusted proxy appends the real peer.
-      headers: { 'x-forwarded-for': '6.6.6.6, 203.0.113.9', 'x-real-ip': '198.51.100.2' },
+      // A spoofer sends "192.0.2.66"; the (one) trusted proxy appends the real peer.
+      headers: { 'x-forwarded-for': '192.0.2.66, 203.0.113.9', 'x-real-ip': '198.51.100.2' },
     });
     expect(contexts[0]?.ip).toBe('203.0.113.9');
   });
@@ -47,7 +47,7 @@ describe('client IP resolution (feeds the visitor hash — invariant 3 material)
     // Fewer entries than trusted hops: the chain was bypassed — socket only.
     expect(clientIp(fakeContext({ 'x-forwarded-for': 'fake' }), 2)).toBe('');
     // hops=0 (no proxy): forwarded headers are attacker-supplied, ignored.
-    const direct = fakeContext({ 'x-forwarded-for': '6.6.6.6', 'x-real-ip': '6.6.6.7' });
+    const direct = fakeContext({ 'x-forwarded-for': '192.0.2.66', 'x-real-ip': '192.0.2.67' });
     expect(clientIp(direct, 0)).toBe('');
   });
 
@@ -92,6 +92,16 @@ describe('responses', () => {
     const empty = await app.request(`${QUERY}&send_image=0`);
     expect(empty.status).toBe(204);
     expect(empty.headers.get('cache-control')).toBe('no-store');
+  });
+
+  it('answers a HEAD probe like the GET it mirrors, and records nothing', async () => {
+    const { app, batches } = capture();
+    for (const path of [QUERY, `${QUERY}&send_image=0`, QUERY.replace('matomo', 'piwik')]) {
+      const res = await app.request(path, { method: 'HEAD' });
+      expect(res.status, path).toBe(path.includes('send_image=0') ? 204 : 200);
+      expect(await res.text(), path).toBe('');
+    }
+    expect(batches).toHaveLength(0);
   });
 
   it('never calls the sink when no hit was understood', async () => {

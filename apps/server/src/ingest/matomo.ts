@@ -1,4 +1,5 @@
 import { type EventPayload, EventPayloadSchema, type Hit, HitSchema } from '@featherstat/shared';
+import { boundUrl } from '../pipeline/page-url.ts';
 
 /** One inbound tracking request: the query string plus, for POST, the raw body. */
 export interface MatomoRequest {
@@ -66,10 +67,10 @@ function parseBulk(body: string): URLSearchParams[] | undefined {
 function parseHit(params: URLSearchParams): Hit | undefined {
   if (params.get('rec') !== '1') return undefined;
 
-  const url = optional(HitSchema.shape.url, stripFragment(params.get('url')));
+  const url = optional(HitSchema.shape.url, receivedUrl(stripFragment(params.get('url'))));
   const title = optional(HitSchema.shape.title, params.get('action_name'));
-  const link = optional(HitSchema.shape.targetUrl, params.get('link'));
-  const download = optional(HitSchema.shape.targetUrl, params.get('download'));
+  const link = optional(HitSchema.shape.targetUrl, receivedUrl(params.get('link')));
+  const download = optional(HitSchema.shape.targetUrl, receivedUrl(params.get('download')));
   const event = parseEvent(params);
 
   let type: Hit['type'] | undefined;
@@ -84,7 +85,7 @@ function parseHit(params: URLSearchParams): Hit | undefined {
     targetUrl = download;
   } else if (params.get('ping') === '1') {
     type = 'ping';
-  } else if (url !== undefined || title !== undefined) {
+  } else if ((url !== undefined || title !== undefined) && !declaresNonPageview(params)) {
     type = 'pageview'; // Matomo records a pageview from `action_name` alone (docs/04)
   }
   if (!type) return undefined;
@@ -94,7 +95,7 @@ function parseHit(params: URLSearchParams): Hit | undefined {
     type,
     url,
     title,
-    referrer: optional(HitSchema.shape.referrer, params.get('urlref')),
+    referrer: optional(HitSchema.shape.referrer, receivedUrl(params.get('urlref'))),
     targetUrl,
     event,
     screen: optional(HitSchema.shape.screen, params.get('res')),
@@ -106,6 +107,20 @@ function parseHit(params: URLSearchParams): Hit | undefined {
     clientIpOverride: optional(HitSchema.shape.clientIpOverride, params.get('cip')),
   });
   return hit.success ? hit.data : undefined;
+}
+
+/**
+ * A request that says it is something other than a page view, in a way this
+ * system does not model: `ca=1` (Matomo's "custom action" — its spec: never a
+ * page view), a goal conversion or ecommerce update (`idgoal`), a content
+ * impression or interaction (`c_n` / `c_i`). Every one carries the page's `url`,
+ * which is what made them look like page views. Nothing is recorded for them —
+ * the beacon is still answered (invariant 4). Events, links, downloads and
+ * pings are decided first, so a `ca=1` event (matomo.js sends every event so)
+ * or a link click carrying its content interaction is still what it says.
+ */
+function declaresNonPageview(params: URLSearchParams): boolean {
+  return params.get('ca') === '1' || params.has('idgoal') || params.has('c_n') || params.has('c_i');
 }
 
 /** An event needs both category and action; a half-declared one degrades to no event. */
@@ -125,6 +140,11 @@ function stripFragment(url: string | null): string | undefined {
   if (url === null) return undefined;
   const hash = url.indexOf('#');
   return hash === -1 ? url : url.slice(0, hash);
+}
+
+/** An over-long URL is cut to fit rather than lost (`boundUrl`). */
+function receivedUrl(url: string | null | undefined): string | undefined {
+  return url === null || url === undefined ? undefined : boundUrl(url);
 }
 
 /** Optional fields degrade one by one: a value the schema rejects is dropped, the hit kept. */

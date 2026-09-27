@@ -103,6 +103,15 @@ export type SiteInfo = z.infer<typeof SiteInfoSchema>;
 // ---------------------------------------------------------------------------
 
 export const HitTypeSchema = z.enum(['pageview', 'event', 'outlink', 'download', 'ping']);
+
+/** The longest URL a hit stores; ingest cuts a longer one to fit (`boundUrl`, pipeline/page-url.ts). */
+export const MAX_URL_CHARS = 2048;
+/**
+ * The longest URL the collect wire accepts at all. Past `MAX_URL_CHARS` it is
+ * still a page view with campaign params worth reading, so it is cut rather
+ * than dropped; past this it is abuse, and the field alone is lost.
+ */
+export const MAX_RECEIVED_URL_CHARS = 16_384;
 export type HitType = z.infer<typeof HitTypeSchema>;
 
 // ---------------------------------------------------------------------------
@@ -140,11 +149,11 @@ export type EventPayload = z.infer<typeof EventPayloadSchema>;
 export const HitSchema = z.object({
   siteId: z.number().int().positive(),
   type: HitTypeSchema,
-  url: z.string().max(2048).optional(),
+  url: z.string().max(MAX_URL_CHARS).optional(),
   title: z.string().max(512).optional(),
-  referrer: z.string().max(2048).optional(),
+  referrer: z.string().max(MAX_URL_CHARS).optional(),
   /** Outlink / download destination. */
-  targetUrl: z.string().max(2048).optional(),
+  targetUrl: z.string().max(MAX_URL_CHARS).optional(),
   event: EventPayloadSchema.optional(),
   screen: z.string().max(20).optional(),
   lang: z.string().max(35).optional(),
@@ -178,10 +187,10 @@ export type Hit = z.infer<typeof HitSchema>;
  */
 export const CollectHitSchema = z.object({
   type: HitTypeSchema,
-  url: z.string().max(2048).optional().catch(undefined),
+  url: z.string().max(MAX_RECEIVED_URL_CHARS).optional().catch(undefined),
   title: z.string().max(512).optional().catch(undefined),
-  referrer: z.string().max(2048).optional().catch(undefined),
-  targetUrl: z.string().max(2048).optional().catch(undefined),
+  referrer: z.string().max(MAX_RECEIVED_URL_CHARS).optional().catch(undefined),
+  targetUrl: z.string().max(MAX_RECEIVED_URL_CHARS).optional().catch(undefined),
   category: z.string().min(1).max(200).optional().catch(undefined),
   action: z.string().min(1).max(200).optional().catch(undefined),
   name: z.string().max(500).optional().catch(undefined),

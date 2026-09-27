@@ -1,5 +1,5 @@
 import { type Hit, type HitContext, localClock } from '@featherstat/shared';
-import { type Db, type EventRow, getSite } from '../db/index.ts';
+import type { Db, EventRow } from '../db/index.ts';
 import { type FlushHook, WriteBatcher } from './batcher.ts';
 import { AliasCache } from './campaigns.ts';
 import { isBotUserAgent, parseUserAgent, preferredLanguage } from './enrich.ts';
@@ -8,6 +8,7 @@ import { type GeoProvider, NullProvider } from './geo.ts';
 import { Identity } from './identity.ts';
 import { PropRegistry } from './props.ts';
 import { loadOpenSessions, priorSessionLookup, Sessionizer } from './sessionizer.ts';
+import { SiteCache } from './site-cache.ts';
 
 /** Where normalized hits go. `createPipeline` builds the real one; routes call it. */
 export type HitSink = (hits: Hit[], ctx: HitContext) => void;
@@ -49,6 +50,7 @@ export interface Pipeline {
 export function createPipeline(db: Db, options: PipelineOptions = {}): Pipeline {
   const geo = options.geo ?? new NullProvider();
   const identity = new Identity(db);
+  const sites = new SiteCache(db);
   const props = new PropRegistry(db);
   const batcher = new WriteBatcher(db, options.batchIntervalMs, props);
   // Every session row read back from the store is COMMITTED state: seed the
@@ -83,12 +85,14 @@ export function createPipeline(db: Db, options: PipelineOptions = {}): Pipeline 
     const device = excluded || isBotUserAgent(ctx.userAgent) ? null : parseUserAgent(ctx.userAgent);
     const geoResult = device === null ? null : geo.lookup(ctx.ip);
     for (const hit of hits) {
-      const site = getSite(db, hit.siteId);
+      const site = sites.get(hit.siteId);
       if (site === undefined) continue; // unknown site id → dropped, never 4xx (docs/04)
+      // Once per hit: the drop counters, the prop registry, the day salt and the
+      // sessionizer all bucket on the same site-local clock.
+      const local = localClock(site.timezone, ctx.receivedAt);
       if (device === null) {
-        const localDate = localClock(site.timezone, ctx.receivedAt).date;
-        if (excluded) batcher.addExcludedDrop(site.id, localDate);
-        else batcher.addBotDrop(site.id, localDate);
+        if (excluded) batcher.addExcludedDrop(site.id, local.date);
+        else batcher.addBotDrop(site.id, local.date);
         continue;
       }
       // Bag admission runs only when a bag exists — the hot path pays nothing
@@ -96,18 +100,13 @@ export function createPipeline(db: Db, options: PipelineOptions = {}): Pipeline 
       const admitted =
         hit.props === undefined
           ? undefined
-          : props.admit(
-              site.id,
-              hit.props,
-              localClock(site.timezone, ctx.receivedAt).date,
-              hit.type,
-              ctx.receivedAt,
-            );
+          : props.admit(site.id, hit.props, local.date, hit.type, ctx.receivedAt);
       const sessionized = sessionizer.process({
         site,
         hit,
-        visitorId: identity.visitorId(hit, ctx, site.timezone),
+        visitorId: identity.visitorId(hit, ctx, site.timezone, local.date),
         now: ctx.receivedAt,
+        local,
         device,
         geo: geoResult,
         lang: preferredLanguage(ctx.acceptLanguage, hit.lang),

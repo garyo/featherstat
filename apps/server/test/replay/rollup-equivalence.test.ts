@@ -1,4 +1,4 @@
-import { type Hit, localClock } from '@featherstat/shared';
+import { type Hit, localClock, READ_MILESTONE } from '@featherstat/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   createSite,
@@ -260,7 +260,44 @@ describe('rollup drift under randomized flushes', () => {
     const rng = mulberry32(0xd41f7);
     const db = openDb(':memory:');
     const { batcher, sessionizer, ingest } = driftIngest(db);
-    const planned = planDriftHits(rng);
+    const extra: Planned[] = [];
+    // A single-page visit whose only other row is the tracker's read milestone:
+    // still a bounce, and the flush and the rebuild must agree that it is.
+    const milestoneVisitor = new Uint8Array([210, 1, 0, 0, 0, 0, 0, 0]);
+    const milestoneAt = DRIFT_START + DAY_MS / 2;
+    const milestoneUrl = `https://${DRIFT_SITES[0]?.domains[0]}/`;
+    extra.push(
+      {
+        siteId: 1,
+        ts: milestoneAt,
+        hit: { siteId: 1, type: 'pageview', url: milestoneUrl },
+        visitor: milestoneVisitor,
+      },
+      {
+        siteId: 1,
+        ts: milestoneAt + 1_000,
+        hit: { siteId: 1, type: 'event', url: milestoneUrl, event: READ_MILESTONE },
+        visitor: milestoneVisitor,
+      },
+    );
+    // An outlink clicked 35 minutes after the page view revives that visit rather
+    // than opening a page-less one, so a committed session changes after the fact.
+    const returningVisitor = new Uint8Array([211, 1, 0, 0, 0, 0, 0, 0]);
+    extra.push(
+      {
+        siteId: 1,
+        ts: milestoneAt,
+        hit: { siteId: 1, type: 'pageview', url: milestoneUrl },
+        visitor: returningVisitor,
+      },
+      {
+        siteId: 1,
+        ts: milestoneAt + 35 * 60_000,
+        hit: { siteId: 1, type: 'outlink', url: milestoneUrl, targetUrl: 'https://ext.test/y' },
+        visitor: returningVisitor,
+      },
+    );
+    const planned = [...planDriftHits(rng), ...extra].sort((a, b) => a.ts - b.ts);
 
     const failAt = Math.floor(planned.length * 0.4);
     let failed = 0;
@@ -300,6 +337,21 @@ describe('rollup drift under randomized flushes', () => {
       .pluck()
       .get() as number;
     expect(spanning).toBeGreaterThan(0);
+
+    // And the milestone visit really is in the rollups as a bounce.
+    const milestoneSession = stmt<{ events: number; bounced: number }>(
+      db,
+      `SELECT s.events, r.bounced FROM sessions s
+       JOIN rollup_sessions_day r
+         ON r.site_id = s.site_id AND r.local_date = s.local_date AND r.dim_id = 0
+       WHERE s.visitor_id = ?`,
+    ).get(milestoneVisitor);
+    expect(milestoneSession?.events).toBe(0);
+    expect(milestoneSession?.bounced).toBeGreaterThan(0);
+    const returning = stmt<number>(db, 'SELECT COUNT(*) FROM sessions WHERE visitor_id = ?')
+      .pluck()
+      .get(returningVisitor);
+    expect(returning).toBe(1);
 
     db.close();
   }, 60_000);

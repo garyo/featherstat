@@ -309,6 +309,28 @@ const SQL_GET_SITE =
 const SQL_CREATE_SITE =
   'INSERT INTO sites (id, name, domains, timezone, created_at) VALUES (?, ?, ?, ?, ?)';
 
+const siteGenerations = new WeakMap<Db, number>();
+
+/**
+ * A counter every write helper below bumps when it changes `sites`, so an
+ * in-memory copy (`pipeline/site-cache.ts`) knows it is stale without reading
+ * the table. Keyed on the helpers rather than on the routes that call them, so
+ * a new caller cannot forget it. Writes from another connection are the
+ * cache's other half: `connectionDataVersion`.
+ */
+export function siteGeneration(db: Db): number {
+  return siteGenerations.get(db) ?? 0;
+}
+
+function sitesChanged(db: Db): void {
+  siteGenerations.set(db, siteGeneration(db) + 1);
+}
+
+/** SQLite's `PRAGMA data_version`: moves whenever ANOTHER connection commits to the file. */
+export function connectionDataVersion(db: Db): number {
+  return stmt<number>(db, 'PRAGMA data_version').pluck().get() as number;
+}
+
 export function listSites(db: Db): Site[] {
   return stmt<SiteColumns>(db, SQL_LIST_SITES).all().map(decodeSite);
 }
@@ -330,6 +352,7 @@ export function createSite(db: Db, site: NewSite): Site {
     timezone,
     created_at,
   );
+  sitesChanged(db);
   return {
     id: site.id ?? Number(info.lastInsertRowid),
     name: site.name,
@@ -364,6 +387,7 @@ export function updateSite(db: Db, id: number, patch: SitePatch): Site | undefin
     next.timezone,
     id,
   );
+  sitesChanged(db);
   return row === undefined ? undefined : decodeSite(row);
 }
 
@@ -392,7 +416,9 @@ const SQL_TOMBSTONE_SITE = 'UPDATE sites SET deleted_at = ? WHERE id = ? AND del
  */
 export function tombstoneSite(db: Db, id: number, now: number): boolean {
   assertWritable(db);
-  return stmt(db, SQL_TOMBSTONE_SITE).run(now, id).changes > 0;
+  const tombstoned = stmt(db, SQL_TOMBSTONE_SITE).run(now, id).changes > 0;
+  if (tombstoned) sitesChanged(db);
+  return tombstoned;
 }
 
 const SQL_TOMBSTONED_SITE_IDS = 'SELECT id FROM sites WHERE deleted_at IS NOT NULL';

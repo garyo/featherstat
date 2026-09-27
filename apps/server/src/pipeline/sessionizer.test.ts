@@ -2,6 +2,7 @@ import {
   ENGAGEMENT_THRESHOLD_MS,
   type Hit,
   PING_CLAMP_MS,
+  READ_MILESTONE,
   SESSION_REVIVAL_MS,
   SESSION_TIMEOUT_MS,
 } from '@featherstat/shared';
@@ -272,6 +273,30 @@ describe('engagement-aware bounce ingredients (docs/03)', () => {
     expect(session.events).toBe(0);
     expect(session.engaged_ms).toBeGreaterThanOrEqual(ENGAGEMENT_THRESHOLD_MS);
   });
+
+  // The tracker synthesized it; the visitor did nothing. On a page that fits
+  // the viewport it used to arrive with the page view, and no visit to such a
+  // page could ever bounce.
+  it('a read milestone is stored as an event but never counts against bounce', () => {
+    const s = new Sessionizer();
+    run(s, T0);
+    const { event, session } = run(s, T0 + 1_000, { type: 'event', event: READ_MILESTONE });
+    expect(event.type).toBe('event');
+    expect(event.event_category).toBe('scroll');
+    expect(event.event_action).toBe('read');
+    expect(session.events).toBe(0);
+    expect(session.engaged_ms).toBeLessThan(ENGAGEMENT_THRESHOLD_MS);
+  });
+
+  it('the same category with any other action is the visitor, and counts', () => {
+    const s = new Sessionizer();
+    run(s, T0);
+    const { session } = run(s, T0 + 1_000, {
+      type: 'event',
+      event: { category: 'scroll', action: 'jump-to-top' },
+    });
+    expect(session.events).toBe(1);
+  });
 });
 
 describe('attribution', () => {
@@ -299,6 +324,43 @@ describe('attribution', () => {
     const pk = run(s2, T0, { url: 'https://example.com/?pk_campaign=fall' });
     expect(pk.session.ref_type).toBe('campaign');
     expect(pk.session.utm_campaign).toBe('fall');
+  });
+
+  // Matomo's short forms were stripped from `path` but never read, so a
+  // `?pk_cpn=` link arrived as direct traffic with no campaign at all.
+  it("accepts Matomo's short and legacy campaign params", () => {
+    const short = run(new Sessionizer(), T0, {
+      url: 'https://example.com/?pk_cpn=Fall&pk_src=Newsletter&pk_med=Email',
+    }).session;
+    expect(short.ref_type).toBe('campaign');
+    expect([short.utm_source, short.utm_medium, short.utm_campaign]).toEqual([
+      'newsletter',
+      'email',
+      'fall',
+    ]);
+    expect(short.entry_path).toBe('/');
+
+    const mtm = run(new Sessionizer(), T0, {
+      url: 'https://example.com/?mtm_cpn=spring&mtm_src=partner&mtm_med=banner',
+    }).session;
+    expect([mtm.utm_source, mtm.utm_medium, mtm.utm_campaign]).toEqual([
+      'partner',
+      'banner',
+      'spring',
+    ]);
+
+    for (const param of ['matomo_campaign', 'piwik_campaign']) {
+      const legacy = run(new Sessionizer(), T0, { url: `https://example.com/p?${param}=winter` });
+      expect(legacy.session.utm_campaign, param).toBe('winter');
+      expect(legacy.event.path, param).toBe('/p');
+    }
+  });
+
+  it('reads utm first when two families name the same field', () => {
+    const { session } = run(new Sessionizer(), T0, {
+      url: 'https://example.com/?pk_cpn=matomo&utm_campaign=utm&mtm_campaign=mtm',
+    });
+    expect(session.utm_campaign).toBe('utm');
   });
 
   it('synthesizes campaign attribution from a click id when no utm arrived', () => {
@@ -380,6 +442,18 @@ describe('attribution', () => {
     const s2 = new Sessionizer();
     const sub = run(s2, T0, { referrer: 'https://blog.example.com/post' });
     expect(sub.session.ref_type).toBe('internal');
+  });
+
+  it('classifies a referrer from the landing page host as internal, domains or not', () => {
+    const s = new Sessionizer();
+    const bare = { ...SITE, domains: [] };
+    const { session } = run(
+      s,
+      T0,
+      { url: 'http://localhost:4321/a', referrer: 'http://localhost:4321/' },
+      { site: bare },
+    );
+    expect(session.ref_type).toBe('internal');
   });
 
   it('classifies search and social hosts, matching subdomains of table entries', () => {
@@ -653,20 +727,62 @@ describe('session revival (docs/03)', () => {
     });
   });
 
-  it('never revives for an action — a pageview past the timeout is a new visit', () => {
+  it('never revives for a page view — arriving past the timeout is a new visit', () => {
     const away = T0 + 35 * 60_000;
-    for (const type of ['pageview', 'event', 'outlink', 'download'] as const) {
+    withSeededDb(T0, (s) => {
+      const { event, session } = run(s, away);
+      expect(Buffer.from(session.id)).not.toEqual(Buffer.from(PRIOR));
+      expect(event.seq).toBe(1);
+      expect(session.ref_type).toBe('direct'); // attribution re-evaluated
+    });
+  });
+
+  // The ghost visit from the other side: a reader comes back to an open tab
+  // after half an hour and clicks something. That is the page they had open,
+  // not a visit with no page in it.
+  it('revives for an action taken on a page already open', () => {
+    const away = T0 + 35 * 60_000;
+    for (const type of ['event', 'outlink', 'download'] as const) {
       withSeededDb(T0, (s) => {
         const { event, session } = run(s, away, {
           type,
           event: { category: 'ui', action: 'click' },
           targetUrl: 'https://other.org/x',
         });
-        expect(Buffer.from(session.id), type).not.toEqual(Buffer.from(PRIOR));
-        expect(event.seq, type).toBe(1);
-        expect(session.ref_type, type).toBe('direct'); // attribution re-evaluated
+        expect(Buffer.from(session.id), type).toEqual(Buffer.from(PRIOR));
+        expect(event.seq, type).toBe(14);
+        expect(session.pageviews, type).toBe(1);
+        expect(session.ref_type, type).toBe('search'); // first-touch survives
+        expect(session.engaged_ms, type).toBe(180_000 + PING_CLAMP_MS);
+        expect(session.events, type).toBe(type === 'event' ? 1 : 0);
       });
     }
+  });
+
+  // A server-side sender — the signup webhook — has no page to belong to, and
+  // its action is real: dropping it would lose the conversion.
+  it('still opens a visit for an action with nothing to revive', () => {
+    const s = new Sessionizer();
+    const { event, session } = run(s, T0, {
+      type: 'event',
+      url: undefined,
+      event: { category: 'signup', action: 'account-created' },
+    });
+    expect(event.seq).toBe(1);
+    expect(session.pageviews).toBe(0);
+    expect(session.events).toBe(1);
+    expect(s.droppedPings).toBe(0);
+  });
+
+  it('drops a tracker milestone with nothing to continue, like a heartbeat', () => {
+    const s = new Sessionizer();
+    expect(offer(s, T0, { type: 'event', event: READ_MILESTONE })).toBeUndefined();
+    expect(s.size).toBe(0);
+    expect(s.droppedPings).toBe(1);
+    withSeededDb(T0, (revived) => {
+      const stored = run(revived, T0 + 35 * 60_000, { type: 'event', event: READ_MILESTONE });
+      expect(Buffer.from(stored.session.id)).toEqual(Buffer.from(PRIOR));
+    });
   });
 
   it('never revives another site or another visitor', () => {

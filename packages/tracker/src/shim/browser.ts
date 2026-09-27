@@ -1,5 +1,5 @@
 import { isExitPingWorthwhile } from '../exit.ts';
-import { classifyLink } from '../links.ts';
+import { classifyLink, isLinkActivation } from '../links.ts';
 import { whenActivated } from '../prerender.ts';
 import { send } from '../send.ts';
 import {
@@ -111,6 +111,7 @@ export function startShim(): () => void {
   };
 
   const onClick = (event: Event): void => {
+    if (!isLinkActivation(event)) return;
     const anchor = (event.target as Element | null)?.closest?.('a');
     if (!anchor?.href) return;
     const target = classifyLink(anchor.href, location.hostname, anchor.hasAttribute('download'));

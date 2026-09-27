@@ -116,6 +116,30 @@ describe('referrerAttribution', () => {
     expect(referrerAttribution('https://news.google.com/read/x', OWN).ref_type).toBe('search');
   });
 
+  it('knows the big search engines under every country domain they answer on', () => {
+    for (const host of [
+      'www.google.com.mx',
+      'google.pl',
+      'www.google.co.uk',
+      'images.google.com.au',
+      'search.yahoo.co.jp',
+      'yandex.ua',
+      'yandex.com.tr',
+      'www.bing.com',
+      'cn.bing.com',
+    ]) {
+      expect(referrerAttribution(`https://${host}/search?q=x`, OWN).ref_type, host).toBe('search');
+    }
+    // The country domain stays its own row: a reader may want to tell them apart.
+    expect(referrerAttribution('https://www.google.com.mx/', OWN).ref_domain).toBe('google.com.mx');
+  });
+
+  it('matches the brand label exactly, never a look-alike', () => {
+    for (const host of ['googleblog.com', 'notgoogle.com', 'google-analytics.example.org']) {
+      expect(referrerAttribution(`https://${host}/`, OWN).ref_type, host).toBe('referral');
+    }
+  });
+
   it('matches own domains on the RECEIVED host, so a subdomain site keeps working', () => {
     expect(referrerAttribution('https://blog.example.com/p', OWN).ref_type).toBe('internal');
     // The site is registered under a subdomain: its own pages must still be
@@ -123,6 +147,23 @@ describe('referrerAttribution', () => {
     const sub = ['docs.example.com'];
     expect(referrerAttribution('https://docs.example.com/p', sub).ref_type).toBe('internal');
     expect(referrerAttribution('https://docs.example.com/p', sub).ref_domain).toBe('example.com');
+  });
+
+  it('matches a configured domain that carries a port', () => {
+    const dev = ['localhost:4321', 'staging.example.org:8443'];
+    expect(referrerAttribution('http://localhost:4321/a', dev).ref_type).toBe('internal');
+    expect(referrerAttribution('https://staging.example.org:8443/', dev).ref_type).toBe('internal');
+  });
+
+  // Matomo's rule too: a referrer on the page's own host is the site itself.
+  it('treats the landing page host as internal, even with no domains configured', () => {
+    expect(
+      referrerAttribution('https://pelorus-nav.com/charts', [], 'pelorus-nav.com').ref_type,
+    ).toBe('internal');
+    expect(referrerAttribution('https://pelorus-nav.com/charts', []).ref_type).toBe('referral');
+    expect(referrerAttribution('https://other.org/', [], 'pelorus-nav.com').ref_type).toBe(
+      'referral',
+    );
   });
 
   it('falls back to referral for anything unknown', () => {

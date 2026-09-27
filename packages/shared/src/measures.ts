@@ -38,6 +38,23 @@ export function isHeartbeat(type: HitType): boolean {
 }
 
 /**
+ * The scroll-depth milestone the native tracker synthesizes (docs/04 § 2): a
+ * reserved event category/action pair. The row is an ordinary event — it
+ * counts, filters and shows in the live feed like any other — but the tracker
+ * sent it, not the visitor, so it is not an interaction that argues a visit
+ * out of being a bounce (docs/03 § Derived metrics). The tracker keeps its own
+ * copy of the pair, because importing this would bundle zod into a 2 KB
+ * script; its test holds the two in step.
+ */
+export const READ_MILESTONE = { category: 'scroll', action: 'read' } as const;
+
+export function isTrackerMilestone(
+  event: { category: string; action: string } | undefined,
+): boolean {
+  return event?.category === READ_MILESTONE.category && event.action === READ_MILESTONE.action;
+}
+
+/**
  * Every hit type that records something a visitor did — `HitTypeSchema.options`
  * minus the heartbeat, spelled out because this module must not import a VALUE
  * from `index.ts` (which re-exports it, so the cycle would evaluate this first).

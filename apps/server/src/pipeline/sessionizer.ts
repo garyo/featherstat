@@ -1,7 +1,9 @@
 import { randomBytes } from 'node:crypto';
 import {
+  type CampaignField,
   type Hit,
   isHeartbeat,
+  isTrackerMilestone,
   type LocalClock,
   localClock,
   PING_CLAMP_MS,
@@ -19,7 +21,7 @@ import {
 import { plainNormalizer, type UtmNormalizer } from './campaigns.ts';
 import type { DeviceInfo } from './enrich.ts';
 import type { GeoResult } from './geo.ts';
-import { cleanPageUrl, clickIdSource, synthesizedCampaign } from './page-url.ts';
+import { CAMPAIGN_PARAMS, cleanPageUrl, clickIdSource, synthesizedCampaign } from './page-url.ts';
 import { type ReferrerAttribution, referrerAttribution } from './referrers.ts';
 
 export interface SessionizerInput {
@@ -28,6 +30,8 @@ export interface SessionizerInput {
   visitorId: Uint8Array;
   /** Server receive time, UTC ms — the tracker's clock is never trusted (docs/04). */
   now: number;
+  /** `now` on the site's clock; the pipeline passes the one it already computed. */
+  local?: LocalClock;
   device: DeviceInfo;
   geo: GeoResult | null;
   lang: string | null;
@@ -70,10 +74,13 @@ export type PriorSessionLookup = (
  * session's first hit. Pings update engagement and get stored rows, but never
  * touch pageview or exit-path state.
  *
- * A ping is a *continuation* signal, so it never starts a visit. With no live
- * session it revives the visitor's own last one (the returning-reader window,
- * `SESSION_REVIVAL_MS`); with nothing to revive it is dropped, because a visit
- * with no action in it is not a visit.
+ * Only a page view arrives; everything else happens ON a page already open, so
+ * past the idle timeout it revives the visitor's own last session (the
+ * returning-reader window, `SESSION_REVIVAL_MS`) instead of opening a visit
+ * with no page in it. With nothing to revive, a ping or a tracker milestone is
+ * dropped — a visit with no action in it is not a visit — while an event,
+ * outlink or download still opens one: it is a real action, and some have no
+ * page to belong to at all (a server-side signup webhook).
  */
 export class Sessionizer {
   private readonly open = new Map<string, OpenSession>();
@@ -92,7 +99,8 @@ export class Sessionizer {
     return this.open.size;
   }
 
-  /** Heartbeats discarded for having no visit to continue — ingest's only other drop is bots. */
+  /** Heartbeats and tracker milestones discarded for having no visit to continue —
+   * ingest's only other drop is bots. */
   get droppedPings(): number {
     return this.dropped;
   }
@@ -106,23 +114,23 @@ export class Sessionizer {
     this.flushes += 1;
   }
 
-  /** `undefined` when the hit was dropped: an orphan heartbeat, and nothing else. */
+  /** `undefined` when the hit was dropped: an orphan continuation signal, and nothing else. */
   process(input: SessionizerInput): SessionizedHit | undefined {
     const { site, hit, now } = input;
     this.evict(now);
     const key = sessionKey(site.id, input.visitorId);
     const page = pageParts(hit.url);
-    const local = localClock(site.timezone, now);
+    const local = input.local ?? localClock(site.timezone, now);
 
     const carried =
-      this.liveSession(key, now) ?? (isHeartbeat(hit.type) ? this.revive(input, key) : undefined);
+      this.liveSession(key, now) ?? (hit.type === 'pageview' ? undefined : this.revive(input, key));
     if (carried !== undefined) {
       // Clamped per gap, so reviving after half an hour of silence credits one
       // heartbeat's worth of attention, never the silence.
       const gap = now - carried.row.last_seen_at;
       carried.row.engaged_ms += Math.min(Math.max(gap, 0), PING_CLAMP_MS);
       carried.row.last_seen_at = now;
-    } else if (isHeartbeat(hit.type)) {
+    } else if (isHeartbeat(hit.type) || isTrackerMilestone(hit.event)) {
       this.dropped += 1;
       return undefined;
     }
@@ -134,7 +142,9 @@ export class Sessionizer {
     if (hit.type === 'pageview') {
       row.pageviews += 1;
       row.exit_path = page.path;
-    } else if (hit.type === 'event') {
+    } else if (hit.type === 'event' && !isTrackerMilestone(hit.event)) {
+      // `events` counts what the visitor did — it is the bounce test's "no
+      // events" — so a milestone the tracker synthesized stays out of it.
       row.events += 1;
     }
 
@@ -205,14 +215,14 @@ export class Sessionizer {
 
   /**
    * The returning-reader path: the visitor's own last session, reached only by a
-   * ping that found no live one.
+   * hit other than a page view that found no live one.
    *
    * The map is asked first and its answer is final. An entry still held there is
    * the same session the store would return, but with the counters and `seq` of
    * every hit — including any the current batch has not committed yet, which the
-   * store cannot see. Falling through to the store is the restart case, and a
-   * READ on the ingest path (invariant 2): rare, and served whole by
-   * `ix_sessions_open`.
+   * store cannot see. Falling through to the store is the restart case or a
+   * visitor whose session the sweep already let go, and a READ on the ingest path
+   * (invariant 2): rare, and served whole by `ix_sessions_open`.
    */
   private revive(input: SessionizerInput, key: string): OpenSession | undefined {
     const notBefore = input.now - SESSION_REVIVAL_MS;
@@ -375,7 +385,7 @@ const NO_CAMPAIGN = {
 };
 
 function classify(hit: Hit, page: PageParts, site: Site, normalizeUtm: UtmNormalizer): Attribution {
-  const ref = referrerAttribution(hit.referrer, site.domains);
+  const ref = referrerAttribution(hit.referrer, site.domains, page.hostname);
   const campaign = campaignParams(page.url, site.id, normalizeUtm);
   if (campaign !== null) return { ...refDomain(ref), ref_type: 'campaign', ...campaign };
   // No campaign params, but a click id names its platform: synthesize
@@ -401,18 +411,16 @@ function refDomain(ref: ReferrerAttribution): Pick<Attribution, 'ref_domain' | '
   return { ref_domain: ref.ref_domain, ref_domain_raw: ref.ref_domain_raw };
 }
 
-/** utm_* / mtm_* / pk_* families all accepted, stored under the utm_ columns (docs/03). */
-const CAMPAIGN_FAMILIES = ['utm', 'mtm', 'pk'] as const;
-
+/** Every family in `CAMPAIGN_PARAMS` accepted, stored under the utm_ columns (docs/03). */
 function campaignParams(
   url: URL | null,
   siteId: number,
   normalizeUtm: UtmNormalizer,
 ): CampaignColumns | null {
   if (url === null) return null;
-  const get = (field: string): string | null => {
-    for (const family of CAMPAIGN_FAMILIES) {
-      const value = url.searchParams.get(`${family}_${field}`);
+  const get = (field: CampaignField): string | null => {
+    for (const name of CAMPAIGN_PARAMS[field]) {
+      const value = url.searchParams.get(name);
       if (value) return value.slice(0, 200);
     }
     return null;
@@ -422,7 +430,7 @@ function campaignParams(
   const campaign = get('campaign');
   if (source === null && medium === null && campaign === null) return null;
   // Normalized at ingest, raw kept only when it differs (docs/03 § Campaigns).
-  const norm = (field: 'source' | 'medium' | 'campaign', value: string | null) =>
+  const norm = (field: CampaignField, value: string | null) =>
     value === null ? { normalized: null } : normalizeUtm(siteId, field, value);
   const s = norm('source', source);
   const m = norm('medium', medium);

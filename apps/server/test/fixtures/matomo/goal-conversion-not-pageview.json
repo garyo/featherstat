@@ -1,0 +1,8 @@
+{
+  "name": "trackGoal (idgoal=N) and an ecommerce update (idgoal=0) carry the page url but are conversions, not page views; nothing recorded",
+  "method": "POST",
+  "body": "{\"requests\":[\"?idsite=6&rec=1&idgoal=2&revenue=10&url=https%3A%2F%2Fpackzen.org%2Fwelcome\",\"?idsite=6&rec=1&idgoal=0&ec_id=A1&revenue=25&url=https%3A%2F%2Fpackzen.org%2Fcheckout\"]}",
+  "contentType": "application/json",
+  "expectStatus": 200,
+  "expectHits": []
+}

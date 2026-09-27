@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { getDomain } from 'tldts';
+import { getDomain, getDomainWithoutSuffix } from 'tldts';
 
 /**
  * Referrer hosts (docs/03 § Attribution). `ref_domain` stores the **canonical**
@@ -119,10 +119,15 @@ const NO_REFERRER: ReferrerAttribution = {
   ref_type: undefined,
 };
 
-/** Everything a session's first hit needs from its `Referer` (docs/03). */
+/**
+ * Everything a session's first hit needs from its `Referer` (docs/03).
+ * `landingHost` is the hostname of the page the hit landed on: a referrer from
+ * that same host is the site itself, whatever its domain list says.
+ */
 export function referrerAttribution(
   referrer: string | undefined,
   domains: readonly string[],
+  landingHost?: string | null,
 ): ReferrerAttribution {
   const host = referrerHost(referrer);
   if (host === null) return NO_REFERRER;
@@ -133,7 +138,9 @@ export function referrerAttribution(
   };
   // Own-domain matching stays on the RECEIVED host: a site registered as
   // `docs.example.com` would not match its own eTLD+1.
-  if (isInternal(host, domains)) return { ...stored, ref_type: 'internal' };
+  if (host === landingHost || isInternal(host, domains)) {
+    return { ...stored, ref_type: 'internal' };
+  }
   return { ...stored, ref_type: referrerTypeOf(canonical) };
 }
 
@@ -156,34 +163,27 @@ function referrerHost(referrer: string | undefined): string | null {
   }
 }
 
+/** A configured domain may carry a port (`localhost:4321`); a referrer's hostname never does. */
 function isInternal(host: string, domains: readonly string[]): boolean {
   return domains.some((entry) => {
-    const domain = bareHost(entry);
+    const domain = bareHost(entry.replace(/:\d+$/, ''));
     return host === domain || host.endsWith(`.${domain}`);
   });
 }
 
+/**
+ * Search engines that answer under a country domain as well as `.com` —
+ * `google.com.mx`, `google.pl`, `yahoo.co.jp`, `yandex.ua`. Matched on the
+ * registrable domain's own label, so every suffix they operate under is
+ * covered without a table row per country, which a table never keeps up with.
+ */
+const SEARCH_BRANDS: ReadonlySet<string> = new Set(['google', 'bing', 'yahoo', 'yandex']);
+
 /** Small built-in search/social table (docs/03): the long tail is not worth a database. */
 const KNOWN_REFERRERS: Record<string, 'search' | 'social'> = {
-  // search
-  'google.com': 'search',
-  'google.co.uk': 'search',
-  'google.de': 'search',
-  'google.fr': 'search',
-  'google.es': 'search',
-  'google.it': 'search',
-  'google.nl': 'search',
-  'google.ca': 'search',
-  'google.com.au': 'search',
-  'google.com.br': 'search',
-  'google.co.in': 'search',
-  'google.co.jp': 'search',
-  'bing.com': 'search',
+  // search (Google, Bing, Yahoo and Yandex are SEARCH_BRANDS, on every suffix)
   'duckduckgo.com': 'search',
-  'yahoo.com': 'search',
   'baidu.com': 'search',
-  'yandex.com': 'search',
-  'yandex.ru': 'search',
   'ecosia.org': 'search',
   'qwant.com': 'search',
   'brave.com': 'search',
@@ -245,13 +245,15 @@ function knownReferrerType(host: string): 'search' | 'social' | undefined {
     const type = KNOWN_REFERRERS[h];
     if (type !== undefined) return type;
     const dot = h.indexOf('.');
-    if (dot === -1) return undefined;
+    if (dot === -1) break;
     h = h.slice(dot + 1);
   }
+  const brand = getDomainWithoutSuffix(host, PSL_OPTIONS);
+  return brand !== null && SEARCH_BRANDS.has(brand) ? 'search' : undefined;
 }
 
 /**
- * A fingerprint of the three tables above — everything that decides a canonical
+ * A fingerprint of the tables above — everything that decides a canonical
  * domain or its type.
  *
  * These tables are code, so there is no alias-edit endpoint to re-arm the
@@ -271,6 +273,7 @@ export function referrerTablesFingerprint(): string {
       .map(([host, type]) => `${host}=${type}`)
       .sort()
       .join(','),
+    [...SEARCH_BRANDS].sort().join(','),
   ];
   return createHash('sha256').update(parts.join('|')).digest('hex').slice(0, 16);
 }

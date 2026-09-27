@@ -1,6 +1,7 @@
 import type { HitType } from '@featherstat/shared';
 import { isExitPingWorthwhile } from '../exit.ts';
-import { classifyLink } from '../links.ts';
+import { classifyLink, isLinkActivation } from '../links.ts';
+import { type HistoryChange, isNewView } from '../navigation.ts';
 import { whenActivated } from '../prerender.ts';
 import { isRepeatView } from '../repeat.ts';
 import { documentHeight, READ_THRESHOLD_PCT, scrollDepthPct } from '../scroll.ts';
@@ -61,8 +62,10 @@ interface Runtime {
   maxScroll: number;
   /** Whether this page view has already reported passing the read threshold. */
   read: boolean;
-  /** Re-read the depth now; `page()` calls it so a new page starts measured. */
-  measure: () => void;
+  /** Heartbeats this page view has held the reader through; reset by `page()`. */
+  beats: number;
+  /** Restart the heartbeat, so a page view's first beat is a whole interval after it. */
+  rearm: () => void;
   stop: () => void;
 }
 
@@ -72,7 +75,8 @@ const DEFAULT_HEARTBEAT_SECONDS = 15;
 const DEFAULT_IDLE_SECONDS = 60;
 /** `track('signup')` with no category still needs one server-side. */
 const DEFAULT_EVENT_CATEGORY = 'custom';
-/** The reserved category/action the read milestone lands under (docs/04 § 2). */
+/** The reserved category/action the read milestone lands under — `READ_MILESTONE` in
+ * `packages/shared`, which the server keeps out of bounce (docs/04 § 2). */
 const SCROLL_CATEGORY = 'scroll';
 const READ_ACTION = 'read';
 const INPUT_EVENTS = ['pointerdown', 'pointermove', 'keydown', 'scroll', 'touchstart'];
@@ -144,10 +148,12 @@ export function init(config: TrackerConfig): () => void {
     if (!runtime) return;
     const pct = scrollDepthPct(window.scrollY, window.innerHeight, documentHeight(document));
     if (pct > runtime.maxScroll) runtime.maxScroll = pct;
-    // One event per page view, the first time the threshold is passed. An
+    // One event per page view, the first time the threshold is passed by a page
+    // view that has held the reader through a heartbeat. Depth alone is not
+    // reading: a page that fits the viewport is 100 % the moment it loads. An
     // ordinary custom event on purpose: it needs no new hit type, and so counts,
     // filters and shows up in the live feed exactly like any other (docs/04 § 2).
-    if (!runtime.read && runtime.maxScroll >= READ_THRESHOLD_PCT) {
+    if (!runtime.read && runtime.beats > 0 && runtime.maxScroll >= READ_THRESHOLD_PCT) {
       runtime.read = true;
       emit({ type: 'event', url: viewUrl(), category: SCROLL_CATEGORY, action: READ_ACTION });
     }
@@ -174,10 +180,15 @@ export function init(config: TrackerConfig): () => void {
     // `scroll` is already one of INPUT_EVENTS, so this needs no listener of its own.
     throttledMeasure();
   };
-  const onNavigate = (): void => {
-    if (location.href !== runtime?.url) page();
+  /** The address bar as the history hook last saw it (navigation.ts). */
+  let seen = '';
+  const onNavigate = (change: HistoryChange): void => {
+    const from = seen;
+    seen = location.href;
+    if (isNewView(from, seen, change)) page();
   };
   const onClick = (event: Event): void => {
+    if (!isLinkActivation(event)) return;
     const anchor = (event.target as Element | null)?.closest?.('a');
     if (!anchor?.href) return;
     const target = classifyLink(anchor.href, location.hostname, anchor.hasAttribute('download'));
@@ -190,26 +201,30 @@ export function init(config: TrackerConfig): () => void {
     }
   };
 
-  const heartbeat = setInterval(() => {
-    if (focused && visible && Date.now() - lastInput < idleMs) {
+  const beat = (): void => {
+    if (runtime && focused && visible && Date.now() - lastInput < idleMs) {
+      runtime.beats += 1;
       // Measure first: a page that grew after load — lazy images, deferred
       // content — moves the end away without the reader touching anything, and
       // only a fresh reading notices.
       measure();
       emit({ type: 'ping', url: viewUrl(), scroll: reading() });
     }
-  }, heartbeatMs);
+  };
+  let heartbeat = setInterval(beat, heartbeatMs);
 
   window.addEventListener('focus', onFocus);
   window.addEventListener('blur', onBlur);
   document.addEventListener('visibilitychange', onVisibility);
   window.addEventListener('pagehide', exitPing);
   for (const event of INPUT_EVENTS) document.addEventListener(event, onInput, INPUT_OPTIONS);
-  if (config.autoLinks !== false) document.addEventListener('click', onClick, true);
-  if (autoPageviews) window.addEventListener('popstate', onNavigate);
-  const unhook = autoPageviews ? hookHistory(onNavigate) : undefined;
+  if (config.autoLinks !== false) {
+    document.addEventListener('click', onClick, true);
+    document.addEventListener('auxclick', onClick, true);
+  }
   /** Drops a first page view still waiting on activation (prerender.ts). */
   let unwait: (() => void) | undefined;
+  let unhook: (() => void) | undefined;
 
   const started: Runtime = {
     site: config.site,
@@ -219,7 +234,11 @@ export function init(config: TrackerConfig): () => void {
     lastHitAt: 0,
     maxScroll: 0,
     read: false,
-    measure,
+    beats: 0,
+    rearm: () => {
+      clearInterval(heartbeat);
+      heartbeat = setInterval(beat, heartbeatMs);
+    },
     stop: () => {
       clearInterval(heartbeat);
       window.removeEventListener('focus', onFocus);
@@ -228,7 +247,7 @@ export function init(config: TrackerConfig): () => void {
       window.removeEventListener('pagehide', exitPing);
       for (const event of INPUT_EVENTS) document.removeEventListener(event, onInput, INPUT_OPTIONS);
       document.removeEventListener('click', onClick, true);
-      window.removeEventListener('popstate', onNavigate);
+      document.removeEventListener('auxclick', onClick, true);
       unhook?.();
       unwait?.();
     },
@@ -237,11 +256,16 @@ export function init(config: TrackerConfig): () => void {
 
   // Not `page()` directly: a prerendered document reaches here before the visitor
   // has decided to come, and the view it would announce is not one yet
-  // (prerender.ts). The identity check keeps a prerender that activates late from
-  // announcing its view onto whichever tracker has since replaced this one.
+  // (prerender.ts). The history hook waits too — a router hydrating the
+  // speculated page rewrites the URL before anyone has arrived. The identity
+  // check keeps a prerender that activates late from announcing its view onto
+  // whichever tracker has since replaced this one.
   if (autoPageviews) {
     unwait = whenActivated(() => {
-      if (runtime === started) page();
+      if (runtime !== started) return;
+      seen = location.href;
+      unhook = hookHistory(onNavigate);
+      page();
     });
   }
 
@@ -270,9 +294,15 @@ export function page(
   runtime.url = url;
   runtime.viewAt = at;
   // A new page is a new measurement, so an SPA route change does not inherit
-  // the depth of the page before it.
+  // the depth of the page before it. Nothing is read here: until the router has
+  // swapped the document and moved the scroll position, both still belong to
+  // the page before, and the first heartbeat measures before it pings anyway.
   runtime.maxScroll = 0;
   runtime.read = false;
+  runtime.beats = 0;
+  // An SPA route announced just before a tick would otherwise earn its "beat"
+  // a second after it began.
+  runtime.rearm();
   emit({
     type: 'pageview',
     url,
@@ -282,10 +312,6 @@ export function page(
     lang: navigator.language,
     props,
   });
-  // Read the opening depth straight away, so the first ping carries a real
-  // figure rather than the 0 of a page nobody has scrolled yet — on a page that
-  // fits the viewport, that opening figure is the whole answer.
-  runtime.measure();
 }
 
 /** Record a custom event: `track('copy-link', { category: 'share' })`. */
@@ -311,23 +337,26 @@ function emit(hit: NativeHit): void {
   send(runtime.endpoint, JSON.stringify({ site: runtime.site, hits: [hit] }));
 }
 
-function hookHistory(onNavigate: () => void): () => void {
+function hookHistory(onNavigate: (change: HistoryChange) => void): () => void {
   const { pushState, replaceState } = history;
+  const onPop = (): void => onNavigate('pop');
   history.pushState = function patchedPushState(
     this: History,
     ...args: Parameters<History['pushState']>
   ) {
     pushState.apply(this, args);
-    onNavigate();
+    onNavigate('push');
   };
   history.replaceState = function patchedReplaceState(
     this: History,
     ...args: Parameters<History['replaceState']>
   ) {
     replaceState.apply(this, args);
-    onNavigate();
+    onNavigate('replace');
   };
+  window.addEventListener('popstate', onPop);
   return () => {
+    window.removeEventListener('popstate', onPop);
     history.pushState = pushState;
     history.replaceState = replaceState;
   };

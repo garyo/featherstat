@@ -212,7 +212,8 @@ Per incoming hit:
 
 1. Lookup the open session; if none, or `now − last_seen > 30 min`, create a
    session row (attribution + device + geo copied from this first hit) — unless
-   the hit is a ping, which never starts a visit (see below).
+   the hit is anything but a page view, which first tries to revive the
+   visitor's last session, and a ping never starts a visit (see below).
 2. Update counters, `exit_path`, `last_seen_at`; assign the hit's `seq` from
    the session's running event count.
 3. **Engagement**: add `min(now − last_seen, 20 s)` to `engaged_ms`. Heartbeat
@@ -253,6 +254,19 @@ A ping is a **continuation signal**, so:
 - With nothing to revive the ping is **dropped**: never stored, never counted.
   A visit whose every row is a heartbeat is a visit nobody made, and its rows
   could not be attributed to a page anyway. Ingest's only other drop is bots.
+
+**The same holds for every action but a page view.** Only a page view
+arrives; an event, an outlink or a download happens *on* a page already open.
+A reader who comes back to a tab after 35 minutes and clicks a link out of it
+used to open a second visit — `direct`, no page view, its attribution lost —
+which is the ghost visit above reached from the other side. So these revive
+exactly as a ping does, same window, same clamp. What differs is the case with
+nothing to revive: a ping is dropped, but an action still **opens a visit**,
+because it is real and some actions have no page to belong to at all —
+packzen's server-side signup webhook is exactly that, and dropping it would
+lose the conversion. The native tracker's read milestone (docs/04 § 2) is the
+exception that proves the rule: the tracker synthesized it, so with nothing to
+revive it is dropped like a heartbeat.
 
 **Limitation, stated rather than papered over**: `visitor_id` rotates at 00:00
 site-local (see Identity), so revival can never cross that boundary — its
@@ -352,7 +366,17 @@ showed *no* engagement: exactly one pageview, no events, **and**
 `engaged_ms` below the engagement threshold (default 15 s, configurable).
 Someone who lands on one article and reads it for three minutes is exactly
 what a site wants — dwell time (via heartbeat) and events both count as
-engagement, so that visit is not a bounce. This deliberately departs from
+engagement, so that visit is not a bounce. "Events" means events the *visitor*
+sent: `sessions.events` leaves out the native tracker's own read milestone
+(`READ_MILESTONE`, docs/04 § 2), which is stored and counted as an ordinary
+event row everywhere else. A milestone the tracker synthesizes is evidence of
+the tracker, and the attention behind it is already in `engaged_ms`; counting
+it made every visit to a page that fits the viewport un-bounceable. Because the
+flush, the rollup rebuild and the raw compiler all read `sessions.events`,
+excluding it at the counter keeps the three in agreement. Sessions stored
+before the change keep the counts they were written with — no rewrite, so no
+epoch bump; a short page's historical bounce rate reads low until that history
+ages out of the range. This deliberately departs from
 Matomo's one-pageview definition (which reports every satisfied
 single-article reader as a bounce); the reporting delta at cutover is called
 out in [06-migration.md](06-migration.md).
@@ -367,7 +391,9 @@ dwell, journeys, adjacency) one click at a time. So ingest strips a **closed,
 documented list** from the query (`pipeline/page-url.ts`, shared with the
 v1 importer) and keeps everything else, survivors in their original order:
 
-- the campaign families attribution already reads: `utm_*`, `mtm_*`, `pk_*`;
+- the campaign families attribution already reads: `utm_*`, `mtm_*`, `pk_*`,
+  and Matomo's legacy `matomo_campaign` / `piwik_campaign` (with their
+  `_kwd` siblings);
 - click ids that also name their platform (see Attribution below): `fbclid`,
   `gclid`, `gbraid`, `wbraid`, `dclid`, `msclkid`, `twclid`, `ttclid`,
   `li_fat_id`, `igshid`, `igsh`;
@@ -383,8 +409,14 @@ nothing here loses attribution signal — it moves it where it belongs.
 
 Priority order, evaluated once per session on its first hit:
 
-1. `utm_*` / `mtm_*` / `pk_*` params present → `campaign` (both param
-   families accepted; stored under the `utm_*` columns).
+1. Campaign params present → `campaign`, stored under the `utm_*` columns.
+   Each column reads a list of names in precedence order (`CAMPAIGN_PARAMS`
+   in `pipeline/page-url.ts`): `utm_*` first, then Matomo's long and short
+   forms — source `mtm_source`, `mtm_src`, `pk_source`, `pk_src`; medium
+   `mtm_medium`, `mtm_med`, `pk_medium`, `pk_med`; campaign `mtm_campaign`,
+   `mtm_cpn`, `pk_campaign`, `pk_cpn`, `matomo_campaign`, `piwik_campaign`.
+   Every name read here is also stripped from `path`, and only because it is
+   read first.
 2. No campaign params but a platform click id (see Page identity) →
    `campaign`, with **synthesized** `utm_source`/`utm_medium` — derived, not
    received; industry-standard but inferred, the way Matomo/GA treat `gclid`:
@@ -398,9 +430,17 @@ Priority order, evaluated once per session on its first hit:
    aliases apply; `utm_campaign` is never invented and the `utm_*_raw`
    columns stay NULL (nothing was normalized away). Real campaign params
    always win over a click id.
-3. Referrer hostname ∈ site's own domains → `internal` (not a referral).
+3. Referrer hostname ∈ site's own domains, or equal to the landing page's
+   own hostname (Matomo's rule, and what keeps a site with no domains
+   configured from referring itself) → `internal` (not a referral). A domain
+   entry's port (`localhost:4321`) is ignored: a referrer's hostname has
+   none.
 4. Referrer matches a small built-in search/social table (~50 entries — the
-   long tail is not worth a database) → `search` / `social`.
+   long tail is not worth a database) → `search` / `social`. Google, Bing,
+   Yahoo and Yandex match by the registrable domain's own label instead
+   (`SEARCH_BRANDS`), so `google.com.mx`, `yahoo.co.jp` and `yandex.ua` are
+   search without a row per country; the country domain stays its own
+   `ref_domain`.
 5. Any other referrer → `referral`; none → `direct`.
 
 ### Referrer canonicalization

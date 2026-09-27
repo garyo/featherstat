@@ -1,17 +1,17 @@
-import {
-  type Hit,
-  type HitType,
-  PING_CLAMP_MS,
-  type QueryRequest,
-  SESSION_REVIVAL_MS,
-  SESSION_TIMEOUT_MS,
-} from '@featherstat/shared';
+import { type Hit, type HitType, PING_CLAMP_MS, type QueryRequest } from '@featherstat/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../../src/db/index.ts';
 import { executeQueryRequest } from '../../src/query/executor.ts';
 import { resultOf } from '../rows.ts';
 import { itWhereCalibrated } from './calibrated.ts';
-import { BOT_AGENTS, type Corpus, generateCorpus, localStamp, oraclePath } from './generate.ts';
+import {
+  BOT_AGENTS,
+  type Corpus,
+  generateCorpus,
+  localStamp,
+  oraclePath,
+  oracleReach,
+} from './generate.ts';
 import { openReplayDb } from './harness.ts';
 
 /**
@@ -72,10 +72,10 @@ function sessionize(source: Corpus): OracleSession[] {
     // Identity rotates at site-local midnight (docs/03), so the local date is part of the key.
     const localDate = localStamp(zones.get(hit.siteId) ?? 'UTC', ctx.receivedAt).date;
     const identity = `${hit.siteId}|${localDate}|${hit.visitorId ?? `${ctx.ip}\n${ctx.userAgent}`}`;
-    // A ping continues a visit, never starts one (docs/03): it reaches back to the
-    // returning-reader window, and past that it is dropped rather than stored.
+    // Anything but a page view continues a visit (docs/03): it reaches back to the
+    // returning-reader window; past that a ping is dropped rather than stored.
     const prior = open.get(identity);
-    const reach = hit.type === 'ping' ? SESSION_REVIVAL_MS : SESSION_TIMEOUT_MS;
+    const reach = oracleReach(hit.type);
     const idle = prior === undefined ? Number.POSITIVE_INFINITY : ctx.receivedAt - prior.lastSeen;
     if (hit.type === 'ping' && idle > reach) continue;
     let session = idle <= reach ? prior : undefined;
