@@ -1,4 +1,4 @@
-import { Hono, type MiddlewareHandler } from 'hono';
+import { type Context, Hono, type MiddlewareHandler } from 'hono';
 import { observeWriteTransactions } from '../db/index.ts';
 import { type AppOptions, createApp } from '../index.ts';
 import {
@@ -107,6 +107,22 @@ const SECURITY_HEADERS: Record<string, string> = {
   'X-Robots-Tag': 'noindex, nofollow',
 };
 
+/**
+ * HSTS, sent only on a response to a request that arrived over https — on
+ * plain http it is ignored by spec, and pinning a host that serves no TLS
+ * would lock its users out. No `includeSubDomains`: sibling hosts are the
+ * operator's, not ours to pin. `X-Forwarded-Proto` is taken on trust because
+ * a forged one only pins the forger's own browser.
+ */
+const HSTS = 'max-age=31536000';
+
+function arrivedOverHttps(c: Context): boolean {
+  return (
+    new URL(c.req.url).protocol === 'https:' ||
+    c.req.header('x-forwarded-proto')?.split(',')[0]?.trim() === 'https'
+  );
+}
+
 export interface SecuredAppOptions extends AppOptions {
   auth?: AuthOptions;
   /** Feeds the ingest counters on `/metrics`. */
@@ -155,6 +171,7 @@ export function createSecuredApp(options: SecuredAppOptions = {}): SecuredApp {
   app.use('*', async (c, next) => {
     await next();
     for (const [name, value] of Object.entries(SECURITY_HEADERS)) c.res.headers.set(name, value);
+    if (arrivedOverHttps(c)) c.res.headers.set('Strict-Transport-Security', HSTS);
   });
   let auth: Auth | undefined;
   let ntfy: NtfyNotifier | undefined;

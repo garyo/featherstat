@@ -256,7 +256,9 @@ faster raw shapes, never a dishonest route.
 - All user-originated strings (URLs, titles, referrers, event names) are
   untrusted at render time: `textContent` only, never innerHTML.
 - TLS, hostnames, and rate-limit backstop live in Traefik, as with every other
-  service on the host.
+  service on the host. The app adds `Strict-Transport-Security:
+  max-age=31536000` (no `includeSubDomains`) to any response whose request
+  arrived over https, directly or per `X-Forwarded-Proto`.
 
 ## Testing strategy
 

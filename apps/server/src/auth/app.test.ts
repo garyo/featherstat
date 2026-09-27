@@ -832,3 +832,16 @@ describe('search-engine hygiene', () => {
     expect(beacon.headers.get('x-robots-tag')).toBe('noindex, nofollow');
   });
 });
+
+describe('HSTS', () => {
+  it('pins https — direct or through a TLS-terminating proxy — and never plain http', async () => {
+    const direct = await secured.app.request('https://analytics.example/healthz');
+    expect(direct.headers.get('strict-transport-security')).toBe('max-age=31536000');
+    const proxied = await secured.app.request('/healthz', {
+      headers: { 'x-forwarded-proto': 'https' },
+    });
+    expect(proxied.headers.get('strict-transport-security')).toBe('max-age=31536000');
+    const plain = await secured.app.request('/healthz');
+    expect(plain.headers.get('strict-transport-security')).toBeNull();
+  });
+});
