@@ -1,6 +1,7 @@
 <script lang="ts">
 import { isQueryError, type WidgetSpec, widgetQueries } from '@featherstat/shared';
 import Modal from '../lib/components/Modal.svelte';
+import { VIZ_LABELS } from '../lib/viz-labels.ts';
 import type { WidgetData } from '../widgets/types.ts';
 
 /**
@@ -30,7 +31,7 @@ const timings = $derived.by(() => {
 });
 </script>
 
-<Modal title="Query — {spec.title ?? spec.viz}" {onclose}>
+<Modal title="Query — {spec.title ?? VIZ_LABELS[spec.viz]}" {onclose}>
   {#if Object.keys(queries).length === 0}
     <p class="widget-note">This widget declares no queries.</p>
   {:else}
