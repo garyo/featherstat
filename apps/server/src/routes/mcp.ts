@@ -9,6 +9,7 @@ import {
   MAX_FILTER_DEPTH,
   MAX_FILTER_LEAVES,
   MAX_QUERIES_PER_BATCH,
+  MAX_RANGE_DAYS,
   MetricSchema,
   PING_CLAMP_MS,
   type QueryRequest,
@@ -301,9 +302,10 @@ sessions containing >=1 non-ping event matching the leaf.
 
 ## Ranges and buckets
 range: { preset } with preset one of ${RangePresetSchema.options.join(', ')} — or
-{ from: "YYYY-MM-DD", to: "YYYY-MM-DD" } (inclusive site-local dates). '24h' is
-the one rolling preset. bucket: ${BucketSchema.options.join(', ')} groups a
-query into a time series.
+{ from: "YYYY-MM-DD", to: "YYYY-MM-DD" } (inclusive site-local dates, from <= to,
+at most ${MAX_RANGE_DAYS} days). '24h' is the one rolling preset.
+bucket: ${BucketSchema.options.join(', ')} groups a query into a time series;
+limit cannot combine with a bucket and a dimension (it would cut by time).
 
 ## Compare
 compare: "previous" | "year" | { segment: <id> } (same window through a saved

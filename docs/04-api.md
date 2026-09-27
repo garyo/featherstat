@@ -257,6 +257,10 @@ buckets rather than the top groups; the schema refuses that combination with a
   them resolves per site timezone (`site: "all"` resolves one window per site),
   and all but `24h` resolve to whole inclusive `local_date` bounds — the tz math
   happened at ingest, so a calendar window is a plain indexed string comparison.
+  An explicit window (range or compare) must have `from ≤ to` and span at most
+  `MAX_RANGE_DAYS` (ten years); anything else is a 400. The cap bounds what one
+  request can ask of a worker: a statement the pool times out still runs to
+  completion, because better-sqlite3 cannot interrupt one.
 
   **`24h` is the rolling one**: the last 24 hour buckets, ending with the one in
   progress. It exists because a calendar day is a bad comparison — *"'today'

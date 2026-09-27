@@ -465,10 +465,32 @@ const isoDate = z
 export const RangePresetSchema = z.enum(['today', '24h', '7d', '30d', '90d', 'mtd']);
 export type RangePreset = z.infer<typeof RangePresetSchema>;
 
-export const RangeSchema = z.union([
-  z.object({ preset: RangePresetSchema }),
-  z.object({ from: isoDate, to: isoDate }),
-]);
+/**
+ * The longest explicit `{from, to}` window, in inclusive days — ten years. The
+ * presets top out at 90 days; this bounds what one custom range can ask of a
+ * worker, because a statement the pool times out still runs to completion
+ * (better-sqlite3 cannot interrupt one), so an unbounded range is unbounded
+ * work nobody can cancel.
+ */
+export const MAX_RANGE_DAYS = 3_653;
+
+/** An explicit inclusive local-date window: ordered, and no longer than `MAX_RANGE_DAYS`. */
+const DateSpanSchema = z.object({ from: isoDate, to: isoDate }).superRefine((span, ctx) => {
+  if (span.from > span.to) {
+    ctx.addIssue({ code: 'custom', path: ['to'], message: "'to' must not be before 'from'" });
+    return;
+  }
+  const days = (Date.parse(`${span.to}T00:00:00Z`) - Date.parse(`${span.from}T00:00:00Z`)) / DAY_MS;
+  if (days + 1 > MAX_RANGE_DAYS) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['to'],
+      message: `an explicit range spans at most ${MAX_RANGE_DAYS} days`,
+    });
+  }
+});
+
+export const RangeSchema = z.union([z.object({ preset: RangePresetSchema }), DateSpanSchema]);
 export type Range = z.infer<typeof RangeSchema>;
 
 /**
@@ -482,7 +504,7 @@ export type Range = z.infer<typeof RangeSchema>;
 export const CompareSchema = z.union([
   z.enum(['previous', 'year']),
   z.object({ segment: z.number().int().positive() }),
-  z.object({ from: isoDate, to: isoDate }),
+  DateSpanSchema,
 ]);
 export type Compare = z.infer<typeof CompareSchema>;
 

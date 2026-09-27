@@ -3,10 +3,12 @@ import {
   AdminSiteCreateSchema,
   BaseDimensionSchema,
   CollectHitSchema,
+  DAY_MS,
   DashboardSchema,
   EVENT_ONLY_DIMENSIONS,
   HitSchema,
   MAX_QUERIES_PER_BATCH,
+  MAX_RANGE_DAYS,
   NtfyUrlSchema,
   QueryRequestSchema,
   SESSION_ONLY_DIMENSIONS,
@@ -102,6 +104,28 @@ describe('QueryRequestSchema', () => {
     expect(query({ bucket: 'day', dim: 'path' })).toBe(true);
     expect(query({ dim: 'path', limit: 10 })).toBe(true);
     expect(query({ bucket: 'day', limit: 10 })).toBe(true);
+  });
+
+  it('bounds an explicit range: ordered, and at most MAX_RANGE_DAYS long', () => {
+    const accepts = (range: unknown, compare?: unknown) =>
+      QueryRequestSchema.safeParse({
+        site: 4,
+        range,
+        ...(compare === undefined ? {} : { compare }),
+        queries: [{ id: 'q', metrics: ['visits'] }],
+      }).success;
+    const lastDay = new Date(Date.parse('2016-01-01') + (MAX_RANGE_DAYS - 1) * DAY_MS)
+      .toISOString()
+      .slice(0, 10);
+    const pastIt = new Date(Date.parse(lastDay) + DAY_MS).toISOString().slice(0, 10);
+    expect(accepts({ from: '2016-01-01', to: lastDay })).toBe(true);
+    expect(accepts({ from: '2016-01-01', to: pastIt })).toBe(false);
+    expect(accepts({ from: '0001-01-01', to: '9999-12-31' })).toBe(false);
+    expect(accepts({ from: '2026-06-02', to: '2026-06-01' })).toBe(false);
+    expect(accepts({ from: '2026-06-01', to: '2026-06-01' })).toBe(true);
+    // The explicit compare window is held to the same bounds.
+    expect(accepts({ preset: '30d' }, { from: '0001-01-01', to: '9999-12-31' })).toBe(false);
+    expect(accepts({ preset: '30d' }, { from: '2026-05-01', to: '2026-05-30' })).toBe(true);
   });
 
   it('accepts a dwell query and defaults its depth', () => {
