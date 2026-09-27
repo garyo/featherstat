@@ -937,7 +937,8 @@ existing email, restoring a disabled account — and mints a **single-use
 invite link** (raw token `fsu_<43 base64url>`, sha256-at-rest, 7-day expiry)
 whose claim path `/welcome/<token>` appears exactly once in the response;
 `POST /api/admin/users/:id/invite` re-mints, which doubles as a password
-reset (the old password works until the new link is claimed);
+reset (the old password works until the new link is claimed, and claiming
+it signs the user out of every existing session);
 `PATCH /api/admin/users/:id {sites}` replaces the assignment;
 `DELETE /api/admin/users/:id` disables — sessions, outstanding invites and
 every viewer and token the user minted die with it (a re-invite restores the

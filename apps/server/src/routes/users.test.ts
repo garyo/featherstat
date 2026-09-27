@@ -195,7 +195,7 @@ describe('user lifecycle', () => {
 
   it('re-mints for an active user as a password reset and 404s a disabled one', async () => {
     const minted = await createUser([1]);
-    await claim(minted.url);
+    const oldSession = cookiesOf(await claim(minted.url));
     const admin = await adminSession();
     const remint = await secured.app.request(`/api/admin/users/${minted.userId}/invite`, {
       method: 'POST',
@@ -206,8 +206,12 @@ describe('user lifecycle', () => {
     expect(second.url).not.toBe(minted.url);
     // The old password keeps working until the reset link is claimed…
     expect((await loginAs(USER_EMAIL, USER_PASSWORD)).status).toBe(200);
-    // …then the new one replaces it.
-    expect((await claim(second.url, 'the-reset-password')).status).toBe(200);
+    // …then the new one replaces it, and every session the old one opened ends.
+    const reset = await claim(second.url, 'the-reset-password');
+    expect(reset.status).toBe(200);
+    const sites = (cookie: string) => secured.app.request('/api/sites', { headers: { cookie } });
+    expect((await sites(oldSession)).status).toBe(401);
+    expect((await sites(cookiesOf(reset))).status).toBe(200);
     expect((await loginAs(USER_EMAIL, 'the-reset-password')).status).toBe(200);
     expect((await loginAs(USER_EMAIL, USER_PASSWORD)).status).toBe(401);
 

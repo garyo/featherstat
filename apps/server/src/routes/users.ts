@@ -49,7 +49,8 @@ import { clientIp } from './track.ts';
  * The admin creates one by email and mints a single-use invite link, delivered
  * out of band exactly like a viewer's; claiming it at `POST /claim/:token`
  * sets the user's first password and signs them in. Re-inviting doubles as a
- * password reset — the old hash stays valid until the new link is claimed.
+ * password reset — the old hash stays valid until the new link is claimed,
+ * and the claim ends every session the old one opened.
  *
  * Mint/list/reassign/disable live under the admin wall; the claim route is
  * public — not under `/api/`, so the prefix gate skips it, like `/invite`.
@@ -210,6 +211,9 @@ export function createUserRoutes(
       // The UPDATE is the claim: single use even under concurrent requests.
       if (!consumeMagicLink(db, link.token_hash, auth.now())) return undefined;
       setUserPassword(db, user.id, passwordHash);
+      // A claim may be a password reset: whoever held the old password is
+      // signed out everywhere; the claim's own session is issued after this.
+      deleteUserSessions(db, user.id);
       return user.id;
     });
     if (userId === undefined) return deadLink(c);
