@@ -1,11 +1,17 @@
-import { DASHBOARD_LAYOUT_VERSION, MAX_WIDGETS_PER_DASHBOARD } from '@featherstat/shared';
+import {
+  DASHBOARD_LAYOUT_VERSION,
+  type DashboardDetail,
+  DashboardDetailSchema,
+  DashboardInfoSchema,
+  MAX_WIDGETS_PER_DASHBOARD,
+} from '@featherstat/shared';
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openTestDb, T0 } from '../../test/rows.ts';
 import { type Auth, type AuthEnv, createAuth } from '../auth/auth.ts';
 import { type Db, insertShareToken, listDashboards, withWriteTransaction } from '../db/index.ts';
 import { createAdminRoutes } from './admin.ts';
-import { createDashboardRoutes, type DashboardDetail, type DashboardInfo } from './dashboards.ts';
+import { createDashboardRoutes } from './dashboards.ts';
 
 const PASSWORD = 'a-decent-password';
 
@@ -159,7 +165,7 @@ describe('dashboards CRUD', () => {
     const session = await login();
     const created = await mutate(session, 'POST', '/api/admin/dashboards', LAYOUT);
     expect(created.status).toBe(201);
-    const detail = (await created.json()) as DashboardDetail;
+    const detail = DashboardDetailSchema.parse(await created.json());
     expect(detail).toMatchObject({ id: 1, name: 'Overview', site: 1, updatedAt: T0 });
     expect(detail.layout.grid).toHaveLength(2);
     expect(detail.layout.grid[0]).toMatchObject({ id: 'w-kpis', options: {} });
@@ -173,7 +179,7 @@ describe('dashboards CRUD', () => {
     const list = await app.request('/api/admin/dashboards', {
       headers: { cookie: session.cookie },
     });
-    const rows = (await list.json()) as DashboardInfo[];
+    const rows = DashboardInfoSchema.array().parse(await list.json());
     expect(rows).toEqual([
       {
         id: 1,
@@ -316,7 +322,7 @@ describe('dashboards CRUD', () => {
       headers: { cookie: session.cookie },
     });
     expect(got.status).toBe(200);
-    const detail = (await got.json()) as DashboardDetail;
+    const detail = DashboardDetailSchema.parse(await got.json());
     // Without the on-read upgrade the tile divides by a metric the batch never
     // asked for, and renders '—' forever.
     expect(metricsOf(detail, 0)).toEqual([
@@ -336,7 +342,7 @@ describe('dashboards CRUD', () => {
     const session = await login();
     const created = await mutate(session, 'POST', '/api/admin/dashboards', PRE_VERSIONING_LAYOUT);
     expect(created.status).toBe(201);
-    const detail = (await created.json()) as DashboardDetail;
+    const detail = DashboardDetailSchema.parse(await created.json());
     expect(metricsOf(detail, 0)).toContain('engaged_sessions');
     // A write is where a row converges — so no read path ever has to write.
     expect(storedLayout(db, 1)).toMatchObject({ version: DASHBOARD_LAYOUT_VERSION });
@@ -357,7 +363,7 @@ describe('dashboards CRUD', () => {
       grid: widgets(1),
     });
     expect(replaced.status).toBe(200);
-    const detail = (await replaced.json()) as DashboardDetail;
+    const detail = DashboardDetailSchema.parse(await replaced.json());
     expect(detail).toMatchObject({ id: 1, name: 'All sites', site: 'all', updatedAt: T0 + 60_000 });
     expect(detail.layout.grid).toHaveLength(1);
 
@@ -404,7 +410,7 @@ describe('dashboard library (template lineage, duplicate, reset)', () => {
       LAYOUT,
     );
     expect(created.status).toBe(201);
-    expect(((await created.json()) as DashboardInfo).template).toBe('overview');
+    expect(DashboardInfoSchema.parse(await created.json()).template).toBe('overview');
     expect(listDashboards(db)[0]?.template).toBe('overview');
 
     const bogus = await mutate(session, 'POST', '/api/admin/dashboards?template=nope', LAYOUT);
@@ -426,7 +432,7 @@ describe('dashboard library (template lineage, duplicate, reset)', () => {
 
     const res = await mutate(session, 'POST', '/api/admin/dashboards/1/duplicate');
     expect(res.status).toBe(201);
-    const copy = (await res.json()) as DashboardDetail;
+    const copy = DashboardDetailSchema.parse(await res.json());
     expect(copy.id).toBe(2);
     expect(copy.name).toBe('Overview copy');
     expect(copy.template).toBe('overview');
@@ -436,7 +442,7 @@ describe('dashboard library (template lineage, duplicate, reset)', () => {
     const list = await app.request('/api/admin/dashboards', {
       headers: { cookie: session.cookie },
     });
-    const rows = (await list.json()) as DashboardInfo[];
+    const rows = DashboardInfoSchema.array().parse(await list.json());
     expect(rows.map((row) => [row.id, row.shareCount])).toEqual([
       [1, 1],
       [2, 0],
@@ -454,7 +460,7 @@ describe('dashboard library (template lineage, duplicate, reset)', () => {
 
     const res = await mutate(session, 'POST', '/api/admin/dashboards/1/reset');
     expect(res.status).toBe(200);
-    const detail = (await res.json()) as DashboardDetail;
+    const detail = DashboardDetailSchema.parse(await res.json());
     expect(detail.name).toBe('My overview');
     expect(detail.layout.name).toBe('My overview');
     expect(detail.layout.version).toBe(DASHBOARD_LAYOUT_VERSION);

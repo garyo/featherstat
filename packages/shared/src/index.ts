@@ -1179,6 +1179,24 @@ export const DashboardSchema = z.object({
 });
 export type Dashboard = z.infer<typeof DashboardSchema>;
 
+/** `GET /api/admin/dashboards` row: enough for the library picker without shipping every layout. */
+export const DashboardInfoSchema = z.object({
+  id: z.number().int().positive(),
+  name: z.string(),
+  site: DashboardSchema.shape.site,
+  /** Shipped-template id this row was cloned from (the reset target); null otherwise. */
+  template: z.string().nullable(),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+  /** LIVE share links pointing at this row — what a delete would revoke. */
+  shareCount: z.number().int().nonnegative(),
+});
+export type DashboardInfo = z.infer<typeof DashboardInfoSchema>;
+
+/** One stored dashboard: the list fields plus its full, validated layout. */
+export const DashboardDetailSchema = DashboardInfoSchema.extend({ layout: DashboardSchema });
+export type DashboardDetail = z.infer<typeof DashboardDetailSchema>;
+
 // ---------------------------------------------------------------------------
 // Realtime SSE (docs/04 § 4)
 // ---------------------------------------------------------------------------

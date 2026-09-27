@@ -5,13 +5,14 @@ import type {
   AdminSiteCreate,
   AdminSitePatch,
   Dashboard,
+  DashboardDetail,
+  DashboardInfo,
   ExclusionRule,
   ExclusionState,
   NtfySettingsInput,
   NtfySettingsView,
   SiteInfo,
 } from '@featherstat/shared';
-import type { DashboardDetail, DashboardInfo } from './dashboards.ts';
 
 /**
  * The admin API client (docs/04 § 5). The session rides in HttpOnly cookies;

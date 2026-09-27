@@ -1,8 +1,12 @@
-import { DASHBOARD_LAYOUT_VERSION, type Dashboard } from '@featherstat/shared';
+import {
+  DASHBOARD_LAYOUT_VERSION,
+  type Dashboard,
+  type DashboardDetail,
+  type DashboardInfo,
+} from '@featherstat/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AdminClient } from './admin.ts';
 import { createDashboardStore } from './dashboards.svelte.ts';
-import type { DashboardDetail, DashboardInfo } from './dashboards.ts';
 
 /**
  * The store runs on Svelte runes, which are compile-time sugar; outside the
