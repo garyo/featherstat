@@ -295,20 +295,3 @@ const note = $derived.by(() => {
   />
 {/if}
 
-<style>
-  .toolbar {
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-  }
-
-  .toolbar > :global(.filters) {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .tool-btn {
-    margin-top: 11px;
-    flex-shrink: 0;
-  }
-</style>

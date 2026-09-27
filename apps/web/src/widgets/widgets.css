@@ -212,8 +212,16 @@
   text-align: right;
 }
 
+/* Phones: the aside takes a line of its own under the label, rather than
+   squeezing a path down to a few characters beside it. */
 @media (max-width: 599px) {
+  .bar-row:has(.sub) {
+    flex-wrap: wrap;
+    row-gap: 0;
+  }
+
   .bar-row .sub {
+    flex-basis: 100%;
     min-width: 0;
   }
 }
@@ -281,7 +289,8 @@
 
 /* ---------- heatmap (sequential --hm ramp; zero recedes to the surface) ---------- */
 /* Narrow screens scroll the grid inside its own pane; the floor keeps cells
- * at usable hover/read size instead of 9px smears (docs/05 responsive). */
+ * at usable hover/read size instead of 9px smears (docs/05 responsive). The
+ * pane then wears the edge fade (layout.css) that says there is more. */
 .heatmap-scroll {
   overflow-x: auto;
 }

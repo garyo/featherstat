@@ -136,21 +136,23 @@ const customCmp = $derived(cmp !== undefined && typeof cmp !== 'string');
 </script>
 
 <div class="filters" role="group" aria-label="Date range and filters">
-  {#each RANGE_PRESETS as preset (preset)}
+  <div class="presets">
+    {#each RANGE_PRESETS as preset (preset)}
+      <button
+        class="preset"
+        type="button"
+        aria-pressed={range === preset}
+        onclick={() => selectPreset(preset)}>{RANGE_LABELS[preset]}</button
+      >
+    {/each}
     <button
       class="preset"
       type="button"
-      aria-pressed={range === preset}
-      onclick={() => selectPreset(preset)}>{RANGE_LABELS[preset]}</button
+      aria-pressed={custom}
+      aria-expanded={editing}
+      onclick={openEditor}>{custom ? formatDayRange(range as CustomRange) : 'Custom…'}</button
     >
-  {/each}
-  <button
-    class="preset"
-    type="button"
-    aria-pressed={custom}
-    aria-expanded={editing}
-    onclick={openEditor}>{custom ? formatDayRange(range as CustomRange) : 'Custom…'}</button
-  >
+  </div>
   {#if editing}
     <!-- A form, so Enter in either date applies it; Escape (heard from the
          inputs, which are the controls) closes it unapplied. -->

@@ -184,17 +184,6 @@ const note = $derived.by(() => {
 </div>
 
 <style>
-  .toolbar {
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-  }
-
-  .toolbar > :global(.filters) {
-    flex: 1;
-    min-width: 0;
-  }
-
   .depth {
     display: flex;
     align-items: center;
