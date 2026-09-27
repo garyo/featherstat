@@ -36,7 +36,15 @@ export interface RegistryEntry {
   frame: 'card' | 'wide';
 }
 
-export const REGISTRY: Partial<Record<VizType, RegistryEntry>> = {
+/**
+ * In the vocabulary, not drawn yet (docs/05: the sortable table and the map are
+ * M2) — they render as placeholder cards. Everything else must register below,
+ * or this file does not type-check; registering one of these means taking it
+ * off this list.
+ */
+const PLANNED = ['table', 'map'] as const satisfies readonly VizType[];
+
+const REGISTERED: Record<Exclude<VizType, (typeof PLANNED)[number]>, RegistryEntry> = {
   'kpi-row': { component: KpiRow, frame: 'wide' },
   timeseries: { component: Timeseries, frame: 'card' },
   'bar-list': { component: BarList, frame: 'card' },
@@ -51,6 +59,9 @@ export const REGISTRY: Partial<Record<VizType, RegistryEntry>> = {
   changes: { component: Changes, frame: 'card' },
   'site-cards': { component: SiteCards, frame: 'wide' },
 };
+
+/** Looked up by any `VizType`: a planned one reads as unregistered. */
+export const REGISTRY: Partial<Record<VizType, RegistryEntry>> = REGISTERED;
 
 /** Span class in the 12-column grid vocabulary (layout.css); wider spans fill the row. */
 export function spanClass(w: number): string {

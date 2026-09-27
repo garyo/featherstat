@@ -136,10 +136,10 @@ list to actually hold in your head.
   and keeps the stream readers out of the batch, and the corollary — **one
   rendering per thing rendered** — is now a table in
   `apps/web/src/ownership.test.ts` (markup → the one file allowed to own it).
-  Extract and decorate; never teach a second file the markup. *Unguarded*: that
-  a new drawing file lands in `widgets/` and reaches `registry.ts` at all —
-  `REGISTRY` is a `Partial<Record<VizType, …>>`, so an unregistered viz
-  type-checks. The Journeys sankey and flows table are the standing exception
+  Extract and decorate; never teach a second file the markup. Registration is
+  typed: `registry.ts` must cover every `VizType` not on its `PLANNED` list, so
+  an unregistered viz fails the type-check. *Unguarded*: that a new drawing file
+  lands in `widgets/` and becomes a `VizType` at all. The Journeys sankey and flows table are the standing exception
   (their edge-click and depth controls are coupled) — open work, not licence for
   the next one.
 
