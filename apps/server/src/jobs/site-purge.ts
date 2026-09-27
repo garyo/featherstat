@@ -8,20 +8,20 @@ import {
   stmt,
   withWriteTransaction,
 } from '../db/index.ts';
+import { inChunks, oneRunAtATime } from './rewrite.ts';
 
 /**
  * Chunked removal of a deleted site's bulk data (docs/04 § 5). The admin DELETE
  * route tombstones the site, drops its small config rows inline, and enqueues
- * this: a settings watermark per site, so a crash resumes at boot — the same
- * watermark-in-settings shape prop-scrub.ts and campaign-backfill.ts use.
- *
- * Each chunk is one short write transaction (the lock is shared with ingest)
- * with an event-loop yield between chunks. The watermark is cleared LAST, in
- * the same final transaction that bumps the data epoch: rows this site
- * contributed to `MAX(events.id)`-tagged answers are gone, so every ETag minted
- * before the purge must expire (CLAUDE.md invariant 10). The tombstoned `sites`
- * row outlives the purge on purpose — it is what keeps the id from being
- * handed to the next site created (db/index.ts `tombstoneSite`).
+ * this: a settings watermark per site, so a crash resumes at boot, and the
+ * chunking of jobs/rewrite.ts — one short write transaction per chunk (the lock
+ * is shared with ingest), the event loop back between them. The watermark is
+ * cleared LAST, in the same final transaction that bumps the data epoch: rows
+ * this site contributed to `MAX(events.id)`-tagged answers are gone, so every
+ * ETag minted before the purge must expire (CLAUDE.md invariant 10). The
+ * watermark is itself the durable debt, so no dirty flag is needed. The
+ * tombstoned `sites` row outlives the purge on purpose — it is what keeps the
+ * id from being handed to the next site created (db/index.ts `tombstoneSite`).
  */
 
 const WATERMARK_PREFIX = 'site_purge:';
@@ -66,22 +66,13 @@ interface SitePurgeOptions {
   batchSize?: number;
 }
 
-/** One run in flight per db: a route kick during the boot catch-up just rides it. */
-const inFlight = new WeakMap<Db, Promise<SitePurgeResult>>();
-
 /**
  * Drain every pending purge watermark. Safe to call any time — the delete route
  * kicks it, and the scheduler's daily job resumes whatever a crash left behind.
  */
-export function runSitePurges(db: Db, options: SitePurgeOptions = {}): Promise<SitePurgeResult> {
-  const running = inFlight.get(db);
-  if (running !== undefined) return running;
-  const run = drain(db, options.batchSize ?? DEFAULT_BATCH_SIZE).finally(() => {
-    inFlight.delete(db);
-  });
-  inFlight.set(db, run);
-  return run;
-}
+export const runSitePurges = oneRunAtATime((db: Db, options: SitePurgeOptions = {}) =>
+  drain(db, options.batchSize ?? DEFAULT_BATCH_SIZE),
+);
 
 async function drain(db: Db, batchSize: number): Promise<SitePurgeResult> {
   const result: SitePurgeResult = { completed: 0, rows: 0 };
@@ -95,31 +86,21 @@ async function drain(db: Db, batchSize: number): Promise<SitePurgeResult> {
     for (const table of ROWID_TABLES) {
       const sql = `DELETE FROM ${table} WHERE rowid IN (
         SELECT rowid FROM ${table} WHERE site_id = ? LIMIT ?)`;
-      for (;;) {
-        // The event-loop yield between chunks: SQLite is synchronous, and an
-        // unbroken purge would stall ingest and its 200 ms flush.
-        await new Promise((resolve) => setImmediate(resolve));
-        const deleted = withWriteTransaction(
-          db,
-          () => stmt(db, sql).run(siteId, batchSize).changes,
-        );
+      await inChunks(db, () => {
+        const deleted = stmt(db, sql).run(siteId, batchSize).changes;
         result.rows += deleted;
-        if (deleted < batchSize) break;
-      }
+        return deleted < batchSize;
+      });
     }
 
     for (const table of ROLLUP_TABLES) {
       const sql = `DELETE FROM ${table} WHERE site_id = ? AND local_date IN (
         SELECT DISTINCT local_date FROM ${table} WHERE site_id = ? LIMIT ?)`;
-      for (;;) {
-        await new Promise((resolve) => setImmediate(resolve));
-        const deleted = withWriteTransaction(
-          db,
-          () => stmt(db, sql).run(siteId, siteId, ROLLUP_DATES_PER_CHUNK).changes,
-        );
+      await inChunks(db, () => {
+        const deleted = stmt(db, sql).run(siteId, siteId, ROLLUP_DATES_PER_CHUNK).changes;
         result.rows += deleted;
-        if (deleted === 0) break;
-      }
+        return deleted === 0;
+      });
     }
 
     // Everything drained: the watermark and the epoch move together, so a
