@@ -203,9 +203,10 @@
   color: var(--ink);
 }
 
-/* A row's aside (time on page: the average leads, its honesty numbers follow). */
+/* A row's aside (time on page: the average leads, its honesty numbers follow).
+   It can sit on the wash bar, where --muted falls below 4.5:1 in both themes. */
 .bar-row .sub {
-  color: var(--muted);
+  color: var(--ink-2);
   font-size: 12px;
   min-width: 124px;
   text-align: right;
