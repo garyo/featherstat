@@ -52,6 +52,9 @@
     "packages/tracker": {
       "name": "@featherstat/tracker",
       "version": "0.0.0",
+      "devDependencies": {
+        "esbuild": "^0.28.1",
+      },
     },
   },
   "packages": {

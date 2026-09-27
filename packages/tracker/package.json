@@ -9,5 +9,8 @@
   },
   "scripts": {
     "build": "bun run src/build.ts"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1"
   }
 }
