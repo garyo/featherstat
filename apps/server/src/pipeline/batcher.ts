@@ -7,6 +7,7 @@ import {
   insertEvents,
   type SessionRow,
   stmt,
+  tombstonedSiteIds,
   upsertSessions,
   withWriteTransaction,
 } from '../db/index.ts';
@@ -45,6 +46,30 @@ function countDrop(drops: Map<string, DropEntry>, siteId: number, localDate: str
 
 function totalDrops(drops: readonly DropEntry[]): number {
   return drops.reduce((total, drop) => total + drop.count, 0);
+}
+
+/** One flush's worth of queued rows. */
+interface Batch {
+  events: EventRow[];
+  sessions: SessionRow[];
+  botDrops: DropEntry[];
+  excludedDrops: DropEntry[];
+}
+
+/**
+ * The batch minus every row of a site deleted since it queued. Read inside the
+ * flush transaction, so a site delete either committed first — its stragglers
+ * drop here — or commits after, and the purge it enqueues removes what landed.
+ */
+function withoutTombstoned(db: Db, batch: Batch): Batch {
+  const dead = tombstonedSiteIds(db);
+  if (dead.size === 0) return batch;
+  return {
+    events: batch.events.filter((row) => !dead.has(row.site_id)),
+    sessions: batch.sessions.filter((row) => !dead.has(row.site_id)),
+    botDrops: batch.botDrops.filter((drop) => !dead.has(drop.siteId)),
+    excludedDrops: batch.excludedDrops.filter((drop) => !dead.has(drop.siteId)),
+  };
 }
 
 /**
@@ -144,35 +169,39 @@ export class WriteBatcher {
 
   flush(): FlushSummary | undefined {
     if (this.pending === 0) return undefined;
-    const events = this.events;
-    const sessions = [...this.sessions];
-    const botDrops = [...this.botDrops.values()];
-    const excludedDrops = [...this.excludedDrops.values()];
+    const queued: Batch = {
+      events: this.events,
+      sessions: [...this.sessions],
+      botDrops: [...this.botDrops.values()],
+      excludedDrops: [...this.excludedDrops.values()],
+    };
 
-    const deltas: SessionDelta[] = sessions.map((row) => ({
-      row,
-      before: this.committed.get(row),
-    }));
-
+    let landed: Batch;
     try {
-      withWriteTransaction(this.db, () => {
+      landed = withWriteTransaction(this.db, () => {
+        const batch = withoutTombstoned(this.db, queued);
         // Read before the inserts, inside the transaction: `id > sinceEventId`
         // is then exactly this flush's rows, and a rolled-back attempt reads
         // the same value again on retry.
         const sinceEventId = stmt(this.db, 'SELECT COALESCE(MAX(id), 0) FROM events')
           .pluck()
           .get() as number;
-        insertEvents(this.db, events);
-        upsertSessions(this.db, sessions);
-        for (const drop of botDrops) {
+        insertEvents(this.db, batch.events);
+        upsertSessions(this.db, batch.sessions);
+        for (const drop of batch.botDrops) {
           incrementBotDrops(this.db, drop.siteId, drop.localDate, drop.count);
         }
-        for (const drop of excludedDrops) {
+        for (const drop of batch.excludedDrops) {
           incrementExcludedDrops(this.db, drop.siteId, drop.localDate, drop.count);
         }
-        applyRollups(this.db, sinceEventId, events, deltas);
+        const deltas: SessionDelta[] = batch.sessions.map((row) => ({
+          row,
+          before: this.committed.get(row),
+        }));
+        applyRollups(this.db, sinceEventId, batch.events, deltas);
         this.props?.apply(this.db);
         this.beforeCommit?.();
+        return batch;
       });
     } catch (error) {
       // Everything stays queued and the next interval retries: dropping the
@@ -185,7 +214,7 @@ export class WriteBatcher {
     }
     // Only now, after the commit, does "committed" move: better-sqlite3 is
     // synchronous, so nothing can have mutated the rows since they were written.
-    for (const row of sessions) this.committed.set(row, snapshotSession(row));
+    for (const row of landed.sessions) this.committed.set(row, snapshotSession(row));
     this.props?.committed();
     this.events = [];
     this.sessions.clear();
@@ -193,13 +222,13 @@ export class WriteBatcher {
     this.excludedDrops.clear();
 
     const siteIds = new Set<number>();
-    for (const event of events) siteIds.add(event.site_id);
-    for (const session of sessions) siteIds.add(session.site_id);
+    for (const event of landed.events) siteIds.add(event.site_id);
+    for (const session of landed.sessions) siteIds.add(session.site_id);
     const summary: FlushSummary = {
-      events: events.length,
-      sessions: sessions.length,
-      botDrops: totalDrops(botDrops),
-      excludedDrops: totalDrops(excludedDrops),
+      events: landed.events.length,
+      sessions: landed.sessions.length,
+      botDrops: totalDrops(landed.botDrops),
+      excludedDrops: totalDrops(landed.excludedDrops),
       siteIds: [...siteIds],
     };
     for (const hook of this.hooks) hook(summary);

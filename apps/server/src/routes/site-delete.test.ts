@@ -1,6 +1,6 @@
 import type { SiteInfo } from '@featherstat/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { binId, event, openTestDb, session, syncRollups, T0 } from '../../test/rows.ts';
+import { binId, DESKTOP_UA, event, openTestDb, session, syncRollups, T0 } from '../../test/rows.ts';
 import { createSecuredApp, type SecuredApp } from '../auth/app.ts';
 import {
   createDashboard,
@@ -28,6 +28,8 @@ import { createPipeline, type Pipeline } from '../pipeline/index.ts';
 
 const PASSWORD = 'a-decent-password';
 const SETUP_TOKEN = 'test-setup-token';
+/** Long enough that only explicit `flush()` calls ever land. */
+const MANUAL_FLUSH_MS = 3_600_000;
 
 let db: Db;
 let secured: SecuredApp;
@@ -35,7 +37,7 @@ let pipeline: Pipeline;
 
 beforeEach(() => {
   db = openTestDb(2); // sites 1 and 2 — 2 is the highest id, the one SQLite would hand out again
-  pipeline = createPipeline(db);
+  pipeline = createPipeline(db, { batchIntervalMs: MANUAL_FLUSH_MS });
   secured = createSecuredApp({
     db,
     sink: pipeline.sink,
@@ -262,5 +264,20 @@ describe('the purge', () => {
     expect(getSetting(db, 'salt:America/New_York:2026-07-27')).toBe('cc');
     expect(JSON.parse(getSetting(db, NTFY_SETTING_KEYS.rules) ?? '')).toEqual([{ site: 2 }]);
     expect(getSetting(db, 'alert_rules')).toBe('[]');
+  });
+
+  it('drops hits still queued when the delete commits, however the purge and flush interleave', async () => {
+    const session = await adminSession();
+    pipeline.sink([{ siteId: 2, type: 'pageview', url: 'https://two.test/' }], {
+      ip: '192.0.2.10',
+      userAgent: DESKTOP_UA,
+      receivedAt: T0,
+    });
+
+    expect((await admin(session, 'DELETE', '/api/admin/sites/2')).status).toBe(200);
+    await runSitePurges(db);
+    pipeline.flush();
+
+    for (const table of tablesWith('site_id')) expect(rowsFor(table, 2), table).toBe(0);
   });
 });

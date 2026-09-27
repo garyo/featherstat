@@ -369,6 +369,13 @@ export function tombstoneSite(db: Db, id: number, now: number): boolean {
   return stmt(db, SQL_TOMBSTONE_SITE).run(now, id).changes > 0;
 }
 
+const SQL_TOMBSTONED_SITE_IDS = 'SELECT id FROM sites WHERE deleted_at IS NOT NULL';
+
+/** Every tombstoned site id — the batcher's last gate for hits queued before a delete. */
+export function tombstonedSiteIds(db: Db): Set<number> {
+  return new Set(stmt<number>(db, SQL_TOMBSTONED_SITE_IDS).pluck().all() as number[]);
+}
+
 /** The small per-site config tables the delete route clears inline — one short
  * transaction, unlike the bulk data the chunked purge job owns. Dashboards and
  * alert rules are NOT here: those need their own delete paths (share-token

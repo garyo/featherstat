@@ -817,8 +817,9 @@ crash) that bumps the data epoch on completion so pre-scrub ETags expire.
 
 **Site deletion** (`DELETE /api/admin/sites/:id`): one write transaction
 tombstones the row (`sites.deleted_at` — from that commit on, ingest drops the
-site's beacons like an unknown site's and every directory and query scope
-omits it), deletes the small per-site objects (goals, campaigns and their
+site's beacons like an unknown site's, the batcher drops whatever of the
+site's was already queued when it flushes, and every directory and query
+scope omits it), deletes the small per-site objects (goals, campaigns and their
 aliases, the prop registry, annotations, site-scoped dashboards with their
 share links, alert and ntfy rules naming the site, the `uid` opt-in and salt,
 and — when no live site is left in its timezone — that zone's day salts),
