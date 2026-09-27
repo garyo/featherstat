@@ -1,6 +1,6 @@
-import { DAY_MS, ENGAGEMENT_THRESHOLD_MS } from '@featherstat/shared';
+import { DAY_MS, ENGAGEMENT_THRESHOLD_MS, localClock } from '@featherstat/shared';
 import { assertWritable, type Db, stmt, withWriteTransaction } from '../db/index.ts';
-import { noteRollupsRebuilt } from './apply.ts';
+import { noteRollupsRebuilt, rawHorizonTs } from './apply.ts';
 import {
   EVENT_ROLLUP_DIMS,
   NO_DIM_ID,
@@ -133,18 +133,38 @@ export interface RebuildDayOptions {
   presenceHorizonDays?: number;
 }
 
+const SQL_SITE_TIMEZONE = 'SELECT timezone FROM sites WHERE id = ?';
+
 /**
- * Recomputes one (site, local day)'s rollup rows from raw events/sessions.
- * Must run inside `withWriteTransaction` — `rebuildAllRollups` wraps each day
- * in its own so a long rebuild never starves the ingest flush.
+ * Whether raw rows can still re-derive one (site, local day): never at or below
+ * the site-local date of the retention floor (`rollup_meta.raw_horizon_ts`).
+ * Rows there may be gone — a session outliving its start day, a prune that cut
+ * the day part-way — and a recompute would overwrite the rollups, which outlive
+ * raw on purpose, with partial numbers (docs/03 § Size & retention). The same
+ * date the query engine refuses raw-only questions at.
+ */
+export function rawCoversDay(db: Db, siteId: number, localDate: string): boolean {
+  const horizonTs = rawHorizonTs(db);
+  if (horizonTs === undefined) return true;
+  const timezone = stmt<{ timezone: string }>(db, SQL_SITE_TIMEZONE).get(siteId)?.timezone ?? 'UTC';
+  return localDate > localClock(timezone, horizonTs).date;
+}
+
+/**
+ * Recomputes one (site, local day)'s rollup rows from raw events/sessions, and
+ * says whether it did: a day raw no longer covers keeps its rollups untouched
+ * (`rawCoversDay`). Must run inside `withWriteTransaction` —
+ * `rebuildAllRollups` wraps each day in its own so a long rebuild never starves
+ * the ingest flush.
  */
 export function rebuildRollupDay(
   db: Db,
   siteId: number,
   localDate: string,
   options: RebuildDayOptions = {},
-): void {
+): boolean {
   assertWritable(db);
+  if (!rawCoversDay(db, siteId, localDate)) return false;
   for (const table of ROLLUP_TABLES) {
     stmt(db, `DELETE FROM ${table} WHERE site_id = ? AND local_date = ?`).run(siteId, localDate);
   }
@@ -169,6 +189,7 @@ export function rebuildRollupDay(
     for (const sql of VISITOR_SEEN_INSERTS) stmt(db, sql).run(siteId, localDate);
     for (const sql of SESSION_SEEN_INSERTS) stmt(db, sql).run(siteId, localDate);
   }
+  return true;
 }
 
 export interface RebuildAllOptions extends RebuildDayOptions {
@@ -183,15 +204,18 @@ const SQL_ROLLUP_DAYS = `SELECT site_id, local_date FROM (
 ) WHERE (? IS NULL OR site_id = ?) ORDER BY site_id, local_date`;
 
 export interface RebuildResult {
+  /** Days recomputed; those below the raw floor are skipped and not counted. */
   days: number;
 }
 
 /**
- * Full rebuild: every (site, day) with raw rows, one write transaction each,
+ * Full rebuild: every (site, day) raw still covers, one write transaction each,
  * yielding to the event loop between days (jobs/retention.ts's batching
  * discipline — SQLite is synchronous, so an unbroken rebuild would stall the
  * 200 ms ingest flush). A COMPLETE run re-stamps `rollup_meta`'s engagement
- * threshold and lifts any session-rollup suspension.
+ * threshold and lifts any session-rollup suspension — days below the raw floor
+ * keep the definition they were built under, having nothing left to re-derive
+ * them from.
  */
 export async function rebuildAllRollups(
   db: Db,
@@ -204,10 +228,11 @@ export async function rebuildAllRollups(
   ) as Array<{ site_id: number; local_date: string }>;
 
   let done = 0;
-  for (const { site_id, local_date } of days) {
-    if (done > 0) await new Promise((resolve) => setImmediate(resolve));
-    withWriteTransaction(db, () => rebuildRollupDay(db, site_id, local_date, options));
-    done += 1;
+  for (const [index, { site_id, local_date }] of days.entries()) {
+    if (index > 0) await new Promise((resolve) => setImmediate(resolve));
+    if (withWriteTransaction(db, () => rebuildRollupDay(db, site_id, local_date, options))) {
+      done += 1;
+    }
   }
 
   // A partial (per-site) rebuild proves nothing about the other sites' bounced

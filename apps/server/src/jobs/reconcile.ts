@@ -6,7 +6,7 @@ import {
   withReadSnapshot,
   withWriteTransaction,
 } from '../db/index.ts';
-import { rebuildRollupDay } from '../rollup/rebuild.ts';
+import { rawCoversDay, rebuildRollupDay } from '../rollup/rebuild.ts';
 import { type RollupDiscrepancy, verifyRollupDay } from '../rollup/verify.ts';
 
 /**
@@ -22,7 +22,9 @@ import { type RollupDiscrepancy, verifyRollupDay } from '../rollup/verify.ts';
  *
  * Yesterday, site-local, on purpose: today is still being written, and days
  * before yesterday were checked by earlier runs — one day per site keeps the
- * job O(day), not O(history).
+ * job O(day), not O(history). A yesterday already at the retention floor is
+ * skipped, not checked: its raw rows may be partly pruned, so a recompute
+ * would report drift that is only missing history (`rawCoversDay`).
  */
 
 export interface ReconcileResult {
@@ -50,6 +52,7 @@ export async function runReconcile(
     // on the writer's thread (jobs/retention.ts's batching discipline).
     if (result.checked > 0) await new Promise((resolve) => setImmediate(resolve));
     const yesterday = localYesterday(site.timezone, now);
+    if (!rawCoversDay(db, site.id, yesterday)) continue;
     // One snapshot per (site, day): a flush landing between the recompute and
     // the stored read would otherwise report phantom drift.
     const drift = withReadSnapshot(db, () => verifyRollupDay(db, site.id, yesterday));

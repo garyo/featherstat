@@ -11,6 +11,7 @@ import {
   upsertSessions,
   withWriteTransaction,
 } from '../db/index.ts';
+import { META_RAW_HORIZON, setRollupMeta } from '../rollup/apply.ts';
 import { verifyRollupDay } from '../rollup/verify.ts';
 import { runReconcile } from './reconcile.ts';
 
@@ -104,5 +105,29 @@ describe('runReconcile', () => {
     expect(await runReconcile(db, { now: () => NOW })).toMatchObject({ repaired: 0 });
     // The stale old day stands (rebuildAllRollups is the repair for history).
     expect(verifyRollupDay(db, 1, old).length).toBeGreaterThan(0);
+  });
+
+  it('skips a yesterday at the retention floor instead of calling missing history drift', async () => {
+    // retention_days = 1: yesterday is the floor's own day in both timezones,
+    // and its raw rows may already be partly gone.
+    seedDay(1, yesterdayOf('UTC'), 1);
+    seedDay(2, yesterdayOf('Asia/Tokyo'), 2);
+    withWriteTransaction(db, () => {
+      stmt(db, 'DELETE FROM events').run();
+      setRollupMeta(db, META_RAW_HORIZON, String(NOW - DAY_MS));
+    });
+    const stored = (): unknown[] =>
+      stmt(db, 'SELECT * FROM rollup_dim_day ORDER BY site_id, dim_id').all();
+    const before = { rows: stored(), version: dataVersion(db) };
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    expect(await runReconcile(db, { now: () => NOW })).toEqual({
+      checked: 0,
+      repaired: 0,
+      cells: 0,
+    });
+    expect(logged).not.toHaveBeenCalled();
+    expect({ rows: stored(), version: dataVersion(db) }).toEqual(before);
+    logged.mockRestore();
   });
 });

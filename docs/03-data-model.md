@@ -657,7 +657,8 @@ Maintenance discipline:
   flush-incremental == rebuild-from-raw over the whole replay corpus — a
   permanent ratchet (invariant 6).
 - **Nightly reconcile** (`jobs/reconcile.ts`): recompute yesterday (site-local)
-  from raw per site, repair any drifted day with `rebuildRollupDay`, log it
+  from raw per site — unless yesterday is already at the retention floor
+  (§ Size & retention) — repair any drifted day with `rebuildRollupDay`, log it
   loudly and count it in `/metrics` (`analytics_rollup_repairs_total`). The
   flush path is proven equivalent by the ratchet, so production drift is a
   delta-logic bug being reported, not maintenance being done.
@@ -752,10 +753,27 @@ retention: keep raw events forever.
 Age-based pruning of raw rows is safe now that the rollup read path is live
 (§ Rollups): rollups are never pruned — outliving raw is their point — and the
 retention job records the raw floor in `rollup_meta.raw_horizon_ts` before it
-deletes anything. Below that floor, rollup-answerable queries keep answering;
-a question only raw rows can answer (a raw-only dimension, `dim2`, joint
-filters, a cross-day distinct, session-scoped filters, the sequence kinds)
-returns an honest per-query `unsupported` error instead of partial numbers.
+deletes anything. It prunes **whole site-local days**: every event and session
+dated before the floor's local date in its site's timezone goes, and that date
+itself is kept entire, so a day is either complete or absent and at least
+`retention_days` of history always survive. Sessions go by their start date —
+the day their `rollup_sessions_day` row is keyed on — however late their last
+hit. At or below the floor's local date, rollup-answerable queries keep
+answering; a question only raw rows can answer (a raw-only dimension, `dim2`,
+joint filters, a cross-day distinct, session-scoped filters, the sequence
+kinds) returns an honest per-query `unsupported` error instead of partial
+numbers.
+
+**Rebuilds stop at the same date** (`rawCoversDay` in `rollup/rebuild.ts`):
+a per-day recompute there would replace the only surviving record of the day
+with whatever raw is left — a session outliving its start day, a floor that
+cut a day part-way — so `rebuildRollupDay` leaves such a day untouched, a full
+rebuild skips it (the campaign and referrer backfills run one), and the
+nightly reconcile does not check a yesterday that has already reached the
+floor. The cost is honest: those days keep the rollups they were flushed with,
+so a relabelling backfill or an engagement-threshold rebuild cannot reach them
+— nothing is left to re-derive them from.
+
 The same run ages the prop registry: keys (with their values) last seen before
 the horizon and `prop_drops` counters older than it describe rows the prune is
 deleting, so they go too.

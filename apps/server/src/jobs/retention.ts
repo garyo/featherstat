@@ -1,4 +1,4 @@
-import { DAY_MS } from '@featherstat/shared';
+import { DAY_MS, localClock } from '@featherstat/shared';
 import { type Db, getSetting, stmt, withWriteTransaction } from '../db/index.ts';
 import { META_RAW_HORIZON, rawHorizonTs, setRollupMeta } from '../rollup/apply.ts';
 
@@ -10,10 +10,20 @@ const DEFAULT_BATCH_SIZE = 5_000;
 /** Bounds one run; a large backlog drains over the following daily runs. */
 const DEFAULT_MAX_BATCHES = 100;
 
-const SQL_DELETE_EVENTS =
-  'DELETE FROM events WHERE id IN (SELECT id FROM events WHERE ts < ? LIMIT ?)';
-const SQL_DELETE_SESSIONS =
-  'DELETE FROM sessions WHERE id IN (SELECT id FROM sessions WHERE last_seen_at < ? LIMIT ?)';
+// Whole site-local days, so a day is either complete or absent — never cut
+// part-way where a rollup rebuild could mistake the remainder for the day.
+// Both walk a (site_id, local_date) index prefix, so even the batch that finds
+// nothing left is a seek, not a scan. Tombstoned sites included: their rows
+// are still rows until the purge reaches them.
+const SQL_SITES = 'SELECT id, timezone FROM sites ORDER BY id';
+interface RetentionSite {
+  id: number;
+  timezone: string;
+}
+const SQL_DELETE_EVENTS = `DELETE FROM events WHERE id IN (
+  SELECT id FROM events WHERE site_id = ? AND local_date < ? LIMIT ?)`;
+const SQL_DELETE_SESSIONS = `DELETE FROM sessions WHERE rowid IN (
+  SELECT rowid FROM sessions WHERE site_id = ? AND local_date < ? LIMIT ?)`;
 
 // Prop-registry ageing (docs/03 § Props): a key not seen since the horizon has
 // no rows left to describe once the events above are gone. Values go first —
@@ -45,16 +55,20 @@ export interface RetentionResult {
 
 /**
  * Optional pruning of raw events past a configurable age (docs/02 § Background
- * jobs). Sessions go with their events: a session row whose events are gone
- * would keep counting toward visit metrics the pageviews no longer support.
- * The prop registry ages with them: keys (and their values) last seen before
- * the horizon, and diagnostic drop counters older than it, describe rows this
- * run is deleting.
+ * jobs). The unit is the site-local day: every event and session dated before
+ * the cutoff's local date in its site's timezone goes, and that date itself is
+ * kept whole — so at least `days` of history always survive. Sessions go by
+ * their start day, the day their rollup row is keyed on: a session row whose
+ * day is gone would keep counting toward visit metrics the pageviews no longer
+ * support. The prop registry ages with them: keys (and their values) last seen
+ * before the cutoff, and diagnostic drop counters older than it, describe rows
+ * this run is deleting.
  *
  * Rollup rows are NEVER touched — outliving raw is their point (docs/03).
  * The run instead records the raw floor in `rollup_meta.raw_horizon_ts`, so
- * the query engine refuses raw-only questions below it (partial numbers are
- * wrong numbers) while rollup-answerable ones keep answering.
+ * the query engine refuses raw-only questions at or below its local date
+ * (partial numbers are wrong numbers) while rollup-answerable ones keep
+ * answering, and a rollup rebuild leaves those days alone.
  */
 export async function runRetention(
   db: Db,
@@ -78,7 +92,7 @@ export async function runRetention(
   };
 
   // Advance the floor BEFORE deleting: the batched DELETE takes rows below the
-  // cutoff in no particular order, so raw history under it is suspect from the
+  // cutoff's day in no particular order, so raw history under it is suspect from the
   // first batch — even one this run leaves for tomorrow. Monotonic: an operator
   // who widens retention gets slower pruning, never a floor that retreats.
   if (cutoff > (rawHorizonTs(db) ?? Number.NEGATIVE_INFINITY)) {
@@ -94,19 +108,28 @@ export async function runRetention(
     result.propDrops = stmt(db, SQL_DELETE_OLD_PROP_DROPS).run(cutoffDate).changes;
   });
 
-  for (let batch = 0; batch < maxBatches; batch++) {
-    // One transaction per batch, and the event loop back between them: SQLite is
-    // synchronous, so an unbroken prune would stall ingest and its 200 ms flush.
-    if (batch > 0) await new Promise((resolve) => setImmediate(resolve));
-    const deleted = withWriteTransaction(db, () => ({
-      events: stmt(db, SQL_DELETE_EVENTS).run(cutoff, batchSize).changes,
-      sessions: stmt(db, SQL_DELETE_SESSIONS).run(cutoff, batchSize).changes,
-    }));
-    result.events += deleted.events;
-    result.sessions += deleted.sessions;
-    if (deleted.events === 0 && deleted.sessions === 0) return result;
+  const sites = stmt<RetentionSite>(db, SQL_SITES).all() as RetentionSite[];
+  let batches = 0;
+  for (const site of sites) {
+    const keepFrom = localClock(site.timezone, cutoff).date;
+    for (;;) {
+      if (batches === maxBatches) {
+        result.more = true;
+        return result;
+      }
+      // One transaction per batch, and the event loop back between them: SQLite is
+      // synchronous, so an unbroken prune would stall ingest and its 200 ms flush.
+      if (batches > 0) await new Promise((resolve) => setImmediate(resolve));
+      batches += 1;
+      const deleted = withWriteTransaction(db, () => ({
+        events: stmt(db, SQL_DELETE_EVENTS).run(site.id, keepFrom, batchSize).changes,
+        sessions: stmt(db, SQL_DELETE_SESSIONS).run(site.id, keepFrom, batchSize).changes,
+      }));
+      result.events += deleted.events;
+      result.sessions += deleted.sessions;
+      if (deleted.events < batchSize && deleted.sessions < batchSize) break;
+    }
   }
-  result.more = true;
   return result;
 }
 

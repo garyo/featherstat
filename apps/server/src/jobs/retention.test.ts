@@ -1,15 +1,17 @@
-import { DAY_MS } from '@featherstat/shared';
+import { DAY_MS, localClock } from '@featherstat/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { binId, event, openTestDb, session } from '../../test/rows.ts';
 import {
+  createSite,
   type Db,
+  DEFAULT_TIMEZONE,
   insertEvents,
   setSetting,
   upsertSessions,
   withWriteTransaction,
 } from '../db/index.ts';
 import { rawHorizonTs } from '../rollup/apply.ts';
-import { rebuildRollupDay } from '../rollup/rebuild.ts';
+import { rebuildAllRollups, rebuildRollupDay } from '../rollup/rebuild.ts';
 import { RETENTION_DAYS_KEY, retentionDays, runRetention } from './retention.ts';
 
 /** Every test measures ages from one fixed instant. */
@@ -29,14 +31,28 @@ function setRetention(days: string): void {
   withWriteTransaction(db, () => setSetting(db, RETENTION_DAYS_KEY, days));
 }
 
-/** One event + its session, `daysAgo` old. */
-function storeDay(daysAgo: number, index = daysAgo): void {
-  const ts = NOW - daysAgo * DAY_MS;
+/** One event + its session at `ts`, dated in the site's timezone as ingest would. */
+function storeAt(ts: number, index: number, siteId = 1, timezone = DEFAULT_TIMEZONE): string {
   const id = binId(index);
+  const { date: local_date, hour: local_hour } = localClock(timezone, ts);
   withWriteTransaction(db, () => {
-    insertEvents(db, [{ ...event({ ts }), session_id: id }]);
-    upsertSessions(db, [session({ id, started_at: ts, last_seen_at: ts })]);
+    insertEvents(db, [
+      { ...event({ site_id: siteId, ts, local_date, local_hour }), session_id: id },
+    ]);
+    upsertSessions(db, [
+      session({ id, site_id: siteId, started_at: ts, last_seen_at: ts, local_date, local_hour }),
+    ]);
   });
+  return local_date;
+}
+
+/** One event + its session, `daysAgo` old. */
+function storeDay(daysAgo: number, index = daysAgo): string {
+  return storeAt(NOW - daysAgo * DAY_MS, index);
+}
+
+function rollupRows(): unknown[] {
+  return db.prepare('SELECT * FROM rollup_dim_day ORDER BY local_date, dim_id, dim_value').all();
 }
 
 function counts(): { events: number; sessions: number } {
@@ -79,33 +95,71 @@ describe('runRetention', () => {
     expect(db.prepare('SELECT MIN(ts) FROM events').pluck().get()).toBe(NOW - 10 * DAY_MS);
   });
 
-  it('keeps a row exactly at the cutoff and drops the millisecond before it', async () => {
-    const cutoff = NOW - 30 * DAY_MS;
-    withWriteTransaction(db, () => {
-      insertEvents(db, [
-        { ...event({ ts: cutoff }), session_id: binId(1) },
-        { ...event({ ts: cutoff - 1 }), session_id: binId(2) },
-      ]);
-      upsertSessions(db, [
-        session({ id: binId(1), started_at: cutoff, last_seen_at: cutoff }),
-        session({ id: binId(2), started_at: cutoff - 1, last_seen_at: cutoff - 1 }),
-      ]);
-    });
+  it("prunes whole site-local days, each in its own site's timezone", async () => {
+    // 02:00 UTC: still the 26th in New York, already the 27th in Tokyo.
+    const cutoff = Date.UTC(2026, 5, 27, 2);
+    withWriteTransaction(db, () =>
+      createSite(db, { id: 2, name: 'two', domains: ['two.test'], timezone: 'Asia/Tokyo' }),
+    );
+    const at = [
+      Date.UTC(2026, 5, 26, 0), // NY 25th, Tokyo 26th: gone for both
+      Date.UTC(2026, 5, 26, 14), // NY 26th, Tokyo 26th (23:00): NY keeps it
+      cutoff - 1, // older than the cutoff, but on the day it falls in for both
+    ];
+    for (const [i, ts] of at.entries()) {
+      storeAt(ts, 10 + i);
+      storeAt(ts, 20 + i, 2, 'Asia/Tokyo');
+    }
     setRetention('30');
 
-    expect(await runRetention(db, { now: () => NOW })).toMatchObject({ events: 1, sessions: 1 });
-    expect(db.prepare('SELECT ts FROM events').pluck().all()).toEqual([cutoff]);
+    const result = await runRetention(db, { now: () => cutoff + 30 * DAY_MS });
+
+    expect(result).toMatchObject({ events: 3, sessions: 3, more: false });
+    const kept = (siteId: number): unknown[] =>
+      db.prepare('SELECT ts FROM events WHERE site_id = ? ORDER BY ts').pluck().all(siteId);
+    expect(kept(1)).toEqual([at[1], at[2]]);
+    expect(kept(2)).toEqual([at[2]]);
   });
 
-  it('keeps a session whose last hit is inside the window, however old its start', async () => {
+  it('prunes a session with its start day, however late its last hit', async () => {
     const started = NOW - 90 * DAY_MS;
+    const { date: local_date } = localClock(DEFAULT_TIMEZONE, started);
     withWriteTransaction(db, () => {
-      upsertSessions(db, [session({ id: binId(9), started_at: started, last_seen_at: NOW })]);
+      upsertSessions(db, [
+        session({ id: binId(9), started_at: started, last_seen_at: NOW, local_date }),
+      ]);
     });
     setRetention('30');
 
-    expect(await runRetention(db, { now: () => NOW })).toMatchObject({ sessions: 0 });
-    expect(counts().sessions).toBe(1);
+    expect(await runRetention(db, { now: () => NOW })).toMatchObject({ sessions: 1 });
+    expect(counts().sessions).toBe(0);
+  });
+
+  it('then a full rebuild leaves every rollup below the floor as it was', async () => {
+    // A visit that began before the horizon and kept going past it: its later
+    // hits are dated after the horizon, the visit (and its rollup row) before.
+    const started = NOW - 40 * DAY_MS;
+    const later = NOW - DAY_MS;
+    const startDate = storeAt(started, 1);
+    withWriteTransaction(db, () => {
+      const { date: local_date, hour: local_hour } = localClock(DEFAULT_TIMEZONE, later);
+      insertEvents(db, [
+        { ...event({ ts: later, local_date, local_hour, seq: 2 }), session_id: binId(1) },
+      ]);
+      db.prepare('UPDATE sessions SET last_seen_at = ?').run(later);
+    });
+    await rebuildAllRollups(db, { now: () => NOW });
+    const before = rollupRows();
+    expect(before.length).toBeGreaterThan(0);
+    setRetention('30');
+
+    await runRetention(db, { now: () => NOW });
+    await rebuildAllRollups(db, { now: () => NOW });
+
+    expect(rollupRows()).toEqual(before);
+    expect(
+      db.prepare('SELECT COUNT(*) FROM rollup_dim_day WHERE local_date = ?').pluck().get(startDate),
+    ).toBeGreaterThan(0);
   });
 
   it('deletes in bounded batches and reports an unfinished run', async () => {
@@ -217,17 +271,15 @@ describe('runRetention', () => {
   });
 
   it('never touches rollup rows — outliving raw is their point', async () => {
-    storeDay(100);
-    // The fixture rows all carry this local_date, whatever their ts.
-    withWriteTransaction(db, () => rebuildRollupDay(db, 1, '2023-11-14'));
-    const rollupRows = (): number =>
-      db.prepare('SELECT COUNT(*) FROM rollup_dim_day').pluck().get() as number;
-    expect(rollupRows()).toBeGreaterThan(0);
+    const date = storeDay(100);
+    withWriteTransaction(db, () => rebuildRollupDay(db, 1, date));
+    const before = rollupRows();
+    expect(before.length).toBeGreaterThan(0);
     setRetention('30');
 
     expect(await runRetention(db, { now: () => NOW })).toMatchObject({ events: 1 });
     expect(counts()).toEqual({ events: 0, sessions: 0 });
-    expect(rollupRows()).toBeGreaterThan(0);
+    expect(rollupRows()).toEqual(before);
   });
 });
 
