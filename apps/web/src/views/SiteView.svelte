@@ -277,11 +277,13 @@ const note = $derived.by(() => {
   />
 {/if}
 
+<!-- The saved layout, not the pivoted one: a pivot is transient view state, and
+     share links ignore it (docs/05 § Pivots). -->
 {#if ShareDialog !== undefined}
   <ShareDialog
     {admin}
     {store}
-    layout={{ ...dashboard, site }}
+    layout={{ ...saved, site }}
     onclose={() => (ShareDialog = undefined)}
   />
 {/if}
