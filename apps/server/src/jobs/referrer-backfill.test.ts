@@ -186,6 +186,32 @@ describe('the epoch survives a crash mid-rewrite', () => {
     db.close();
   });
 
+  it('pays a rebuild that died after the drain on the next run', async () => {
+    const db = openTestDb();
+    seed(db, { domain: 'go.bsky.app' });
+    syncRollups(db);
+    const before = dataVersion(db);
+    db.exec(`CREATE TRIGGER crash BEFORE INSERT ON rollup_dim_day
+      BEGIN SELECT RAISE(ABORT, 'crash mid-rebuild'); END`);
+
+    await expect(runReferrerBackfill(db)).rejects.toThrow('crash mid-rebuild');
+    expect(getSetting(db, 'referrer_backfill:events')).toBeUndefined();
+    expect(getSetting(db, 'referrer_backfill:dirty')).toBe('1');
+    db.exec('DROP TRIGGER crash');
+
+    expect(await runReferrerBackfill(db)).toMatchObject({ completed: true, rows: 0 });
+    expect(dataVersion(db)).toBeGreaterThan(before);
+    expect(getSetting(db, 'referrer_backfill:dirty')).toBeUndefined();
+    const values = stmt<string>(
+      db,
+      'SELECT DISTINCT dim_value FROM rollup_dim_day WHERE dim_id = 3 AND dim_null = 0',
+    )
+      .pluck()
+      .all();
+    expect(values).toEqual(['bsky.app']);
+    db.close();
+  });
+
   it('leaves the epoch alone when nothing was ever rewritten', async () => {
     const db = openTestDb();
     seed(db, { domain: 'bsky.app' }); // already canonical

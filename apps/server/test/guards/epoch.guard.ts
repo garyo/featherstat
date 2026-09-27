@@ -18,8 +18,9 @@ import { fileURLToPath } from 'node:url';
  * against events, sessions, or a `${table}` template over them), and does it
  * bump the epoch? `REWRITERS` names the files that must do both; anything else
  * that matches the rewrite shape needs either the bump + a REWRITERS entry, or
- * an explained exemption. The rollup-rebuild-after-backfill case rides inside
- * campaign-backfill.ts, which owns that bump.
+ * an explained exemption. The backfills bump through `settleRewrite`, the
+ * shared rebuild-then-bump epilogue in rewrite.ts, which the scan then holds
+ * to a bump of its own (`DELEGATED_BUMPS`).
  *
  * The scan takes its files as an argument so `test/guards/inventory.ts` can
  * hand it a mutated set and check that this actually objects.
@@ -50,6 +51,18 @@ export const HISTORY_REWRITE =
 
 /** The call every rewriter must make after its last chunk commits. */
 const EPOCH_BUMP = 'bumpDataEpoch(';
+
+/** Calls that bump on a rewriter's behalf, each with the job file that must bump itself. */
+export const DELEGATED_BUMPS: Readonly<Record<string, string>> = {
+  'settleRewrite(': 'rewrite.ts',
+};
+
+function bumps(source: string): boolean {
+  return (
+    source.includes(EPOCH_BUMP) ||
+    Object.keys(DELEGATED_BUMPS).some((call) => source.includes(call))
+  );
+}
 
 /** The known rewrite entry points. A new one is added HERE, with its bump. */
 export const REWRITERS = [
@@ -93,8 +106,14 @@ export function epochBreaches(files: readonly JobSource[]): string[] {
           'from REWRITERS; if the SQL moved, teach HISTORY_REWRITE the new shape',
       );
     }
-    if (!file.source.includes(EPOCH_BUMP)) {
+    if (!bumps(file.source)) {
       breaches.push(`${name} rewrites history without calling bumpDataEpoch — ETags will lie`);
+    }
+  }
+
+  for (const [call, name] of Object.entries(DELEGATED_BUMPS)) {
+    if (!byName.get(name)?.source.includes(EPOCH_BUMP)) {
+      breaches.push(`${name} no longer bumps the epoch — every rewriter calling ${call}) lies`);
     }
   }
 

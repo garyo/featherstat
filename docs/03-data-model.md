@@ -496,7 +496,10 @@ restores the canonicalized original (raw is NULLed when the two agree
 again). A completed backfill that changed any row **rebuilds all rollups**
 (the utm marginals moved; per-day recompute, chunked and yielding — minutes
 on a large file, the stated cost of an alias edit) and **bumps the data
-epoch** so every pre-rewrite ETag expires.
+epoch** so every pre-rewrite ETag expires. Both are owed by a durable flag set
+with the first changed row (`settleRewrite` in `jobs/rewrite.ts`, shared with
+the referrer backfill), and every run checks it whether or not a watermark is
+left — so a crash in the rebuild itself is paid by the next run.
 
 **The campaigns registry** (`campaigns` table: canonical `utm_campaign`
 name, optional expected sources/mediums, optional local-date lifespan,

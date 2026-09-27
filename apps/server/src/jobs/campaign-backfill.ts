@@ -1,15 +1,7 @@
 import { canonicalUtmValue } from '@featherstat/shared';
-import {
-  bumpDataEpoch,
-  type Db,
-  deleteSetting,
-  getSetting,
-  setSetting,
-  stmt,
-  withWriteTransaction,
-} from '../db/index.ts';
+import { type Db, deleteSetting, getSetting, setSetting, stmt } from '../db/index.ts';
 import { AliasCache } from '../pipeline/campaigns.ts';
-import { rebuildAllRollups } from '../rollup/rebuild.ts';
+import { inChunks, markRewriteDirty, oneRunAtATime, settleRewrite } from './rewrite.ts';
 
 /**
  * Alias backfill (docs/03 § Campaigns): after an alias edit, every stored utm
@@ -20,28 +12,20 @@ import { rebuildAllRollups } from '../rollup/rebuild.ts';
  * alias edits) and the rows land in the same state. The raw column is set when
  * the stored value now differs from the base, and NULLed when they agree again.
  *
- * Shape mirrors jobs/prop-scrub.ts exactly: a settings watermark per table so a
- * crash resumes where it stopped, short chunked write transactions sharing the
- * lock with ingest, an event-loop yield between chunks.
+ * The plumbing is jobs/rewrite.ts's, shared with the referrer backfill and the
+ * prop scrub: a settings watermark per table so a crash resumes where it
+ * stopped, short chunked write transactions sharing the lock with ingest.
  *
  * Cost note: rewritten utm values change the utm marginals in `rollup_dim_day`
  * and `rollup_sessions_day`, so a completed backfill that changed ANY row runs
  * `rebuildAllRollups` — a per-day recompute over all history (chunked and
  * yielding, but minutes on a large file) — and then bumps the data epoch so
- * every pre-rewrite ETag expires. A backfill that changed nothing skips both.
+ * every pre-rewrite ETag expires (`settleRewrite`). A backfill that changed
+ * nothing skips both.
  */
 
 const WATERMARK_PREFIX = 'campaign_backfill:';
-/**
- * Set in the SAME transaction as the first row this backfill changes, and
- * cleared only once the rollups are rebuilt and the epoch is bumped.
- *
- * Gating that epilogue on rows changed *this run* loses it across a crash: a
- * run rewrites rows and dies, the resumed run finishes a remainder that happens
- * to need no change, and history has moved with no bump — every pre-rewrite
- * ETag answers 304 forever, which is the exact failure invariant 10 exists to
- * prevent. A durable flag survives the crash instead.
- */
+/** The durable debt `settleRewrite` pays: set with the first row changed. */
 const DIRTY_SETTING = 'campaign_backfill:dirty';
 const TABLES = ['events', 'sessions'] as const;
 type BackfillTable = (typeof TABLES)[number];
@@ -92,7 +76,7 @@ export function requestCampaignBackfill(db: Db): void {
 }
 
 export interface CampaignBackfillResult {
-  /** True when both tables' watermarks were drained this run. */
+  /** True when this run drained both tables' watermarks, or paid a crashed run's rebuild. */
   completed: boolean;
   /** Rows whose stored utm state actually changed. */
   rows: number;
@@ -102,31 +86,17 @@ interface CampaignBackfillOptions {
   batchSize?: number;
 }
 
-/** One run in flight per db: a route kick during the boot catch-up just rides it. */
-const inFlight = new WeakMap<Db, Promise<CampaignBackfillResult>>();
-
 /**
  * Drain the pending backfill, if any. Safe to call any time — the alias route
  * kicks it after a PUT, and the scheduler resumes whatever a crash left behind.
  */
-export function runCampaignBackfill(
-  db: Db,
-  options: CampaignBackfillOptions = {},
-): Promise<CampaignBackfillResult> {
-  const running = inFlight.get(db);
-  if (running !== undefined) return running;
-  const run = drain(db, options.batchSize ?? DEFAULT_BATCH_SIZE).finally(() => {
-    inFlight.delete(db);
-  });
-  inFlight.set(db, run);
-  return run;
-}
+export const runCampaignBackfill = oneRunAtATime((db: Db, options: CampaignBackfillOptions = {}) =>
+  drain(db, options.batchSize ?? DEFAULT_BATCH_SIZE),
+);
 
 async function drain(db: Db, batchSize: number): Promise<CampaignBackfillResult> {
   const result: CampaignBackfillResult = { completed: false, rows: 0 };
-  if (TABLES.every((table) => getSetting(db, watermarkKey(table)) === undefined)) {
-    return result; // nothing enqueued
-  }
+  const enqueued = TABLES.some((table) => getSetting(db, watermarkKey(table)) !== undefined);
   // Loaded once per run: the aliases a chunk applies are the ones committed
   // when the run started; an edit mid-run re-enqueues and the next run catches it.
   const aliases = new AliasCache(db);
@@ -136,65 +106,46 @@ async function drain(db: Db, batchSize: number): Promise<CampaignBackfillResult>
     if (getSetting(db, setting) === undefined) continue;
     const select = stmt<ChunkRow>(db, selectChunk(table));
     const update = stmt(db, updateRow(table));
-    for (;;) {
-      // The event-loop yield between chunks: SQLite is synchronous, and an
-      // unbroken rewrite would stall ingest and its 200 ms flush.
-      await new Promise((resolve) => setImmediate(resolve));
-      const done = withWriteTransaction(db, () => {
-        const since = Number(getSetting(db, setting) ?? 0);
-        const rows = select.all(since, batchSize) as ChunkRow[];
-        if (rows.length === 0) {
-          deleteSetting(db, setting);
-          return true;
-        }
-        for (const row of rows) {
-          const next: (string | null)[] = [];
-          let changed = false;
-          for (const { field, column } of FIELDS) {
-            const rawColumn = `${column}_raw` as keyof ChunkRow;
-            const current = row[column] as string | null;
-            const storedRaw = row[rawColumn] as string | null;
-            const base = storedRaw ?? current;
-            if (base === null) {
-              next.push(null, null);
-              continue;
-            }
-            const canonical = canonicalUtmValue(base);
-            const normalized =
-              canonical === ''
-                ? null
-                : (aliases.resolve(row.site_id, field, canonical) ?? canonical);
-            const raw = normalized === base ? null : base;
-            next.push(normalized, raw);
-            if (normalized !== current || raw !== storedRaw) changed = true;
+    await inChunks(db, () => {
+      const since = Number(getSetting(db, setting) ?? 0);
+      const rows = select.all(since, batchSize) as ChunkRow[];
+      if (rows.length === 0) {
+        deleteSetting(db, setting);
+        return true;
+      }
+      for (const row of rows) {
+        const next: (string | null)[] = [];
+        let changed = false;
+        for (const { field, column } of FIELDS) {
+          const rawColumn = `${column}_raw` as keyof ChunkRow;
+          const current = row[column] as string | null;
+          const storedRaw = row[rawColumn] as string | null;
+          const base = storedRaw ?? current;
+          if (base === null) {
+            next.push(null, null);
+            continue;
           }
-          if (changed) {
-            update.run(...next, row.rid);
-            result.rows += 1;
-            // Atomic with the rewrite it describes: whatever this transaction
-            // commits, it commits together.
-            setSetting(db, DIRTY_SETTING, '1');
-          }
+          const canonical = canonicalUtmValue(base);
+          const normalized =
+            canonical === '' ? null : (aliases.resolve(row.site_id, field, canonical) ?? canonical);
+          const raw = normalized === base ? null : base;
+          next.push(normalized, raw);
+          if (normalized !== current || raw !== storedRaw) changed = true;
         }
-        setSetting(db, setting, String(rows[rows.length - 1]?.rid ?? since));
-        return false;
-      });
-      if (done) break;
-    }
+        if (changed) {
+          update.run(...next, row.rid);
+          result.rows += 1;
+          markRewriteDirty(db, DIRTY_SETTING);
+        }
+      }
+      setSetting(db, setting, String(rows[rows.length - 1]?.rid ?? since));
+      return false;
+    });
   }
 
   // Everything drained: the utm marginals in the rollups may now disagree with
-  // raw, and cached ETags describe rewritten history. Repair, then expire —
-  // reading the durable flag, not this run's tally (see DIRTY_SETTING).
-  // Crashing between the rebuild and the bump leaves the flag set, so the next
-  // run simply does both again; neither is destructive to repeat.
-  if (getSetting(db, DIRTY_SETTING) !== undefined) {
-    await rebuildAllRollups(db);
-    withWriteTransaction(db, () => {
-      bumpDataEpoch(db);
-      deleteSetting(db, DIRTY_SETTING);
-    });
-  }
-  result.completed = true;
+  // raw, and cached ETags describe rewritten history.
+  const settled = await settleRewrite(db, DIRTY_SETTING);
+  result.completed = enqueued || settled;
   return result;
 }

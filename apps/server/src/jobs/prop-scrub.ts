@@ -8,6 +8,7 @@ import {
   stmt,
   withWriteTransaction,
 } from '../db/index.ts';
+import { inChunks, oneRunAtATime } from './rewrite.ts';
 
 /**
  * Chunked removal of one prop key from stored bags (docs/03 § Props). The admin
@@ -59,23 +60,14 @@ interface PropScrubOptions {
   batchSize?: number;
 }
 
-/** One run in flight per db: a route kick during the boot catch-up just rides it. */
-const inFlight = new WeakMap<Db, Promise<PropScrubResult>>();
-
 /**
  * Drain every pending scrub watermark. Safe to call any time — the route kicks
  * it after a DELETE, and the scheduler's hourly job resumes whatever a crash
  * left behind.
  */
-export function runPropScrubs(db: Db, options: PropScrubOptions = {}): Promise<PropScrubResult> {
-  const running = inFlight.get(db);
-  if (running !== undefined) return running;
-  const run = drain(db, options.batchSize ?? DEFAULT_BATCH_SIZE).finally(() => {
-    inFlight.delete(db);
-  });
-  inFlight.set(db, run);
-  return run;
-}
+export const runPropScrubs = oneRunAtATime((db: Db, options: PropScrubOptions = {}) =>
+  drain(db, options.batchSize ?? DEFAULT_BATCH_SIZE),
+);
 
 async function drain(db: Db, batchSize: number): Promise<PropScrubResult> {
   const result: PropScrubResult = { completed: 0, rows: 0 };
@@ -87,30 +79,24 @@ async function drain(db: Db, batchSize: number): Promise<PropScrubResult> {
       continue;
     }
     const path = `$."${key}"`;
-    for (;;) {
-      // The event loop back between chunks: SQLite is synchronous, and an
-      // unbroken scrub would stall ingest and its 200 ms flush.
-      await new Promise((resolve) => setImmediate(resolve));
-      const done = withWriteTransaction(db, () => {
-        const since = Number(getSetting(db, setting) ?? 0);
-        const ids = stmt<{ id: number }>(db, SQL_SCRUB_CHUNK).all(
-          path,
-          since,
-          siteId,
-          path,
-          batchSize,
-        ) as { id: number }[];
-        if (ids.length === 0) {
-          deleteSetting(db, setting);
-          bumpDataEpoch(db);
-          return true;
-        }
-        result.rows += ids.length;
-        setSetting(db, setting, String(ids[ids.length - 1]?.id ?? since));
-        return false;
-      });
-      if (done) break;
-    }
+    await inChunks(db, () => {
+      const since = Number(getSetting(db, setting) ?? 0);
+      const ids = stmt<{ id: number }>(db, SQL_SCRUB_CHUNK).all(
+        path,
+        since,
+        siteId,
+        path,
+        batchSize,
+      ) as { id: number }[];
+      if (ids.length === 0) {
+        deleteSetting(db, setting);
+        bumpDataEpoch(db);
+        return true;
+      }
+      result.rows += ids.length;
+      setSetting(db, setting, String(ids[ids.length - 1]?.id ?? since));
+      return false;
+    });
     result.completed += 1;
   }
   return result;

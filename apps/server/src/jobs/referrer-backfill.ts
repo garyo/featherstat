@@ -1,5 +1,4 @@
 import {
-  bumpDataEpoch,
   type Db,
   deleteSetting,
   getSetting,
@@ -12,7 +11,7 @@ import {
   referrerTablesFingerprint,
   referrerTypeOf,
 } from '../pipeline/referrers.ts';
-import { rebuildAllRollups } from '../rollup/rebuild.ts';
+import { inChunks, markRewriteDirty, oneRunAtATime, settleRewrite } from './rewrite.ts';
 
 /**
  * Referrer backfill (docs/03 § Attribution): every stored referrer is
@@ -24,28 +23,20 @@ import { rebuildAllRollups } from '../rollup/rebuild.ts';
  * stored value now differs from the base, and NULLed when they agree again.
  * `ref_type` follows the new host wherever it can (see `DERIVABLE_TYPES`).
  *
- * Shape mirrors jobs/campaign-backfill.ts exactly: a settings watermark per
- * table so a crash resumes where it stopped, short chunked write transactions
- * sharing the lock with ingest, an event-loop yield between chunks.
+ * The plumbing is jobs/rewrite.ts's, shared with the campaign backfill: a
+ * settings watermark per table so a crash resumes where it stopped, short
+ * chunked write transactions sharing the lock with ingest.
  *
  * Cost note: `ref_domain` is a rolled dimension, so a backfill that changed ANY
  * row runs `rebuildAllRollups` — a per-day recompute over all history — and
- * then bumps the data epoch so every pre-rewrite ETag expires (invariant 10).
- * A backfill that has changed nothing skips both. "Has", not "did": the test is
- * a durable flag, so a run that resumes someone else's rewrite still pays it.
+ * then bumps the data epoch so every pre-rewrite ETag expires (invariant 10,
+ * `settleRewrite`). A backfill that has changed nothing skips both. "Has", not
+ * "did": the test is a durable flag, so a run that resumes someone else's
+ * rewrite still pays it.
  */
 
 const WATERMARK_PREFIX = 'referrer_backfill:';
-/**
- * Set in the SAME transaction as the first row this backfill changes, and
- * cleared only once the rollups are rebuilt and the epoch is bumped.
- *
- * Gating that epilogue on rows changed *this run* loses it across a crash: a
- * run rewrites rows and dies, the resumed run finishes a remainder that happens
- * to need no change, and history has moved with no bump — every pre-rewrite
- * ETag answers 304 forever, which is the exact failure invariant 10 exists to
- * prevent. A durable flag survives the crash instead.
- */
+/** The durable debt `settleRewrite` pays: set with the first row changed. */
 const DIRTY_SETTING = 'referrer_backfill:dirty';
 /** The table fingerprint the last completed run canonicalized with. */
 const TABLES_SETTING = 'referrer_backfill:tables';
@@ -91,7 +82,7 @@ export function requestReferrerBackfill(db: Db): void {
 }
 
 export interface ReferrerBackfillResult {
-  /** True when both tables' watermarks were drained this run. */
+  /** True when this run drained both tables' watermarks, or paid a crashed run's rebuild. */
   completed: boolean;
   /** Rows whose stored referrer state actually changed. */
   rows: number;
@@ -101,22 +92,10 @@ interface ReferrerBackfillOptions {
   batchSize?: number;
 }
 
-/** One run in flight per db: a second caller just rides the first. */
-const inFlight = new WeakMap<Db, Promise<ReferrerBackfillResult>>();
-
 /** Drain the pending backfill, if any. Safe to call any time. */
-export function runReferrerBackfill(
-  db: Db,
-  options: ReferrerBackfillOptions = {},
-): Promise<ReferrerBackfillResult> {
-  const running = inFlight.get(db);
-  if (running !== undefined) return running;
-  const run = drain(db, options.batchSize ?? DEFAULT_BATCH_SIZE).finally(() => {
-    inFlight.delete(db);
-  });
-  inFlight.set(db, run);
-  return run;
-}
+export const runReferrerBackfill = oneRunAtATime((db: Db, options: ReferrerBackfillOptions = {}) =>
+  drain(db, options.batchSize ?? DEFAULT_BATCH_SIZE),
+);
 
 async function drain(db: Db, batchSize: number): Promise<ReferrerBackfillResult> {
   const result: ReferrerBackfillResult = { completed: false, rows: 0 };
@@ -127,65 +106,46 @@ async function drain(db: Db, batchSize: number): Promise<ReferrerBackfillResult>
   if (getSetting(db, TABLES_SETTING) !== fingerprint) {
     withWriteTransaction(db, () => requestReferrerBackfill(db));
   }
-  if (TABLES.every((table) => getSetting(db, watermarkKey(table)) === undefined)) {
-    return result; // nothing enqueued
-  }
+  const enqueued = TABLES.some((table) => getSetting(db, watermarkKey(table)) !== undefined);
 
   for (const table of TABLES) {
     const setting = watermarkKey(table);
     if (getSetting(db, setting) === undefined) continue;
     const select = stmt<ChunkRow>(db, selectChunk(table));
     const update = stmt(db, updateRow(table));
-    for (;;) {
-      // The event-loop yield between chunks: SQLite is synchronous, and an
-      // unbroken rewrite would stall ingest and its 200 ms flush.
-      await new Promise((resolve) => setImmediate(resolve));
-      const done = withWriteTransaction(db, () => {
-        const since = Number(getSetting(db, setting) ?? 0);
-        const rows = select.all(since, batchSize) as ChunkRow[];
-        if (rows.length === 0) {
-          deleteSetting(db, setting);
-          return true;
+    await inChunks(db, () => {
+      const since = Number(getSetting(db, setting) ?? 0);
+      const rows = select.all(since, batchSize) as ChunkRow[];
+      if (rows.length === 0) {
+        deleteSetting(db, setting);
+        return true;
+      }
+      for (const row of rows) {
+        const base = row.ref_domain_raw ?? row.ref_domain;
+        if (base === null) continue;
+        const canonical = canonicalReferrerDomain(base);
+        const raw = canonical === base ? null : base;
+        const type =
+          row.ref_type !== null && DERIVABLE_TYPES.has(row.ref_type)
+            ? referrerTypeOf(canonical)
+            : row.ref_type;
+        if (canonical === row.ref_domain && raw === row.ref_domain_raw && type === row.ref_type) {
+          continue;
         }
-        for (const row of rows) {
-          const base = row.ref_domain_raw ?? row.ref_domain;
-          if (base === null) continue;
-          const canonical = canonicalReferrerDomain(base);
-          const raw = canonical === base ? null : base;
-          const type =
-            row.ref_type !== null && DERIVABLE_TYPES.has(row.ref_type)
-              ? referrerTypeOf(canonical)
-              : row.ref_type;
-          if (canonical === row.ref_domain && raw === row.ref_domain_raw && type === row.ref_type) {
-            continue;
-          }
-          update.run(canonical, raw, type, row.rid);
-          result.rows += 1;
-          // Atomic with the rewrite it describes: whatever this transaction
-          // commits, it commits together.
-          setSetting(db, DIRTY_SETTING, '1');
-        }
-        setSetting(db, setting, String(rows[rows.length - 1]?.rid ?? since));
-        return false;
-      });
-      if (done) break;
-    }
+        update.run(canonical, raw, type, row.rid);
+        result.rows += 1;
+        markRewriteDirty(db, DIRTY_SETTING);
+      }
+      setSetting(db, setting, String(rows[rows.length - 1]?.rid ?? since));
+      return false;
+    });
   }
 
   // Everything drained: the ref_domain marginals in the rollups may now
-  // disagree with raw, and cached ETags describe rewritten history. Read from
-  // the durable flag, not this run's tally — see DIRTY_SETTING. Crashing
-  // between the rebuild and the bump leaves the flag set, so the next run
-  // simply does both again; neither is destructive to repeat.
-  if (getSetting(db, DIRTY_SETTING) !== undefined) {
-    await rebuildAllRollups(db);
-    withWriteTransaction(db, () => {
-      bumpDataEpoch(db);
-      deleteSetting(db, DIRTY_SETTING);
-    });
-  }
+  // disagree with raw, and cached ETags describe rewritten history.
+  const settled = await settleRewrite(db, DIRTY_SETTING);
   // Recorded only after a COMPLETED drain, so a crashed run re-arms next boot.
-  withWriteTransaction(db, () => setSetting(db, TABLES_SETTING, fingerprint));
-  result.completed = true;
+  if (enqueued) withWriteTransaction(db, () => setSetting(db, TABLES_SETTING, fingerprint));
+  result.completed = enqueued || settled;
   return result;
 }

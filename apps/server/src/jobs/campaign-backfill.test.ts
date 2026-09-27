@@ -175,4 +175,37 @@ describe('the epoch survives a crash mid-rewrite', () => {
     expect(getSetting(db, 'campaign_backfill:dirty')).toBeUndefined();
     db.close();
   });
+
+  it('pays a rebuild that died after the drain, with no watermark left to find', async () => {
+    const db = openTestDb();
+    withWriteTransaction(db, () =>
+      replaceCampaignAliases(db, 1, [{ field: 'source', alias: 'tw', canonical: 'twitter' }]),
+    );
+    seed(db, { source: 'tw' });
+    syncRollups(db);
+    const before = dataVersion(db);
+    withWriteTransaction(db, () => requestCampaignBackfill(db));
+    db.exec(`CREATE TRIGGER crash BEFORE INSERT ON rollup_dim_day
+      BEGIN SELECT RAISE(ABORT, 'crash mid-rebuild'); END`);
+
+    await expect(runCampaignBackfill(db)).rejects.toThrow('crash mid-rebuild');
+    // The state a real crash leaves: rows rewritten, every watermark drained,
+    // the rollups still describing the old values, and only the flag to say so.
+    expect(getSetting(db, 'campaign_backfill:events')).toBeUndefined();
+    expect(getSetting(db, 'campaign_backfill:sessions')).toBeUndefined();
+    expect(getSetting(db, 'campaign_backfill:dirty')).toBe('1');
+    db.exec('DROP TRIGGER crash');
+
+    expect(await runCampaignBackfill(db)).toEqual({ completed: true, rows: 0 });
+    expect(dataVersion(db)).toBeGreaterThan(before);
+    expect(getSetting(db, 'campaign_backfill:dirty')).toBeUndefined();
+    const values = stmt<string>(
+      db,
+      'SELECT DISTINCT dim_value FROM rollup_dim_day WHERE dim_id = 5 AND dim_null = 0',
+    )
+      .pluck()
+      .all();
+    expect(values).toEqual(['twitter']);
+    db.close();
+  });
 });
