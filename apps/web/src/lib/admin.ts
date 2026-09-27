@@ -18,7 +18,7 @@ import {
   type NtfySettingsView,
   type SiteInfo,
 } from '@featherstat/shared';
-import { UNREADABLE_ANSWER } from './api.ts';
+import { type ResponseSchema, UNREADABLE_ANSWER } from './api.ts';
 
 /**
  * The admin API client (docs/04 § 5). The session rides in HttpOnly cookies;
@@ -54,11 +54,6 @@ export class AdminError extends Error {
     super(message);
     this.name = 'AdminError';
   }
-}
-
-/** What a response body is checked against — any zod schema from `@featherstat/shared`. */
-export interface ResponseSchema<T> {
-  safeParse(value: unknown): { success: true; data: T } | { success: false };
 }
 
 export interface CallInit<T> {

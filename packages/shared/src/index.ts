@@ -1371,6 +1371,63 @@ export interface VersionTick {
   version: number;
 }
 
+/*
+ * The frames as the web reads them — checked before any widget sees one. As
+ * with the query envelope, the interfaces above are the source of truth and
+ * each schema must produce one; `realtime/sse.test.ts` requires every frame
+ * the server writes to come back through its schema unchanged.
+ */
+
+const RealtimeVisitorSchema = z.object({
+  ref: z.string(),
+  name: z.string(),
+  color: z.number(),
+}) satisfies z.ZodType<RealtimeVisitor>;
+
+export const RealtimeHitSchema = z.object({
+  siteId: z.number(),
+  ts: z.number(),
+  type: HitTypeSchema,
+  visitor: RealtimeVisitorSchema,
+  path: z.string().optional(),
+  eventCategory: z.string().optional(),
+  eventAction: z.string().optional(),
+  country: z.string().optional(),
+  region: z.string().optional(),
+  city: z.string().optional(),
+  lat: z.number().optional(),
+  lon: z.number().optional(),
+  deviceType: z.string().optional(),
+}) satisfies z.ZodType<RealtimeHit>;
+
+const RealtimeEngagementSchema = z.object({
+  ref: z.string(),
+  name: z.string(),
+  color: z.number(),
+  siteId: z.number(),
+  engagedMs: z.number(),
+  lastTs: z.number(),
+}) satisfies z.ZodType<RealtimeEngagement>;
+
+/** Active visitors by site id — the JSON object's keys are the ids as strings. */
+const ActiveCountsSchema = z.record(z.string(), z.number());
+
+export const RealtimeSnapshotSchema = z.object({
+  active: ActiveCountsSchema,
+  recent: z.array(RealtimeHitSchema),
+  visitors: z.array(RealtimeEngagementSchema),
+}) satisfies z.ZodType<RealtimeSnapshot>;
+
+export const RealtimeActiveSchema = z.object({
+  active: ActiveCountsSchema,
+  visitors: z.array(RealtimeEngagementSchema),
+}) satisfies z.ZodType<RealtimeActive>;
+
+export const VersionTickSchema = z.object({
+  siteId: z.number(),
+  version: z.number(),
+}) satisfies z.ZodType<VersionTick>;
+
 export * from './alias.ts';
 export * from './campaigns.ts';
 export * from './csv.ts';

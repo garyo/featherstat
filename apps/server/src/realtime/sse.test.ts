@@ -4,8 +4,12 @@ import {
   BATCH_INTERVAL_MS,
   HEARTBEAT_MS,
   type RealtimeActive,
+  RealtimeActiveSchema,
   type RealtimeHit,
+  RealtimeHitSchema,
   type RealtimeSnapshot,
+  RealtimeSnapshotSchema,
+  VersionTickSchema,
 } from '@featherstat/shared';
 import { Hono, type MiddlewareHandler } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -183,6 +187,26 @@ describe('GET /api/realtime', () => {
       active: { 1: 1, 2: 0 },
       visitors: [engaged(10_000, T0 + 10_000)],
     });
+  });
+
+  it('writes only frames the web reads back through its schemas unchanged', async () => {
+    // The web drops a frame its schema refuses and keeps only what the schema
+    // names, so a field added here and not there would vanish in the browser.
+    const same = (schema: { parse(value: unknown): unknown }, data: unknown): void => {
+      expect(schema.parse(data)).toEqual(data);
+    };
+    await track('idsite=1&url=https://one.test/a');
+    vi.advanceTimersByTime(5_000);
+    await track('idsite=1&url=https://one.test/a&ping=1');
+
+    const frames = await connect();
+    same(RealtimeSnapshotSchema, (await frames.next()).data);
+    await track('idsite=1&url=https://one.test/a&e_c=video&e_a=play');
+    same(RealtimeHitSchema, (await frames.until('hit')).data);
+    vi.advanceTimersByTime(BATCH_INTERVAL_MS);
+    same(VersionTickSchema, (await frames.until('version')).data);
+    vi.advanceTimersByTime(ACTIVE_TICK_MS);
+    same(RealtimeActiveSchema, (await frames.until('active')).data);
   });
 
   it('scopes the engagement rows to ?sites= like everything else', async () => {

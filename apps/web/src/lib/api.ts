@@ -33,6 +33,11 @@ export interface QueryClient {
   query(request: QueryRequest, options?: QueryOptions): Promise<QueryResponse>;
 }
 
+/** What a body from the server is checked against — any zod schema from `@featherstat/shared`. */
+export interface ResponseSchema<T> {
+  safeParse(value: unknown): { success: true; data: T } | { success: false };
+}
+
 /**
  * A body that is not a query answer — most likely a server updated under a page
  * still running the old build, which a reload fixes.
