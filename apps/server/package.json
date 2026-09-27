@@ -9,7 +9,7 @@
     "seed": "node --experimental-transform-types --disable-warning=ExperimentalWarning --import ./test/replay/shared-alias.ts src/dev/seed.ts",
     "import": "node --experimental-transform-types --disable-warning=ExperimentalWarning --import ./test/replay/shared-alias.ts src/import/cli.ts",
     "geoip-refresh": "node --experimental-transform-types --disable-warning=ExperimentalWarning --import ./test/replay/shared-alias.ts src/jobs/geoip-refresh-cli.ts",
-    "build": "esbuild src/main.ts --bundle --platform=node --format=esm --target=node24 --external:better-sqlite3 --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" --outfile=dist/main.js && esbuild src/import/cli.ts --bundle --platform=node --format=esm --target=node24 --external:better-sqlite3 --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" --outfile=dist/import.js && esbuild src/jobs/geoip-refresh-cli.ts --bundle --platform=node --format=esm --target=node24 --external:better-sqlite3 --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" --outfile=dist/geoip-refresh.js && esbuild src/query/pool/worker.ts --bundle --platform=node --format=esm --target=node24 --external:better-sqlite3 --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" --outfile=dist/query-worker.js",
+    "build": "bun run src/build.ts",
     "start": "node dist/main.js"
   },
   "dependencies": {
