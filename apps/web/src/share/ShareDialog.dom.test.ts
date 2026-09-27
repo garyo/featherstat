@@ -67,6 +67,48 @@ async function open() {
   return { dialog, onclose, pressEscape };
 }
 
+describe('sharing a built-in dashboard', () => {
+  it('clones it once, moves the view onto the clone, and shares that row from then on', async () => {
+    let id: number | undefined;
+    const save = vi.fn(async () => {
+      id = 9;
+      return true;
+    });
+    // The store as the Shell leaves it after the URL moves: reloading, id unknown.
+    const template: DashboardStore = {
+      ...storedRow(0),
+      stored: undefined,
+      get id() {
+        return id;
+      },
+      save,
+    };
+    const { admin, calls } = fakeAdmin({
+      'POST /api/admin/dashboards/9/share': () => ({ token: `fs_${calls.length}` }),
+    });
+    const onselectdash = vi.fn(() => {
+      id = undefined;
+    });
+    component = mount(ShareDialog, {
+      target: document.body,
+      props: { admin, store: template, layout: LAYOUT, onselectdash, onclose: () => undefined },
+    });
+    flushSync();
+
+    button(document.body, 'Create share link').click();
+    await settle();
+    button(document.body, 'Create share link').click();
+    await settle();
+
+    expect(save).toHaveBeenCalledOnce();
+    expect(onselectdash.mock.calls).toEqual([[9]]);
+    expect(calls.map((call) => call.route)).toEqual([
+      'POST /api/admin/dashboards/9/share',
+      'POST /api/admin/dashboards/9/share',
+    ]);
+  });
+});
+
 describe('ShareDialog', () => {
   it('closes without asking while no link is on screen', async () => {
     const { onclose, pressEscape } = await open();

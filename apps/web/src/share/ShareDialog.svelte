@@ -5,13 +5,16 @@ import ConfirmButton from '../lib/components/ConfirmButton.svelte';
 import Modal from '../lib/components/Modal.svelte';
 import type { DashboardStore } from '../lib/dashboards.svelte.ts';
 import { shareLink } from '../lib/share.ts';
+import type { DashRef } from '../lib/state.ts';
 
 /**
  * Mint / copy / revoke for a dashboard's share links (docs/04 § 5).
  *
  * A link points at a STORED dashboard, so sharing a dashboard that is still the
  * shipped default saves it first — the layout on screen becomes row one, and
- * the link then follows every later edit.
+ * the link then follows every later edit. The view then moves onto that row, as
+ * it does after the editor's first save: left on the built-in, the next share
+ * would clone it again.
  *
  * Only the sha256 of a token is stored, and the raw token is returned exactly
  * once at mint time: the admin API can therefore neither list links nor show an
@@ -23,10 +26,12 @@ interface Props {
   store: DashboardStore;
   /** The layout to persist if this dashboard has no row yet — scope already applied. */
   layout: Dashboard;
+  /** Points the view at the row a first share just created. */
+  onselectdash?: (dash: DashRef) => void;
   onclose: () => void;
 }
 
-let { admin, store, layout, onclose }: Props = $props();
+let { admin, store, layout, onselectdash, onclose }: Props = $props();
 
 interface MintedLink {
   token: string;
@@ -41,6 +46,9 @@ let error = $state<string | undefined>(undefined);
 let revoked = $state<number | undefined>(undefined);
 /** Revoking is destructive and unenumerable — the armed button explains it first. */
 let confirmRevoke = $state(false);
+/** The row this dialog created, held while the store reloads onto it. */
+let created = $state<number | undefined>(undefined);
+const rowId = $derived(store.id ?? created);
 
 async function mint(): Promise<void> {
   busy = true;
@@ -74,12 +82,13 @@ async function revokeAll(): Promise<void> {
 
 /** The row a link points at, creating it from the current layout on first share. */
 async function dashboardId(): Promise<number> {
-  const existing = store.id;
-  if (existing !== undefined) return existing;
+  if (rowId !== undefined) return rowId;
   await store.save(layout);
-  const created = store.id;
-  if (created === undefined) throw new Error(store.error ?? 'Saving the dashboard failed.');
-  return created;
+  const id = store.id;
+  if (id === undefined) throw new Error(store.error ?? 'Saving the dashboard failed.');
+  created = id;
+  onselectdash?.(id);
+  return id;
 }
 
 /** A link is shown once: closing before it was copied loses it for good. */
@@ -108,7 +117,7 @@ async function copy(link: MintedLink): Promise<void> {
     dashboard's own queries — never the rest of your data — and shows no live updates.
   </p>
 
-  {#if store.id === undefined}
+  {#if rowId === undefined}
     <p class="widget-note">
       This dashboard is still the built-in default. Creating a link saves the current layout
       first, so the link has something to point at.
@@ -155,7 +164,7 @@ async function copy(link: MintedLink): Promise<void> {
       class="btn"
       label="Revoke all links"
       confirm="Really revoke all links?"
-      disabled={busy || store.id === undefined}
+      disabled={busy || rowId === undefined}
       bind:armed={confirmRevoke}
       onconfirm={revokeAll}
     />
