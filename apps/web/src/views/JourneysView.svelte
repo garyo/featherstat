@@ -3,7 +3,7 @@ import type { FilterNode, QueryRequest } from '@featherstat/shared';
 import type { QueryClient } from '../lib/api.ts';
 import FilterRow from '../lib/components/FilterRow.svelte';
 import { createRevalidator, type LiveStream } from '../lib/live.ts';
-import { localDayKey, rangeQualifier, toRange, type ViewRange } from '../lib/state.ts';
+import { failureNote, heldRange, localDayKey, toRange, type ViewRange } from '../lib/state.ts';
 import FlowsTable from '../widgets/FlowsTable.svelte';
 import type { EdgeRef } from '../widgets/flows.ts';
 import { windowLabel } from '../widgets/format.ts';
@@ -130,17 +130,12 @@ function removeFilter(index: number): void {
 
 const failed = $derived(runner.error !== undefined && runner.response !== undefined);
 /** The range actually on screen — while refetching, the held response's, not the pill's. */
-const heldRange = $derived.by<ViewRange>(() => {
-  if (runner.held === undefined) return range;
-  return 'preset' in runner.held.range ? runner.held.range.preset : runner.held.range;
-});
+const held = $derived(heldRange(runner.held, range));
 /** The server's own resolved window for the response on screen — the same
  * source the dashboard's label reads, so the two views cannot disagree. */
 const note = $derived.by(() => {
   if (failed) {
-    return runner.stale
-      ? `Couldn't load ${rangeQualifier(range)} — showing ${rangeQualifier(heldRange)}`
-      : 'Live update failed — showing the last good result';
+    return failureNote(runner.stale, range, held);
   }
   return windowLabel(runner.response?.meta.windows);
 });

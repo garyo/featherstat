@@ -10,6 +10,8 @@ import {
   compareNote,
   compareParam,
   type DetailRef,
+  failureNote,
+  heldRange,
   localDayKey,
   toRange,
   type ViewRange,
@@ -108,14 +110,12 @@ function addFilter(filter: Filter): void {
   onfilters([...filters, filter]);
 }
 
-const heldRange = $derived.by<ViewRange>(() => {
-  if (runner.held === undefined) return range;
-  return 'preset' in runner.held.range ? runner.held.range.preset : runner.held.range;
-});
+/** The range actually on screen — while refetching, the held response's, not the pill's. */
+const held = $derived(heldRange(runner.held, range));
 const env = $derived(
   dashboardEnv(app, {
     scope: site,
-    range: heldRange,
+    range: held,
     onfilter: addFilter,
     ondrill: (dim, value) => onopendetail({ dim, value }),
     onpivot: null,
@@ -124,9 +124,9 @@ const env = $derived(
 const span = $derived(windowLabel(runner.response?.meta.windows));
 const note = $derived.by(() => {
   if (runner.error !== undefined && runner.response !== undefined) {
-    return 'Live update failed — showing the last good result';
+    return failureNote(runner.stale, range, held);
   }
-  const compared = compareNote(heldRange, cmp) ?? 'no comparison';
+  const compared = compareNote(held, cmp) ?? 'no comparison';
   return span === undefined ? compared : `${span} · ${compared}`;
 });
 </script>

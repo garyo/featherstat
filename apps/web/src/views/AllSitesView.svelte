@@ -13,6 +13,8 @@ import {
   compareNote,
   compareParam,
   type DashRef,
+  failureNote,
+  heldRange,
   localDayKey,
   toRange,
   type ViewRange,
@@ -138,17 +140,19 @@ async function openShare(): Promise<void> {
   ShareDialog = (await loadChunk(() => import('../share/dialog.ts')))?.ShareDialog;
 }
 
+/** The range actually on screen — while refetching, the held response's, not the pill's. */
+const held = $derived(heldRange(runner.held, range));
 /** ONE environment for the dashboard AND the editor's preview (see SiteView).
  * Detail views are per-site, so the all-sites grid offers no drill or pivot. */
 const env = $derived(
-  dashboardEnv(app, { scope: 'all', range, onfilter: null, ondrill: null, onpivot: null }),
+  dashboardEnv(app, { scope: 'all', range: held, onfilter: null, ondrill: null, onpivot: null }),
 );
 
 const note = $derived.by(() => {
   if (runner.error !== undefined && runner.response !== undefined) {
-    return 'Live update failed — showing the last good result';
+    return failureNote(runner.stale, range, held);
   }
-  const compared = compareNote(range, cmp) ?? 'no comparison';
+  const compared = compareNote(held, cmp) ?? 'no comparison';
   return `${compared} · active-now is live`;
 });
 </script>

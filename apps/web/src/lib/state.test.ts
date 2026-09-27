@@ -1,4 +1,4 @@
-import { RangeSchema } from '@featherstat/shared';
+import { type QueryRequest, RangeSchema } from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
 import {
   applyViewState,
@@ -6,7 +6,9 @@ import {
   compareParam,
   DEFAULT_VIEW_STATE,
   discardsDraft,
+  failureNote,
   formatDayRange,
+  heldRange,
   localDayKey,
   parseDashRef,
   parseDetailRef,
@@ -269,6 +271,30 @@ describe('resolveNav', () => {
       site: 'all',
       view: 'dash',
     });
+  });
+});
+
+describe('what the response on screen answers', () => {
+  const request = (range: QueryRequest['range']): QueryRequest => ({
+    site: 'all',
+    range,
+    queries: [{ id: 'kpis', metrics: ['visitors'] }],
+  });
+
+  it('is the held request range, preset or explicit, and the pill before one lands', () => {
+    expect(heldRange(request({ preset: '7d' }), '30d')).toBe('7d');
+    expect(heldRange(request({ from: '2026-06-01', to: '2026-06-30' }), '30d')).toEqual({
+      from: '2026-06-01',
+      to: '2026-06-30',
+    });
+    expect(heldRange(undefined, '30d')).toBe('30d');
+  });
+
+  it('says what is shown instead when a change never landed', () => {
+    expect(failureNote(true, '7d', '30d')).toBe("Couldn't load last 7 days — showing last 30 days");
+    expect(failureNote(false, '30d', '30d')).toBe(
+      'Live update failed — showing the last good result',
+    );
   });
 });
 

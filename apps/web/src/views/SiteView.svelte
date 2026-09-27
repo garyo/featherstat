@@ -16,9 +16,10 @@ import {
   compareParam,
   type DashRef,
   type DetailRef,
+  failureNote,
+  heldRange,
   localDayKey,
   type PivotChoice,
-  rangeQualifier,
   toRange,
   type ViewRange,
 } from '../lib/state.ts';
@@ -185,10 +186,7 @@ const failed = $derived(runner.error !== undefined && runner.response !== undefi
 /** On screen but not this state's: in flight, or held back until the lookup answers. */
 const refetching = $derived(runner.refetching || (!store.ready && runner.response !== undefined));
 /** The range actually on screen — while refetching, the held response's, not the pill's. */
-const heldRange = $derived.by<ViewRange>(() => {
-  if (runner.held === undefined) return range;
-  return 'preset' in runner.held.range ? runner.held.range.preset : runner.held.range;
-});
+const held = $derived(heldRange(runner.held, range));
 /**
  * The window the SERVER resolved for the response on screen (`meta.windows`) —
  * so the label can never describe a different range from the data beside it, and
@@ -206,7 +204,7 @@ const span = $derived(windowLabel(runner.response?.meta.windows));
 const env = $derived(
   dashboardEnv(app, {
     scope: site,
-    range: heldRange,
+    range: held,
     onfilter: addFilter,
     ondrill: (dim, value) => onopendetail({ dim, value }),
     onpivot: setPivot,
@@ -216,11 +214,9 @@ const note = $derived.by(() => {
   if (failed) {
     // A user-initiated change that never landed reads differently from a live
     // revalidation failure — and says what is actually on screen.
-    return runner.stale
-      ? `Couldn't load ${rangeQualifier(range)} — showing ${rangeQualifier(heldRange)}`
-      : 'Live update failed — showing the last good result';
+    return failureNote(runner.stale, range, held);
   }
-  const compared = compareNote(heldRange, cmp) ?? 'no comparison';
+  const compared = compareNote(held, cmp) ?? 'no comparison';
   if (span === undefined) return compared.charAt(0).toUpperCase() + compared.slice(1);
   return `${span} · ${compared}`;
 });

@@ -282,6 +282,28 @@ export function compareNote(range: ViewRange, cmp: CompareChoice): string | unde
   return current === against ? base : `${base} (${current} days vs ${against} days)`;
 }
 
+/**
+ * The range the response on screen answers: the request it was fetched for,
+ * or the pill's own while nothing has landed. Labels read this, not the pill,
+ * so a refetch or a failed change can never caption held data with the range
+ * being loaded.
+ */
+export function heldRange(held: QueryRequest | undefined, range: ViewRange): ViewRange {
+  if (held === undefined) return range;
+  return 'preset' in held.range ? held.range.preset : held.range;
+}
+
+/**
+ * What a failed batch leaves on screen, in the filter row's words. A change the
+ * reader asked for that never landed (`stale`) says what is shown instead; a
+ * live revalidation that failed still shows the state asked for.
+ */
+export function failureNote(stale: boolean, range: ViewRange, held: ViewRange): string {
+  return stale
+    ? `Couldn't load ${rangeQualifier(range)} — showing ${rangeQualifier(held)}`
+    : 'Live update failed — showing the last good result';
+}
+
 /** Only used to parse relative hrefs; never appears in anything this module returns. */
 const RELATIVE_BASE = 'http://view.invalid';
 

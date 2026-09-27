@@ -1,12 +1,13 @@
 import type { QueryRequest, QueryResponse, SiteInfo } from '@featherstat/shared';
 import { flushSync, mount, unmount } from 'svelte';
 import { SvelteMap } from 'svelte/reactivity';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AdminClient } from '../lib/admin.ts';
 import type { QueryClient } from '../lib/api.ts';
 import type { DashboardStore } from '../lib/dashboards.svelte.ts';
 import type { EditorMode } from '../lib/editor-mode.svelte.ts';
 import type { LiveStream } from '../lib/live.ts';
+import type { ViewRange } from '../lib/state.ts';
 import type { AppEnv } from '../widgets/types.ts';
 import AllSitesView from './AllSitesView.svelte';
 
@@ -96,7 +97,10 @@ afterEach(() => {
 });
 
 /** Mounts the view with an `app` the test can replace, as the Shell does. */
-function render(client: QueryClient): (next: AppEnv) => Promise<void> {
+function render(
+  client: QueryClient,
+  range: () => ViewRange = () => '30d',
+): (next: AppEnv) => Promise<void> {
   const cell = new SvelteMap<'app', AppEnv>([['app', app({ 1: 3 })]]);
   const target = document.createElement('div');
   document.body.append(target);
@@ -112,7 +116,9 @@ function render(client: QueryClient): (next: AppEnv) => Promise<void> {
         live,
         store,
         mode,
-        range: '30d',
+        get range() {
+          return range();
+        },
         cmp: 'previous',
         onselectrange: () => undefined,
         onselectcmp: () => undefined,
@@ -151,5 +157,31 @@ describe('the all-sites overview batches once per view state', () => {
     await update(app({}, new Map([...SITES, [3, site(3)]])));
     expect(sent).toHaveLength(2);
     expect(sent[1]?.queries.map((query) => query.id)).toContain('sites~pages~3');
+  });
+});
+
+describe('the overview labels the data on screen, not the range being loaded', () => {
+  it('says what it is showing when a range change fails', async () => {
+    let fail = false;
+    const client: QueryClient = {
+      query: async () => {
+        if (fail) throw new Error('503');
+        return RESPONSE;
+      },
+    };
+    const pill = new SvelteMap<'range', ViewRange>([['range', '30d']]);
+    render(client, () => pill.get('range') ?? '30d');
+    await vi.waitFor(() =>
+      expect(document.querySelector('.compare-note')?.textContent).toMatch(/previous 30 days/),
+    );
+
+    fail = true;
+    pill.set('range', '7d');
+    flushSync();
+    await vi.waitFor(() =>
+      expect(document.querySelector('.compare-note')?.textContent).toBe(
+        "Couldn't load last 7 days — showing last 30 days",
+      ),
+    );
   });
 });
