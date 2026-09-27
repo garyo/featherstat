@@ -462,7 +462,7 @@ batch itself still succeeds, and never returns wrong numbers.
     when the result carries both. `max` takes the extremum. **`distinct` has no
     total across buckets at all** and refuses to produce one: a visitor active
     on two days is one visitor and two visitor-days, and the id salt rotates at
-    00:00 UTC besides (03 § Visitor identity). `measureTotal` in
+    site-local midnight besides (03 § Visitor identity). `measureTotal` in
     `packages/shared` returns `undefined` for it, so under TS strict a caller
     must say what it does instead of quietly shipping a number that contradicts
     the same label one screen over.

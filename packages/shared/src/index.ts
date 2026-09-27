@@ -25,8 +25,8 @@ export const SESSION_TIMEOUT_MS = 30 * 60_000;
  * may reach to revive the visitor's own last session instead of opening a new one.
  * A ping is a continuation signal, so the reader who leaves a tab open over lunch
  * and comes back is continuing a visit, not starting one; past this they are
- * arriving. `visitor_id` rotates at 00:00 UTC, so the effective reach is always
- * `min(this, time since the last UTC midnight)`.
+ * arriving. `visitor_id` rotates at site-local midnight, so the effective reach is always
+ * `min(this, time since the site's last local midnight)`.
  */
 export const SESSION_REVIVAL_MS = 4 * 60 * 60_000;
 /** A session with less engaged time than this (and 1 pageview, no events) is a bounce. */
