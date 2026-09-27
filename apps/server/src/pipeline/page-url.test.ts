@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CAMPAIGN_PARAMS,
   cleanPageUrl,
   cleanSearch,
   cleanStoredPath,
@@ -30,6 +31,13 @@ describe('cleanPageUrl / cleanSearch (docs/03 § Page identity)', () => {
       'https://x.test/?utm_source=a&utm_medium=b&utm_campaign=c&mtm_source=d&pk_campaign=e&pk_kwd=f',
     );
     expect(cleanPageUrl(url)).toBe('/');
+  });
+
+  it('strips every name attribution reads, and the legacy Matomo keyword too', () => {
+    for (const name of [...Object.values(CAMPAIGN_PARAMS).flat(), 'matomo_kwd', 'piwik_kwd']) {
+      expect(isTrackingParam(name), name).toBe(true);
+    }
+    expect(cleanSearch('?piwik_campaign=x&page=2&matomo_kwd=y')).toBe('?page=2');
   });
 
   it('strips the whole closed click/identity-id list', () => {

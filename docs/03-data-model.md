@@ -387,7 +387,9 @@ dwell, journeys, adjacency) one click at a time. So ingest strips a **closed,
 documented list** from the query (`pipeline/page-url.ts`, shared with the
 v1 importer) and keeps everything else, survivors in their original order:
 
-- the campaign families attribution already reads: `utm_*`, `mtm_*`, `pk_*`;
+- the campaign families attribution already reads: `utm_*`, `mtm_*`, `pk_*`,
+  and Matomo's legacy `matomo_campaign` / `piwik_campaign` (with their
+  `_kwd` siblings);
 - click ids that also name their platform (see Attribution below): `fbclid`,
   `gclid`, `gbraid`, `wbraid`, `dclid`, `msclkid`, `twclid`, `ttclid`,
   `li_fat_id`, `igshid`, `igsh`;
@@ -403,8 +405,14 @@ nothing here loses attribution signal — it moves it where it belongs.
 
 Priority order, evaluated once per session on its first hit:
 
-1. `utm_*` / `mtm_*` / `pk_*` params present → `campaign` (both param
-   families accepted; stored under the `utm_*` columns).
+1. Campaign params present → `campaign`, stored under the `utm_*` columns.
+   Each column reads a list of names in precedence order (`CAMPAIGN_PARAMS`
+   in `pipeline/page-url.ts`): `utm_*` first, then Matomo's long and short
+   forms — source `mtm_source`, `mtm_src`, `pk_source`, `pk_src`; medium
+   `mtm_medium`, `mtm_med`, `pk_medium`, `pk_med`; campaign `mtm_campaign`,
+   `mtm_cpn`, `pk_campaign`, `pk_cpn`, `matomo_campaign`, `piwik_campaign`.
+   Every name read here is also stripped from `path`, and only because it is
+   read first.
 2. No campaign params but a platform click id (see Page identity) →
    `campaign`, with **synthesized** `utm_source`/`utm_medium` — derived, not
    received; industry-standard but inferred, the way Matomo/GA treat `gclid`:

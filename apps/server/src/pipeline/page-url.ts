@@ -1,3 +1,5 @@
+import type { CampaignField } from '@featherstat/shared';
+
 /**
  * Page identity vs. tracking identifiers (docs/03 § Page identity).
  *
@@ -9,8 +11,9 @@
  * keeps everything else, surviving params in their original order and text.
  *
  * Two lists, one rule:
- * - the campaign families the sessionizer already reads (`utm_*`, `mtm_*`,
- *   `pk_*` — the same families `campaignParams` extracts before stripping);
+ * - the campaign families the sessionizer reads (`utm_*`, `mtm_*`, `pk_*`,
+ *   and Matomo's legacy `matomo_campaign` / `piwik_campaign` — `CAMPAIGN_PARAMS`
+ *   is extracted before stripping);
  * - click/identity ids ad and email platforms append (`CLICK_ID_SOURCES` +
  *   `TRACKING_IDS` below).
  *
@@ -20,6 +23,27 @@
  * platform so attribution can be synthesized the way Matomo/GA treat `gclid`
  * (docs/03 § Attribution). Real campaign params always win.
  */
+
+/**
+ * The params each campaign column is read from, in precedence order: `utm_*`
+ * first, then Matomo's long and short forms — the names matomo.js and the
+ * MarketingCampaignsReporting plugin accept by default, `pk_cpn` and
+ * `mtm_src` among them. Every one is stripped from `path` below; reading all
+ * of them is what keeps that stripping from being a loss of attribution.
+ */
+export const CAMPAIGN_PARAMS = {
+  source: ['utm_source', 'mtm_source', 'mtm_src', 'pk_source', 'pk_src'],
+  medium: ['utm_medium', 'mtm_medium', 'mtm_med', 'pk_medium', 'pk_med'],
+  campaign: [
+    'utm_campaign',
+    'mtm_campaign',
+    'mtm_cpn',
+    'pk_campaign',
+    'pk_cpn',
+    'matomo_campaign',
+    'piwik_campaign',
+  ],
+} as const satisfies Record<CampaignField, readonly string[]>;
 
 /** Click ids that name their platform — ordered, first match wins. */
 const CLICK_ID_SOURCES: ReadonlyArray<[param: string, source: string, medium: string]> = [
@@ -51,12 +75,17 @@ const TRACKING_IDS = [
   's_kwcid',
 ] as const;
 
+/** Matomo's campaign params outside the `mtm_` / `pk_` families: the legacy
+ * `matomo_` and `piwik_` spellings of the campaign name and keyword. */
+const MATOMO_LEGACY_CAMPAIGN = ['matomo_campaign', 'piwik_campaign', 'matomo_kwd', 'piwik_kwd'];
+
 const STRIPPED_PARAMS: ReadonlySet<string> = new Set([
   ...CLICK_ID_SOURCES.map(([param]) => param),
   ...TRACKING_IDS,
+  ...MATOMO_LEGACY_CAMPAIGN,
 ]);
 
-/** The same families `campaignParams` reads (sessionizer.ts): utm_* / mtm_* / pk_*. */
+/** The campaign families, whole: every name in `CAMPAIGN_PARAMS` and their siblings (`utm_term`, `pk_kwd`, …). */
 const CAMPAIGN_PREFIXES = ['utm_', 'mtm_', 'pk_'] as const;
 
 /** Whether a query param is a tracking identifier rather than page identity. */

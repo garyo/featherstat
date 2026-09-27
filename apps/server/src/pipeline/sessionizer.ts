@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import {
+  type CampaignField,
   type Hit,
   isHeartbeat,
   isTrackerMilestone,
@@ -20,7 +21,7 @@ import {
 import { plainNormalizer, type UtmNormalizer } from './campaigns.ts';
 import type { DeviceInfo } from './enrich.ts';
 import type { GeoResult } from './geo.ts';
-import { cleanPageUrl, clickIdSource, synthesizedCampaign } from './page-url.ts';
+import { CAMPAIGN_PARAMS, cleanPageUrl, clickIdSource, synthesizedCampaign } from './page-url.ts';
 import { type ReferrerAttribution, referrerAttribution } from './referrers.ts';
 
 export interface SessionizerInput {
@@ -408,18 +409,16 @@ function refDomain(ref: ReferrerAttribution): Pick<Attribution, 'ref_domain' | '
   return { ref_domain: ref.ref_domain, ref_domain_raw: ref.ref_domain_raw };
 }
 
-/** utm_* / mtm_* / pk_* families all accepted, stored under the utm_ columns (docs/03). */
-const CAMPAIGN_FAMILIES = ['utm', 'mtm', 'pk'] as const;
-
+/** Every family in `CAMPAIGN_PARAMS` accepted, stored under the utm_ columns (docs/03). */
 function campaignParams(
   url: URL | null,
   siteId: number,
   normalizeUtm: UtmNormalizer,
 ): CampaignColumns | null {
   if (url === null) return null;
-  const get = (field: string): string | null => {
-    for (const family of CAMPAIGN_FAMILIES) {
-      const value = url.searchParams.get(`${family}_${field}`);
+  const get = (field: CampaignField): string | null => {
+    for (const name of CAMPAIGN_PARAMS[field]) {
+      const value = url.searchParams.get(name);
       if (value) return value.slice(0, 200);
     }
     return null;
@@ -429,7 +428,7 @@ function campaignParams(
   const campaign = get('campaign');
   if (source === null && medium === null && campaign === null) return null;
   // Normalized at ingest, raw kept only when it differs (docs/03 § Campaigns).
-  const norm = (field: 'source' | 'medium' | 'campaign', value: string | null) =>
+  const norm = (field: CampaignField, value: string | null) =>
     value === null ? { normalized: null } : normalizeUtm(siteId, field, value);
   const s = norm('source', source);
   const m = norm('medium', medium);

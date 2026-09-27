@@ -1,0 +1,14 @@
+{
+  "name": "Matomo short campaign params (pk_cpn/pk_src/pk_med) reach attribution on the url intact; only path drops them, after they are read",
+  "method": "GET",
+  "query": "idsite=3&rec=1&url=https%3A%2F%2Fpcons.org%2Fdocs%3Fpk_cpn%3DFall%26pk_src%3Dnewsletter%26pk_med%3Demail%26page%3D2&action_name=Docs",
+  "expectStatus": 200,
+  "expectHits": [
+    {
+      "siteId": 3,
+      "type": "pageview",
+      "url": "https://pcons.org/docs?pk_cpn=Fall&pk_src=newsletter&pk_med=email&page=2",
+      "title": "Docs"
+    }
+  ]
+}

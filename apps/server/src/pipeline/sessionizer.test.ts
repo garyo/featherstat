@@ -326,6 +326,43 @@ describe('attribution', () => {
     expect(pk.session.utm_campaign).toBe('fall');
   });
 
+  // Matomo's short forms were stripped from `path` but never read, so a
+  // `?pk_cpn=` link arrived as direct traffic with no campaign at all.
+  it("accepts Matomo's short and legacy campaign params", () => {
+    const short = run(new Sessionizer(), T0, {
+      url: 'https://example.com/?pk_cpn=Fall&pk_src=Newsletter&pk_med=Email',
+    }).session;
+    expect(short.ref_type).toBe('campaign');
+    expect([short.utm_source, short.utm_medium, short.utm_campaign]).toEqual([
+      'newsletter',
+      'email',
+      'fall',
+    ]);
+    expect(short.entry_path).toBe('/');
+
+    const mtm = run(new Sessionizer(), T0, {
+      url: 'https://example.com/?mtm_cpn=spring&mtm_src=partner&mtm_med=banner',
+    }).session;
+    expect([mtm.utm_source, mtm.utm_medium, mtm.utm_campaign]).toEqual([
+      'partner',
+      'banner',
+      'spring',
+    ]);
+
+    for (const param of ['matomo_campaign', 'piwik_campaign']) {
+      const legacy = run(new Sessionizer(), T0, { url: `https://example.com/p?${param}=winter` });
+      expect(legacy.session.utm_campaign, param).toBe('winter');
+      expect(legacy.event.path, param).toBe('/p');
+    }
+  });
+
+  it('reads utm first when two families name the same field', () => {
+    const { session } = run(new Sessionizer(), T0, {
+      url: 'https://example.com/?pk_cpn=matomo&utm_campaign=utm&mtm_campaign=mtm',
+    });
+    expect(session.utm_campaign).toBe('utm');
+  });
+
   it('synthesizes campaign attribution from a click id when no utm arrived', () => {
     const s = new Sessionizer();
     const { event, session } = run(s, T0, {
