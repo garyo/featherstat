@@ -878,10 +878,13 @@ Read-only
 dashboard access via `GET /share/:token`: the server re-validates the stored
 layout and assembles the SAME batch the in-app view would run (widget queries
 plus derived companions, previous-period compare), so the link cannot be
-turned into the query API — the one client knob is `?range=<preset>`. Because
-this is the one unauthenticated route that executes queries on the
-synchronous SQLite path, executed batches are rate-limited (per-IP plus a
-global budget; 304 revalidations are free) and every `/share` response
+turned into the query API — the one client knob is `?range=<preset>`. It
+resolves derived metrics and goals exactly as `/api/query` does (and hashes
+them into its ETag), and executes through the same seam — the worker pool in
+production, never inline on the event loop. Because this is the one
+unauthenticated route that executes queries, executed batches are
+rate-limited (per-IP plus a global budget; 304 revalidations are free; a
+saturated pool answers 429 like the limiter) and every `/share` response
 carries `X-Robots-Tag: noindex`. Operations: `/healthz` (liveness + last-flush age) and
 Prometheus `/metrics` (ingest rate, batch flush time, query p95, SSE clients,
 bot drops, DB size) for the existing Grafana stack (R15).
