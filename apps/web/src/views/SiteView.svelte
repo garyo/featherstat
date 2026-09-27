@@ -148,7 +148,7 @@ $effect(() =>
   createRevalidator(
     live,
     () => {
-      if (store.ready) runner.run(request);
+      if (store.ready) runner.refresh();
     },
     {
       site: () => site,
@@ -250,7 +250,7 @@ const note = $derived.by(() => {
       onselect={onselectrange}
       oncompare={onselectcmp}
       onremovefilter={removeFilter}
-      onretry={runner.error === undefined ? undefined : () => runner.retry()}
+      onretry={runner.error === undefined ? undefined : () => runner.refresh()}
     />
     <button
       class="btn slim tool-btn"

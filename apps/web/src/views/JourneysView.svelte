@@ -79,7 +79,7 @@ $effect(() => {
 });
 // … and when debounced version ticks say this site's data moved (docs/05 R22).
 $effect(() =>
-  createRevalidator(live, () => runner.run(request), {
+  createRevalidator(live, () => runner.refresh(), {
     site: () => site,
     key: () => request,
   }),
@@ -155,7 +155,7 @@ const note = $derived.by(() => {
     {note}
     onselect={onselectrange}
     onremovefilter={removeFilter}
-    onretry={runner.error === undefined ? undefined : () => runner.retry()}
+    onretry={runner.error === undefined ? undefined : () => runner.refresh()}
   />
   <div class="depth" role="group" aria-label="Journey depth">
     <span class="depth-label">Steps</span>

@@ -67,7 +67,12 @@ const runner = createBatchRunner(client);
  * stored row, or the shipped all-sites template) always follows the LIVE
  * directory for its site-cards.
  */
-const siteIds = $derived(app.sites === null ? [] : [...app.sites.keys()]);
+// Keyed by value: `app` is replaced on every stream update, and a fresh id array
+// each time would make a fresh dashboard, a fresh request, and a fresh batch.
+const siteKey = $derived(app.sites === null ? '' : [...app.sites.keys()].join(','));
+const siteIds = $derived(siteKey === '' ? [] : siteKey.split(',').map(Number));
+/** The batch waits for the directory AND the dashboard lookup. */
+const ready = $derived(app.sites !== null && store.ready);
 const dashboard = $derived(
   withLiveSiteIds(
     store.stored ??
@@ -100,13 +105,13 @@ $effect(() => {
   // more when a site rolls into a new local day, because `today` and `mtd`
   // are resolved server-side and their answer changes at that site's midnight.
   void dayKey;
-  if (app.sites !== null && store.ready) runner.run(request);
+  if (ready) runner.run(request);
 });
 $effect(() =>
   createRevalidator(
     live,
     () => {
-      if (app.sites !== null && store.ready) runner.run(request);
+      if (ready) runner.refresh();
     },
     { site: () => 'all', key: () => request },
   ),
@@ -168,7 +173,7 @@ const note = $derived.by(() => {
       {note}
       onselect={onselectrange}
       oncompare={onselectcmp}
-      onretry={runner.error === undefined ? undefined : () => runner.retry()}
+      onretry={runner.error === undefined ? undefined : () => runner.refresh()}
     />
     <button
       class="btn slim tool-btn"

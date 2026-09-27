@@ -98,7 +98,7 @@ $effect(() => {
   runner.run(request);
 });
 $effect(() =>
-  createRevalidator(live, () => runner.run(request), { site: () => site, key: () => request }),
+  createRevalidator(live, () => runner.refresh(), { site: () => site, key: () => request }),
 );
 const dayKey = $derived(localDayKey(timezone === undefined ? [] : [timezone], new Date(app.now)));
 
@@ -146,7 +146,7 @@ const note = $derived.by(() => {
   onselect={onselectrange}
   oncompare={onselectcmp}
   onremovefilter={(index) => onfilters(filters.filter((_, i) => i !== index))}
-  onretry={runner.error === undefined ? undefined : () => runner.retry()}
+  onretry={runner.error === undefined ? undefined : () => runner.refresh()}
 />
 <DashboardGrid
   {dashboard}
