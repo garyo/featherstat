@@ -6,7 +6,7 @@ import {
 } from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
 import { resultAxes } from '../widgets/axis.ts';
-import { canonicalJson, createQueryClient, QueryError } from './api.ts';
+import { canonicalJson, createQueryClient, QueryError, UNREADABLE_ANSWER } from './api.ts';
 
 const request: QueryRequest = {
   site: 4,
@@ -179,6 +179,22 @@ describe('query client', () => {
     const client = createQueryClient({ fetch });
 
     await expect(client.query(request)).rejects.toThrow('unknown site id 9');
+  });
+
+  it('refuses a 200 that is not an answer, and never caches it', async () => {
+    const { fetch, calls } = fakeFetch([
+      () =>
+        new Response(JSON.stringify({ results: { kpis: { rows: 'nope' } } }), {
+          status: 200,
+          headers: { ETag: '"bad"' },
+        }),
+      ok('"v1"'),
+    ]);
+    const client = createQueryClient({ fetch });
+
+    await expect(client.query(request)).rejects.toThrow(UNREADABLE_ANSWER);
+    expect(await client.query(request)).toEqual(payload);
+    expect(calls[1]?.headers['if-none-match']).toBeUndefined();
   });
 
   it('does not cache a response the server left untagged', async () => {

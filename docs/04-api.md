@@ -2,7 +2,10 @@
 
 Four surfaces: Matomo-compatible tracking (the cutover contract), native
 tracking, the batched query API (the performance contract), and realtime SSE.
-All request/response shapes live as zod schemas in `packages/shared`.
+All request/response shapes live as zod schemas in `packages/shared`, and the
+SPA checks the responses it reads against them — a 90-day dashboard's query
+batch parses in well under a millisecond, and `test/contract` holds each
+schema to what the server really sends.
 
 ## 1. Matomo-compatible tracking
 

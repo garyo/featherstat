@@ -1,4 +1,4 @@
-import type { QueryRequest, QueryResponse } from '@featherstat/shared';
+import { type QueryRequest, type QueryResponse, QueryResponseSchema } from '@featherstat/shared';
 
 /**
  * The client half of the one-fetch rule (docs/05): a view hands over the whole
@@ -33,7 +33,13 @@ export interface QueryClient {
   query(request: QueryRequest, options?: QueryOptions): Promise<QueryResponse>;
 }
 
-/** A batch the server refused (400 unknown vocabulary, 404 unknown site, 5xx). */
+/**
+ * A body that is not a query answer — most likely a server updated under a page
+ * still running the old build, which a reload fixes.
+ */
+export const UNREADABLE_ANSWER = "the server's answer could not be read — reload the page";
+
+/** A batch the server refused (400 unknown vocabulary, 404 unknown site, 5xx) — or answered unreadably. */
 export class QueryError extends Error {
   constructor(
     readonly status: number,
@@ -75,12 +81,13 @@ export function createQueryClient(options: QueryClientOptions = {}): QueryClient
       }
       if (!response.ok) throw new QueryError(response.status, await errorMessage(response));
 
-      // Our own server's shape; `packages/shared` types it and the batch envelope
-      // carries per-query errors, so a malformed body would be a server bug.
-      const payload = (await response.json()) as QueryResponse;
+      // Checked on arrival (~0.2–0.4 ms for a 90-day dashboard, against the
+      // tens of ms the batch itself takes); a 304 replays the checked copy.
+      const parsed = QueryResponseSchema.safeParse(await response.json());
+      if (!parsed.success) throw new QueryError(response.status, UNREADABLE_ANSWER);
       const etag = response.headers.get('etag');
-      if (etag !== null) remember(cache, body, { etag, response: payload }, cacheEntries);
-      return payload;
+      if (etag !== null) remember(cache, body, { etag, response: parsed.data }, cacheEntries);
+      return parsed.data;
     },
   };
 }

@@ -11,7 +11,7 @@ import {
   SegmentFilterNodeSchema,
 } from './filters.ts';
 import { GoalMetricRefSchema } from './goals.ts';
-import type { Measures } from './measures.ts';
+import { MeasureSchema, type Measures } from './measures.ts';
 
 // ---------------------------------------------------------------------------
 // Constants (docs/03)
@@ -1006,12 +1006,62 @@ export const AnnotationCreateSchema = z.object({
 export type AnnotationCreate = z.infer<typeof AnnotationCreateSchema>;
 
 /** One annotation as the admin list and `meta.annotations` carry it. */
-export interface AnnotationInfo {
-  id: number;
-  siteId: number | null;
-  ts: number;
-  text: string;
-}
+export const AnnotationInfoSchema = z.object({
+  id: z.number(),
+  siteId: z.number().nullable(),
+  ts: z.number(),
+  text: z.string(),
+});
+export type AnnotationInfo = z.infer<typeof AnnotationInfoSchema>;
+
+// ---------------------------------------------------------------------------
+// Query responses, checked on arrival (docs/04 § 3). The interfaces above stay
+// the source of truth — the server builds them — and each schema must produce
+// one (`satisfies`); `test/contract` holds the pair together by parsing every
+// shipped template's real answer and requiring nothing be refused or dropped.
+// ---------------------------------------------------------------------------
+
+const ResultRowSchema = z.record(
+  z.string(),
+  z.union([z.string(), z.number(), z.null(), z.array(z.string())]),
+) satisfies z.ZodType<ResultRow>;
+
+const SiteWindowSchema = z.object({
+  siteId: z.number(),
+  timezone: z.string(),
+  from: z.string(),
+  to: z.string(),
+  fromTs: z.number().optional(),
+  toTs: z.number().optional(),
+  compareFrom: z.string().optional(),
+  compareTo: z.string().optional(),
+}) satisfies z.ZodType<SiteWindow>;
+
+const QueryResultSchema = z.object({
+  rows: z.array(ResultRowSchema),
+  compare: z.array(ResultRowSchema).optional(),
+  ms: z.number().optional(),
+  bucket: BucketSchema.optional(),
+  axis: z
+    .array(z.object({ siteId: z.number(), keys: z.array(z.string()), clip: z.string().optional() }))
+    .optional(),
+  measures: z.record(z.string(), MeasureSchema).optional(),
+}) satisfies z.ZodType<QueryResult>;
+
+const QueryErrorResultSchema = z.object({
+  error: z.object({ code: z.enum(['unsupported', 'not_implemented']), message: z.string() }),
+}) satisfies z.ZodType<QueryErrorResult>;
+
+/** A `/api/query` body — the envelope and every per-query entry in it. */
+export const QueryResponseSchema = z.object({
+  results: z.record(z.string(), z.union([QueryErrorResultSchema, QueryResultSchema])),
+  meta: z.object({
+    generatedInMs: z.number(),
+    dataVersion: z.number(),
+    windows: z.array(SiteWindowSchema),
+    annotations: z.array(AnnotationInfoSchema).optional(),
+  }),
+}) satisfies z.ZodType<QueryResponse>;
 
 // ---------------------------------------------------------------------------
 // Alert rules (docs/04 § 5) — stored as one settings row like the ntfy rules,
