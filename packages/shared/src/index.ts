@@ -305,22 +305,37 @@ export const EVENT_ONLY_METRICS = [
   'event_value_sum',
 ] as const satisfies readonly Metric[];
 
-export const MetricQuerySchema = z.object({
-  id: z.string().min(1).max(64),
-  /** Built-in metrics plus `d:<name>` references to stored derived metrics and
-   * `goal:<id>:<aspect>` goal metrics (docs/04 § 3). The cap counts what was
-   * ASKED for; a derived metric's components ride under a separate internal
-   * ceiling in the executor. */
-  metrics: z
-    .array(z.union([MetricSchema, DerivedMetricRefSchema, GoalMetricRefSchema]))
-    .min(1)
-    .max(MAX_METRICS_PER_QUERY),
-  dim: DimensionSchema.optional(),
-  dim2: DimensionSchema.optional(),
-  bucket: BucketSchema.optional(),
-  filters: FiltersSchema.optional(),
-  limit: z.number().int().min(1).max(1000).optional(),
-});
+export const MetricQuerySchema = z
+  .object({
+    id: z.string().min(1).max(64),
+    /** Built-in metrics plus `d:<name>` references to stored derived metrics and
+     * `goal:<id>:<aspect>` goal metrics (docs/04 § 3). The cap counts what was
+     * ASKED for; a derived metric's components ride under a separate internal
+     * ceiling in the executor. */
+    metrics: z
+      .array(z.union([MetricSchema, DerivedMetricRefSchema, GoalMetricRefSchema]))
+      .min(1)
+      .max(MAX_METRICS_PER_QUERY),
+    dim: DimensionSchema.optional(),
+    dim2: DimensionSchema.optional(),
+    bucket: BucketSchema.optional(),
+    filters: FiltersSchema.optional(),
+    limit: z.number().int().min(1).max(1000).optional(),
+  })
+  .superRefine((query, ctx) => {
+    // Bucketed rows order by time first, so a LIMIT would keep the earliest
+    // buckets rather than the top groups — a truncation that reads as data.
+    const dimensioned = query.dim !== undefined || query.dim2 !== undefined;
+    if (query.limit !== undefined && query.bucket !== undefined && dimensioned) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['limit'],
+        message:
+          "'limit' cannot combine with 'bucket' and a dimension: it would cut by time, " +
+          'keeping only the earliest buckets — drop the limit or the bucket',
+      });
+    }
+  });
 export type MetricQuery = z.infer<typeof MetricQuerySchema>;
 
 /** Sequence queries (journeys, docs/04): shapes that don't fit metric × dimension. */

@@ -247,6 +247,11 @@ A query the vocabulary cannot answer honestly (e.g. `bounce_rate` × `title`) or
 a kind that ships in a later milestone yields a per-query `error` entry — the
 batch itself still succeeds, and never returns wrong numbers.
 
+`limit` ranks groups by the first metric. A bucketed breakdown (`bucket` plus
+`dim`/`dim2`) orders by time first, so a limit there would keep the earliest
+buckets rather than the top groups; the schema refuses that combination with a
+400 instead of returning the truncated rows.
+
 - **Ranges: five calendar presets, one rolling one, or explicit dates.**
   `today` · `24h` · `7d` · `30d` · `90d` · `mtd`, or `{from, to}`. Every one of
   them resolves per site timezone (`site: "all"` resolves one window per site),

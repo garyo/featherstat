@@ -90,6 +90,20 @@ describe('QueryRequestSchema', () => {
     expect(flows && 'kind' in flows && 'limit' in flows && flows.limit).toBe(20); // default applied
   });
 
+  it('refuses a limit over a bucketed breakdown — it would keep the earliest buckets', () => {
+    const query = (extra: Record<string, unknown>) =>
+      QueryRequestSchema.safeParse({
+        ...base,
+        queries: [{ id: 'q', metrics: ['pageviews'], ...extra }],
+      }).success;
+    expect(query({ bucket: 'day', dim: 'path', limit: 10 })).toBe(false);
+    expect(query({ bucket: 'day', dim2: 'site', limit: 10 })).toBe(false);
+    // Each pair alone is a fine question.
+    expect(query({ bucket: 'day', dim: 'path' })).toBe(true);
+    expect(query({ dim: 'path', limit: 10 })).toBe(true);
+    expect(query({ bucket: 'day', limit: 10 })).toBe(true);
+  });
+
   it('accepts a dwell query and defaults its depth', () => {
     const req = QueryRequestSchema.parse({
       ...base,

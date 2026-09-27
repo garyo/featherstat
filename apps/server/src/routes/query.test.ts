@@ -259,6 +259,15 @@ describe('POST /api/query', () => {
     expect(badDay.status).toBe(400);
   });
 
+  it('rejects a limit over a bucketed breakdown with 400 rather than truncating by time', async () => {
+    const res = await post({
+      ...BODY,
+      queries: [{ id: 'q', metrics: ['pageviews'], bucket: 'day', dim: 'path', limit: 5 }],
+    });
+    expect(res.status).toBe(400);
+    expect(JSON.stringify(await res.json())).toContain('earliest buckets');
+  });
+
   it("rejects a filter whose value does not fit its op ('is_null' vs the rest)", async () => {
     const missing = await post({ ...BODY, filters: [{ dim: 'country', op: 'eq' }] });
     expect(missing.status).toBe(400);
