@@ -65,13 +65,7 @@ beforeAll(async () => {
   dataDir = mkdtempSync(join(tmpdir(), 'main-entry-'));
   child = spawn(
     process.execPath,
-    [
-      '--experimental-transform-types',
-      '--disable-warning=ExperimentalWarning',
-      '--import',
-      './test/replay/shared-alias.ts',
-      'src/main.ts',
-    ],
+    ['--experimental-transform-types', '--disable-warning=ExperimentalWarning', 'src/main.ts'],
     {
       cwd: SERVER_DIR,
       env: {

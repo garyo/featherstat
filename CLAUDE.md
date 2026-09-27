@@ -44,7 +44,9 @@ bun run --cwd apps/web dev      # dashboard on :5173, proxies /api to :8080
 - `packages/shared` — zod schemas + constants, plus the shipped dashboard
   templates (`templates/`) the server and web both resolve. **The only
   cross-package import surface**; server/web/tracker define no duplicate
-  cross-boundary types.
+  cross-boundary types. Every consumer declares it as a `workspace:*`
+  dependency and resolves it through its `package.json` `exports` — no path
+  aliases, so a new entry point is one line there.
 - `packages/tracker` — matomo.js compatibility shim + modern ESM tracker.
 
 ## Invariants (load-bearing — never violate)

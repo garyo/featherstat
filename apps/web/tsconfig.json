@@ -18,13 +18,7 @@
     // svelte-check resolves .svelte imports through svelte2tsx, which needs allowJs
     "allowJs": true,
     "checkJs": true,
-    "types": ["svelte", "vite/client"],
-    "paths": {
-      "@featherstat/shared/detail-templates": [
-        "../../packages/shared/src/templates/detail/index.ts"
-      ],
-      "@featherstat/shared": ["../../packages/shared/src/index.ts"]
-    }
+    "types": ["svelte", "vite/client"]
   },
   "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.svelte", "vite.config.ts"]
 }

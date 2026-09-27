@@ -1,7 +1,6 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import type { QueryRequest, QueryResponse } from '@featherstat/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { event, session, syncRollups } from '../../../test/rows.ts';
@@ -19,15 +18,9 @@ import type { PoolReply } from './protocol.ts';
 
 /**
  * Workers spawned from vitest do not inherit its transform pipeline, so they
- * get the same flags the project's own node scripts use (package.json), plus
- * the alias hook that teaches plain node the workspace import.
+ * get the same flags the project's own node scripts use (package.json).
  */
-const EXEC_ARGV = [
-  '--experimental-transform-types',
-  '--disable-warning=ExperimentalWarning',
-  '--import',
-  fileURLToPath(new URL('../../../test/replay/shared-alias.ts', import.meta.url)),
-];
+const EXEC_ARGV = ['--experimental-transform-types', '--disable-warning=ExperimentalWarning'];
 
 const FIXTURE_URL = new URL('./fixture-worker.ts', import.meta.url);
 
