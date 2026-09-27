@@ -1,5 +1,6 @@
 import { DASHBOARD_LAYOUT_VERSION, type Dashboard } from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
+import { createSeededV1Db, V1_FIXTURE } from '../../../test/v1-fixture.ts';
 import {
   countEvents,
   createSite,
@@ -16,7 +17,6 @@ import {
 } from '../../db/index.ts';
 import { verifyRollupDay } from '../../rollup/verify.ts';
 import { importV1 } from './importer.ts';
-import { createSeededV1Db, V1_FIXTURE } from './v1-fixture.ts';
 
 /**
  * The v1 → v2 importer against the generated miniature v1 fixture — a real v1

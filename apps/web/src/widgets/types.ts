@@ -46,7 +46,7 @@ export interface RealtimeEnv {
  * collided pair would light both — and a keyed `{#each}` over names would give
  * two rows the same key. The name is for reading; this is for matching.
  */
-export interface Highlight {
+interface Highlight {
   /** The `ref` of the visitor under the cursor, if any. */
   ref: string | undefined;
   onhover: (ref: string | undefined) => void;

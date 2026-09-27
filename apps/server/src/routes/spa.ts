@@ -31,7 +31,7 @@ const CONTENT_TYPES: Record<string, string> = {
   '.woff2': 'font/woff2',
 };
 
-export interface Asset {
+interface Asset {
   body: Buffer;
   type: string;
   etag: string;

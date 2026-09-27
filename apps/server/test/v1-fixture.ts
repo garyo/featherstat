@@ -1,5 +1,5 @@
 import BetterSqlite3 from 'better-sqlite3';
-import type { Db } from '../../db/index.ts';
+import type { Db } from '../src/db/index.ts';
 
 /**
  * A miniature featherstat v1 database, generated in-test rather than checked
@@ -148,7 +148,7 @@ function bin(n: number): Uint8Array {
 }
 
 /** An empty v1 database at `user_version` 5, exactly as a live v1 left it. */
-export function createV1Db(path = ':memory:'): Db {
+function createV1Db(path = ':memory:'): Db {
   const db = new BetterSqlite3(path);
   db.pragma('journal_mode = WAL');
   db.exec(`CREATE TABLE schema_migrations (
@@ -511,7 +511,7 @@ const SESSIONS: FixtureSession[] = [
 ];
 
 /** Seeds the deterministic miniature corpus `V1_FIXTURE` describes. */
-export function seedV1Fixture(db: Db): void {
+function seedV1Fixture(db: Db): void {
   db.prepare(
     'INSERT INTO sites (id, name, domains, timezone, created_at) VALUES (?, ?, ?, ?, ?)',
   ).run(1, 'One', '["one.test"]', 'America/New_York', T0 - 1_000_000_000);

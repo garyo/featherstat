@@ -84,7 +84,7 @@ export function siteStats(input: SiteStatsInput): SiteStat[] {
       total,
       spark: buckets.map((bucket) => values?.get(bucket) ?? 0),
       // Both sides required: a brand-new (or just-quiet) period reads as "—",
-      // not a red −100% — same reasoning the old same-weekday delta used.
+      // not a red −100%.
       deltaPct: total > 0 && prev > 0 ? Math.round(((total - prev) / prev) * 100) : undefined,
       silent: total === 0 && (values === undefined || values.size === 0),
     });

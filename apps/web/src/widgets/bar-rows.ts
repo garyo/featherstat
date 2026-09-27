@@ -110,7 +110,7 @@ export function displayPath(value: string): string {
  * the host, path and query are what tell two links apart — and the raw value
  * still travels as the row's filter payload and tooltip.
  */
-export function displayTarget(value: string): string {
+function displayTarget(value: string): string {
   return value.replace(/^https?:\/\//i, '');
 }
 

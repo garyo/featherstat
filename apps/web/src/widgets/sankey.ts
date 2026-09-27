@@ -74,7 +74,7 @@ export interface SankeyLayout {
 }
 
 /** Nodes below this share of their column fold into “Other” (long-tail rule). */
-export const MIN_NODE_SHARE = 0.04;
+const MIN_NODE_SHARE = 0.04;
 /** Readability cap: a column names at most this many nodes before “Other”. */
 const MAX_NAMED_NODES = 8;
 /** Vertical space between nodes in a column. */

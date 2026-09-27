@@ -115,7 +115,7 @@ async function drain(db: Db, batchSize: number): Promise<ReferrerBackfillResult>
     const update = stmt(db, updateRow(table));
     await inChunks(db, () => {
       const since = Number(getSetting(db, setting) ?? 0);
-      const rows = select.all(since, batchSize) as ChunkRow[];
+      const rows = select.all(since, batchSize);
       if (rows.length === 0) {
         deleteSetting(db, setting);
         return true;

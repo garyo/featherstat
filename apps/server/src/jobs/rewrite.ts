@@ -58,9 +58,9 @@ export function markRewriteDirty(db: Db, dirtySetting: string): void {
 
 /**
  * What a rewrite of rolled dimensions owes once its watermarks are drained:
- * the rollups re-derived from the rewritten rows, then an epoch bump so every
- * pre-rewrite ETag expires (invariant 10), the flag cleared in the bump's own
- * transaction. Returns whether it ran.
+ * the rollups re-derived from the rewritten rows (`rebuild`, every site's by
+ * default), then an epoch bump so every pre-rewrite ETag expires (invariant
+ * 10), the flag cleared in the bump's own transaction. Returns whether it ran.
  *
  * Gated on the durable flag, never on one run's tally, and checked whether or
  * not anything was left to drain: a run that rewrites rows and dies — mid-walk
@@ -68,9 +68,13 @@ export function markRewriteDirty(db: Db, dirtySetting: string): void {
  * debt even when it finds no work of its own. Neither step is destructive to
  * repeat.
  */
-export async function settleRewrite(db: Db, dirtySetting: string): Promise<boolean> {
+export async function settleRewrite(
+  db: Db,
+  dirtySetting: string,
+  rebuild: () => Promise<unknown> = () => rebuildAllRollups(db),
+): Promise<boolean> {
   if (getSetting(db, dirtySetting) === undefined) return false;
-  await rebuildAllRollups(db);
+  await rebuild();
   withWriteTransaction(db, () => {
     bumpDataEpoch(db);
     deleteSetting(db, dirtySetting);

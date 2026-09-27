@@ -363,7 +363,8 @@ query reports `views_measured` so a reader knows what the number rests on
 
 **Bounce is engagement-aware, by design.** A session is a bounce only if it
 showed *no* engagement: exactly one pageview, no events, **and**
-`engaged_ms` below the engagement threshold (default 15 s, configurable).
+`engaged_ms` below the engagement threshold (`ENGAGEMENT_THRESHOLD_MS`, 15 s —
+a code constant: changing it is a deploy, and § Rollups says what that owes).
 Someone who lands on one article and reads it for three minutes is exactly
 what a site wants — dwell time (via heartbeat) and events both count as
 engagement, so that visit is not a bounce. "Events" means events the *visitor*
@@ -590,9 +591,10 @@ and a colon, which would break the `salt:<zone>:<date>` key.
 
 **Changing a site's timezone rewrites its history.** The admin PATCH that moves
 the zone enqueues `jobs/timezone-backfill.ts` in its own transaction and kicks
-it — the referrer-backfill shape: a settings watermark per (site, table),
-5 000-row write transactions sharing the lock with ingest, resumed at boot after
-a crash. It re-derives `local_date`/`local_hour` on the site's events (from
+it — the chunked-rewrite plumbing the other backfills share (`jobs/rewrite.ts`):
+a settings watermark per (site, table), 5 000-row write transactions sharing the
+lock with ingest, resumed at boot after a crash. Deleting the site drops a
+backfill still pending (docs/04 § 5); the purge owns those rows. It re-derives `local_date`/`local_hour` on the site's events (from
 `ts`) and sessions (from `started_at`) in the new zone, rebuilds the site's
 rollups (clearing rollup days only the old zone had), and bumps the data epoch.
 Until it finishes the site's older days read in the old zone while windows

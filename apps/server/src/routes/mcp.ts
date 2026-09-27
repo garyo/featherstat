@@ -261,7 +261,7 @@ function refusal(message: string): { content: [{ type: 'text'; text: string }]; 
  * enums and DB rows — never restated by hand — so it cannot drift from what
  * the query route accepts; mcp.test.ts asserts every enum option appears.
  */
-export function describeAnalytics(db: Db, who: Extract<Principal, { kind: 'token' }>): string {
+function describeAnalytics(db: Db, who: Extract<Principal, { kind: 'token' }>): string {
   const sites = listSites(db).filter((site) => canReadSite(who, site.id));
   const siteLines = sites.map(
     (site) =>

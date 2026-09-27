@@ -93,6 +93,22 @@ describe('settleRewrite', () => {
     expect(stmt(db, 'SELECT COUNT(*) FROM rollup_dim_day').pluck().get()).toBeGreaterThan(0);
   });
 
+  it('runs the rebuild it is given in place of the whole-install one', async () => {
+    withWriteTransaction(db, () => {
+      insertEvents(db, [event()]);
+      markRewriteDirty(db, DIRTY);
+    });
+    const before = dataVersion(db);
+    const rebuild = vi.fn(async () => {});
+
+    expect(await settleRewrite(db, DIRTY, rebuild)).toBe(true);
+
+    expect(rebuild).toHaveBeenCalledTimes(1);
+    expect(stmt(db, 'SELECT COUNT(*) FROM rollup_dim_day').pluck().get()).toBe(0);
+    expect(dataVersion(db)).toBeGreaterThan(before);
+    expect(getSetting(db, DIRTY)).toBeUndefined();
+  });
+
   it('leaves the flag standing when the rebuild dies, so the next run pays again', async () => {
     withWriteTransaction(db, () => {
       insertEvents(db, [event()]);

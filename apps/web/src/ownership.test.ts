@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { MIN_SOURCE_FILES, ownersOf, RENDERINGS, webSourceFiles } from './ownership.guard.ts';
+import {
+  classMark,
+  MIN_SOURCE_FILES,
+  ownersOf,
+  RENDERINGS,
+  webSourceFiles,
+} from './ownership.guard.ts';
 
 /**
  * One rendering per thing rendered (CLAUDE.md invariant 7). The table and the
@@ -22,5 +28,32 @@ describe('one rendering per thing rendered', () => {
       ownersOf(FILES, marks),
       `${what} is rendered in more than one place — ${instead}`,
     ).toEqual([...owners].sort());
+  });
+});
+
+describe('classMark', () => {
+  const mark = classMark('bar-row');
+
+  it.each([
+    '<div class="bar-row">',
+    "<div class='bar-row'>",
+    '<div class="x bar-row y">',
+    '<div class = "bar-row">',
+    '<div class:bar-row={on}>',
+    '<div class={`bar-row ` + tone}>',
+    "<div class={['bar-row', on && 'hl']}>",
+    "<div class={{ 'bar-row': true }}>",
+  ])('sees %s', (markup) => {
+    expect(mark.test(markup)).toBe(true);
+  });
+
+  it.each([
+    '<div class="bar-rows">',
+    '<div class="my-bar-row">',
+    '<div class:bar-row-hl={on}>',
+    '.bar-row { display: grid; }',
+    '<div data-class="bar-row">',
+  ])('ignores %s', (markup) => {
+    expect(mark.test(markup)).toBe(false);
   });
 });

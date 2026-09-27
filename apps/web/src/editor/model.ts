@@ -30,7 +30,7 @@ export function limitProblem(limit: number | null): string | undefined {
 }
 
 /** The resize vocabulary — grid spans the layout CSS actually distinguishes. */
-export const WIDTH_PRESETS = [4, 6, 12] as const;
+const WIDTH_PRESETS = [4, 6, 12] as const;
 
 /** Full-row widget frames (mirrors the registry): resizing them would lie. */
 const WIDE_VIZ = new Set<VizType>(['kpi-row', 'site-cards']);

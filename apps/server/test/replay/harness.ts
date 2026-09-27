@@ -29,7 +29,7 @@ export interface ReplayOptions {
   onBatch?: (pipeline: Pipeline) => void;
 }
 
-export function replayCorpus(db: Db, corpus: Corpus, options: ReplayOptions = {}): void {
+function replayCorpus(db: Db, corpus: Corpus, options: ReplayOptions = {}): void {
   const pipeline = createPipeline(db, {
     geo: REPLAY_GEO,
     batchIntervalMs: options.batchIntervalMs ?? MANUAL_FLUSH_INTERVAL_MS,

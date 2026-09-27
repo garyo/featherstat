@@ -50,7 +50,7 @@ import {
 
 /** The definition shape shipped across the pool protocol, keyed by decimal id.
  * Verbatim stored columns — JSON-safe, hashable, parsed only in the executor. */
-export interface GoalDefinition {
+interface GoalDefinition {
   siteId: number;
   /** The `goals.filters` column: a JSON array of FilterNode. */
   filters: string;

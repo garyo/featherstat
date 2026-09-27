@@ -347,7 +347,7 @@ function asFilter(resolved: FilterNode | string): FilterNode | undefined {
  * events dated the horizon's own local date can predate the instant, so that
  * date is already suspect.
  */
-export function rawHorizonRefusal(
+function rawHorizonRefusal(
   windows: readonly SiteWindow[],
   horizonTs: number | undefined,
 ): QueryErrorResult | undefined {
@@ -531,10 +531,7 @@ function runScoped(
   windows: readonly SiteWindow[],
 ): ResultRow[] {
   if (windows.length === 0) return [];
-  const rows = stmt<ResultRow>(db, compiled.sql).all(
-    ...boundsParams(windows),
-    ...compiled.params,
-  ) as ResultRow[];
+  const rows = stmt<ResultRow>(db, compiled.sql).all(...boundsParams(windows), ...compiled.params);
   if (compiled.kind === 'flows') {
     // The signature travels as JSON text in SQL; clients get the parsed array.
     for (const row of rows) row.steps = JSON.parse(row.steps as string) as string[];
@@ -554,7 +551,7 @@ export function runCompiled(
 
   const first = compiled.statements[0];
   if (compiled.ordered && first !== undefined) {
-    return stmt<ResultRow>(db, first.sql).all(...bounds, ...first.params) as ResultRow[];
+    return stmt<ResultRow>(db, first.sql).all(...bounds, ...first.params);
   }
 
   // A query mixing session- and event-shaped metrics ran once per table; join the
@@ -562,7 +559,7 @@ export function runCompiled(
   const merged = new Map<string, ResultRow>();
   for (const statement of compiled.statements) {
     const rows = stmt<ResultRow>(db, statement.sql).all(...bounds, ...statement.params);
-    for (const raw of rows as ResultRow[]) {
+    for (const raw of rows) {
       // JSON per component: SQL NULL must never collide with a literal "null" value.
       const key = compiled.groupKeys
         .map((groupKey) => JSON.stringify(raw[groupKey] ?? null))

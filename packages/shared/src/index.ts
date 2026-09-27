@@ -1193,15 +1193,14 @@ export const RealtimeSitesSchema = z.union([
 ]);
 
 /**
- * One hit, as it happened. The feed is the raw stream now — pings included —
- * and a row carries no derived figure at all.
+ * One hit, as it happened. The feed is the raw stream — pings included — and a
+ * row carries no derived figure at all.
  *
- * That absence is the design. A row used to carry "how long the visit had been
- * going when this landed", which could not be summed (4 s, 6 s and 8 s under a
- * tally of 54 s read as a contradiction) and which the boot path could not
- * reconstruct, so it silently substituted the visit's TOTAL and a row meant one
- * thing live and another after a restart. With nothing derived on the wire,
- * seeding from storage is the same rows as the live path and cannot drift.
+ * That absence is the design. A per-row "how long the visit had been going when
+ * this landed" cannot be summed (4 s, 6 s and 8 s under a tally of 54 s read as
+ * a contradiction), and the boot path cannot reconstruct it, so a row would mean
+ * one thing live and another after a restart. With nothing derived on the wire,
+ * seeding from storage yields the same rows as the live path and cannot drift.
  *
  * Time on page is recovered by collapsing consecutive hits on one page
  * (`lib/realtime.ts`), where it is the span of the run — the same clamped-gap

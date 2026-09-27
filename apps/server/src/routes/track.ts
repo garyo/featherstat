@@ -24,7 +24,7 @@ const COLLECT_CORS_HEADERS = {
 const TRACKING_GIF = Uint8Array.from(
   atob('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'),
   (char) => char.charCodeAt(0),
-).buffer as ArrayBuffer;
+).buffer;
 
 const GIF_HEADERS = { 'Content-Type': 'image/gif', 'Cache-Control': 'no-store' };
 const EMPTY_HEADERS = { 'Cache-Control': 'no-store' };

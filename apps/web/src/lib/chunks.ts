@@ -4,8 +4,8 @@
  * detail views, the query modal).
  *
  * A deploy replaces the hashed bundle, so a tab left open across one asks for a
- * chunk the server no longer has. The import rejects — and every caller was a
- * `void import(…)`, so Share, Edit, Manage and the rest became buttons that did
+ * chunk the server no longer has. The import rejects, and a caller firing
+ * `void import(…)` turns Share, Edit, Manage and the rest into buttons that do
  * nothing at all, with the reason only in the console. The page cannot recover
  * on its own: the build it is running is gone.
  *

@@ -102,7 +102,7 @@ function bareHost(host: string): string {
   return lower.startsWith('www.') ? lower.slice(4) : lower;
 }
 
-export type ReferrerType = 'internal' | 'search' | 'social' | 'referral';
+type ReferrerType = 'internal' | 'search' | 'social' | 'referral';
 
 export interface ReferrerAttribution {
   /** The canonical domain; null when there was no usable referrer. */

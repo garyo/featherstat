@@ -24,7 +24,7 @@ export interface MatomoSiteRow {
 }
 
 /** Visit columns shared by `matomo_log_visit` and the action join (per-visit context). */
-export interface MatomoVisitContext {
+interface MatomoVisitContext {
   referer_type: number | null;
   referer_name: string | null;
   referer_url: string | null;

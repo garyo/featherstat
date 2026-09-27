@@ -62,7 +62,7 @@ const SQL_SET_META =
 const SQL_DELETE_META = 'DELETE FROM rollup_meta WHERE key = ?';
 
 export const META_ENGAGEMENT_THRESHOLD = 'engagement_threshold_ms';
-export const META_NEEDS_REBUILD = 'needs_rebuild';
+const META_NEEDS_REBUILD = 'needs_rebuild';
 /** UTC ms below which raw events/sessions may have been pruned (jobs/retention.ts). */
 export const META_RAW_HORIZON = 'raw_horizon_ts';
 
@@ -307,7 +307,7 @@ function dimAcc(
       date: event.local_date,
       dimId,
       value,
-      isNull: isNull as 0 | 1,
+      isNull: isNull,
       hits: 0,
       actions: 0,
       pageviews: 0,
@@ -386,7 +386,7 @@ function addVector(
       date: row.local_date,
       dimId,
       value,
-      isNull: isNull as 0 | 1,
+      isNull: isNull,
       net: { visits: 0, measured: 0, engaged: 0, bounced: 0, pageviews: 0 },
     };
     map.set(key, acc);
@@ -478,7 +478,7 @@ function applyEventRollups(db: Db, sinceEventId: number, events: readonly EventR
       [visitorSql, 'visitors'],
       [sessionSql, 'sessions'],
     ] as const) {
-      for (const row of stmt<SeenRow>(db, sql).all(sinceEventId) as SeenRow[]) {
+      for (const row of stmt<SeenRow>(db, sql).all(sinceEventId)) {
         // Presence rows come from the very rows the accumulators grouped, so
         // the key always exists; `?.` would silently swallow a drift bug.
         const key = `${row.site_id}|${row.local_date}|${dimId}|${row.dim_null}|${row.dim_value}`;

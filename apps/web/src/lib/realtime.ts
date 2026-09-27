@@ -28,7 +28,7 @@ import type { SiteScope } from './state.ts';
 export const FEED_KEEP = 400;
 /** Rows the feed shows. */
 export const FEED_SHOW = 30;
-export const TALLY_ROWS = 8;
+const TALLY_ROWS = 8;
 /**
  * Per-visitor tally rows shown under the active-now hero. Sized for the tally's
  * window: at 8 rows over eight hours the cap bit routinely, cutting visitors
@@ -37,7 +37,7 @@ export const TALLY_ROWS = 8;
 export const VISITOR_ROWS = 10;
 
 /** Anything the stream scopes by site: a hit, an engagement row. */
-export function inScope(entry: { siteId: number }, site: SiteScope): boolean {
+function inScope(entry: { siteId: number }, site: SiteScope): boolean {
   return site === 'all' || entry.siteId === site;
 }
 
@@ -83,7 +83,7 @@ export function relativeAgo(ts: number, now: number): string {
 }
 
 /** A hit that is something the visitor DID, as opposed to time passing. */
-export function isAction(hit: RealtimeHit): boolean {
+function isAction(hit: RealtimeHit): boolean {
   return hit.type !== 'ping' && hit.type !== 'pageview';
 }
 
@@ -220,7 +220,7 @@ export interface VisitorCount {
  * interleaved trail; keying by ref cannot, and stays exact even when two
  * visitors draw the same name (they then read alike and behave apart).
  */
-export function visitorKey(visitor: { ref: string }): string {
+function visitorKey(visitor: { ref: string }): string {
   return visitor.ref;
 }
 
@@ -418,7 +418,7 @@ export function visitorTrail(
     }));
 }
 
-export const TRAIL_STEPS = 12;
+const TRAIL_STEPS = 12;
 
 /** The country tally as bar rows — the shared bar renderer takes it from here. */
 export function countryRows(counts: readonly CountryCount[]): BarRow[] {

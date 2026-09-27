@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 
@@ -14,7 +14,8 @@ import ts from 'typescript';
  * leaves it still — and every ETag minted before the rewrite would answer 304
  * forever. So each rewriter must call `bumpDataEpoch` after its last chunk.
  *
- * The scan reads every job source in `apps/server/src/jobs` and asks two
+ * The scan reads every job source under `apps/server/src/jobs`, subdirectories
+ * included, and asks two
  * questions of each: does it look like it rewrites history (an UPDATE/DELETE
  * against events, sessions, or a `${table}` template over them), and does it
  * bump the epoch? `REWRITERS` names the files that must do both; anything else
@@ -30,16 +31,20 @@ import ts from 'typescript';
 const JOBS_DIR = fileURLToPath(new URL('../../src/jobs', import.meta.url));
 
 export interface JobSource {
-  /** File name within `apps/server/src/jobs`. */
+  /** Path within `apps/server/src/jobs`, `/`-separated. */
   name: string;
   source: string;
 }
 
 /** Every job implementation (tests excluded — they quote SQL to assert on it). */
 export function jobSources(dir: string = JOBS_DIR): JobSource[] {
-  return readdirSync(dir)
+  return readdirSync(dir, { recursive: true, encoding: 'utf8' })
     .filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'))
-    .map((name) => ({ name, source: readFileSync(join(dir, name), 'utf8') }));
+    .sort()
+    .map((name) => ({
+      name: name.split(sep).join('/'),
+      source: readFileSync(join(dir, name), 'utf8'),
+    }));
 }
 
 /**
@@ -47,14 +52,14 @@ export function jobSources(dir: string = JOBS_DIR): JobSource[] {
  * and a rollup rebuild, which rewrites the derived history queries answer from
  * (reconcile's repair path replaces rows a cached ETag was computed against).
  */
-export const HISTORY_REWRITE =
+const HISTORY_REWRITE =
   /\b(?:UPDATE|DELETE\s+FROM)\s+(?:(?:events|sessions)\b|\$\{table\})|\brebuildRollupDay\s*\(/;
 
 /** The call every rewriter must make after its last chunk commits. */
 const EPOCH_BUMP = 'bumpDataEpoch(';
 
 /** Calls that bump on a rewriter's behalf, each with the job file that must bump itself. */
-export const DELEGATED_BUMPS: Readonly<Record<string, string>> = {
+const DELEGATED_BUMPS: Readonly<Record<string, string>> = {
   'settleRewrite(': 'rewrite.ts',
 };
 
@@ -66,7 +71,7 @@ function bumps(source: string): boolean {
 }
 
 /** The known rewrite entry points. A new one is added HERE, with its bump. */
-export const REWRITERS = [
+const REWRITERS = [
   'campaign-backfill.ts',
   'referrer-backfill.ts',
   'prop-scrub.ts',
@@ -79,14 +84,14 @@ export const REWRITERS = [
  * Files that match the rewrite shape but legitimately never bump. Each needs a
  * reason; an empty entry is not allowed.
  */
-export const EXEMPT: Readonly<Record<string, string>> = {
+const EXEMPT: Readonly<Record<string, string>> = {
   'retention.ts':
     'deletes only rows below the raw horizon it records first — the query engine ' +
     'refuses to answer under that floor, so pruned history is refused, never re-served stale',
 };
 
 /** The guard is worth exactly what it reads; below this the walk broke. */
-export const MIN_JOB_FILES = 10;
+const MIN_JOB_FILES = 10;
 
 /**
  * `source` reprinted without its comments, so a comment that merely mentions

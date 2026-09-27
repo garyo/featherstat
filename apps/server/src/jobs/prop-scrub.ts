@@ -52,6 +52,16 @@ export function requestPropScrub(db: Db, siteId: number, key: string): void {
   setSetting(db, watermarkKey(siteId, key), '0');
 }
 
+/**
+ * Drop a site's pending scrubs — called INSIDE the site delete's write
+ * transaction: the purge removes every bag they would have rewritten.
+ */
+export function forgetPropScrubs(db: Db, siteId: number): void {
+  for (const setting of settingKeysWithPrefix(db, `${WATERMARK_PREFIX}${siteId}:`)) {
+    deleteSetting(db, setting);
+  }
+}
+
 export interface PropScrubResult {
   /** Scrubs completed this run (watermark removed, epoch bumped). */
   completed: number;

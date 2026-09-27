@@ -2,7 +2,7 @@ import type { BaseDimension, ResultRow } from '@featherstat/shared';
 import { dimLabel, nullLabelFor } from '../lib/filters.ts';
 
 /** One mover of a `changes` section, ready to draw. */
-export interface ChangeRow {
+interface ChangeRow {
   name: string;
   current: number;
   delta: number;

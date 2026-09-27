@@ -10,7 +10,7 @@ export type Theme = 'light' | 'dark';
 const STORAGE_KEY = 'theme';
 
 /** What the reader is actually seeing: the override if there is one, else the OS preference. */
-export function resolvedTheme(): Theme {
+function resolvedTheme(): Theme {
   const stamped = document.documentElement.dataset.theme;
   if (stamped === 'light' || stamped === 'dark') return stamped;
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';

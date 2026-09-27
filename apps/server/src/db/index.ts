@@ -4,7 +4,6 @@ import { type Db, migrate } from './migrate.ts';
 
 export {
   type Db,
-  type Migration,
   migrate,
   schemaVersion,
   V1_IMPORT_SUBCOMMAND,
@@ -431,7 +430,7 @@ const SQL_TOMBSTONED_SITE_IDS = 'SELECT id FROM sites WHERE deleted_at IS NOT NU
 
 /** Every tombstoned site id — the batcher's last gate for hits queued before a delete. */
 export function tombstonedSiteIds(db: Db): Set<number> {
-  return new Set(stmt<number>(db, SQL_TOMBSTONED_SITE_IDS).pluck().all() as number[]);
+  return new Set(stmt<number>(db, SQL_TOMBSTONED_SITE_IDS).pluck().all());
 }
 
 /** The small per-site config tables the delete route clears inline — one short
@@ -549,9 +548,7 @@ const SQL_OPEN_SESSIONS = `SELECT s.*,
 FROM sessions s WHERE s.last_seen_at >= ?`;
 
 export function selectOpenSessions(db: Db, since: number): Array<SessionRow & { max_seq: number }> {
-  return stmt<SessionRow & { max_seq: number }>(db, SQL_OPEN_SESSIONS).all(since) as Array<
-    SessionRow & { max_seq: number }
-  >;
+  return stmt<SessionRow & { max_seq: number }>(db, SQL_OPEN_SESSIONS).all(since);
 }
 
 /**
@@ -575,7 +572,7 @@ export function selectLatestSession(
     siteId,
     visitorId,
     since,
-  ) as (SessionRow & { max_seq: number }) | undefined;
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -594,7 +591,7 @@ export function getSetting(db: Db, key: string): string | undefined {
 
 export function settingKeysWithPrefix(db: Db, prefix: string): string[] {
   const escaped = prefix.replace(/[%_\\]/g, '\\$&'); // a literal prefix, not a LIKE pattern
-  return stmt<string>(db, SQL_SETTING_KEYS).pluck().all(`${escaped}%`) as string[];
+  return stmt<string>(db, SQL_SETTING_KEYS).pluck().all(`${escaped}%`);
 }
 
 export function setSetting(db: Db, key: string, value: string): void {
@@ -634,7 +631,7 @@ ON CONFLICT (site_id, local_date) DO UPDATE SET count = count + excluded.count`;
     },
     /** Diagnostics (docs/04 § 5): per-site counters since a local date (inclusive). */
     list(db: Db, sinceLocalDate: string): DropCountRow[] {
-      return stmt<DropCountRow>(db, listSql).all(sinceLocalDate) as DropCountRow[];
+      return stmt<DropCountRow>(db, listSql).all(sinceLocalDate);
     },
   };
 }
@@ -669,7 +666,7 @@ const SQL_LIST_PROP_KEYS = `SELECT key, first_seen, last_seen, events, distinct_
 FROM prop_keys WHERE site_id = ? ORDER BY key`;
 
 export function listPropKeys(db: Db, siteId: number): PropKeyRow[] {
-  return stmt<PropKeyRow>(db, SQL_LIST_PROP_KEYS).all(siteId) as PropKeyRow[];
+  return stmt<PropKeyRow>(db, SQL_LIST_PROP_KEYS).all(siteId);
 }
 
 export interface PropDropRow {
@@ -682,7 +679,7 @@ const SQL_LIST_PROP_DROPS = `SELECT local_date, reason, count FROM prop_drops
 WHERE site_id = ? AND local_date >= ? ORDER BY local_date DESC, reason`;
 
 export function listPropDrops(db: Db, siteId: number, sinceLocalDate: string): PropDropRow[] {
-  return stmt<PropDropRow>(db, SQL_LIST_PROP_DROPS).all(siteId, sinceLocalDate) as PropDropRow[];
+  return stmt<PropDropRow>(db, SQL_LIST_PROP_DROPS).all(siteId, sinceLocalDate);
 }
 
 const SQL_DELETE_PROP_KEY = 'DELETE FROM prop_keys WHERE site_id = ? AND key = ?';
@@ -755,7 +752,7 @@ const SQL_COUNT_LIVE_SHARE_TOKENS =
   'SELECT COUNT(*) FROM share_tokens WHERE dashboard_id = ? AND revoked_at IS NULL';
 
 export function listDashboards(db: Db): DashboardListRow[] {
-  return stmt<DashboardListRow>(db, SQL_LIST_DASHBOARDS).all() as DashboardListRow[];
+  return stmt<DashboardListRow>(db, SQL_LIST_DASHBOARDS).all();
 }
 
 export function getDashboard(db: Db, id: number): DashboardRow | undefined {
@@ -852,7 +849,7 @@ WHERE id = ? RETURNING ${SEGMENT_COLUMNS}`;
 const SQL_DELETE_SEGMENT = 'DELETE FROM segments WHERE id = ?';
 
 export function listSegments(db: Db): SegmentRow[] {
-  return stmt<SegmentRow>(db, SQL_LIST_SEGMENTS).all() as SegmentRow[];
+  return stmt<SegmentRow>(db, SQL_LIST_SEGMENTS).all();
 }
 
 export function getSegment(db: Db, id: number): SegmentRow | undefined {
@@ -891,7 +888,6 @@ export interface DerivedMetricRow {
 
 const DERIVED_COLUMNS = 'id, name, expr, updated_at';
 const SQL_LIST_DERIVED = `SELECT ${DERIVED_COLUMNS} FROM derived_metrics ORDER BY id`;
-const SQL_GET_DERIVED = `SELECT ${DERIVED_COLUMNS} FROM derived_metrics WHERE id = ?`;
 const SQL_GET_DERIVED_BY_NAME = `SELECT ${DERIVED_COLUMNS} FROM derived_metrics WHERE name = ?`;
 const SQL_CREATE_DERIVED =
   'INSERT INTO derived_metrics (name, expr, created_at, updated_at) VALUES (?, ?, ?, ?)';
@@ -900,11 +896,7 @@ WHERE id = ? RETURNING ${DERIVED_COLUMNS}`;
 const SQL_DELETE_DERIVED = 'DELETE FROM derived_metrics WHERE id = ?';
 
 export function listDerivedMetrics(db: Db): DerivedMetricRow[] {
-  return stmt<DerivedMetricRow>(db, SQL_LIST_DERIVED).all() as DerivedMetricRow[];
-}
-
-export function getDerivedMetric(db: Db, id: number): DerivedMetricRow | undefined {
-  return stmt<DerivedMetricRow>(db, SQL_GET_DERIVED).get(id);
+  return stmt<DerivedMetricRow>(db, SQL_LIST_DERIVED).all();
 }
 
 export function getDerivedMetricByName(db: Db, name: string): DerivedMetricRow | undefined {
@@ -962,12 +954,12 @@ const SQL_INSERT_CAMPAIGN_ALIAS =
 
 /** Every alias row of every site — what the ingest cache loads whole (it is tiny). */
 export function listAllCampaignAliases(db: Db): CampaignAliasRow[] {
-  return stmt<CampaignAliasRow>(db, SQL_ALL_CAMPAIGN_ALIASES).all() as CampaignAliasRow[];
+  return stmt<CampaignAliasRow>(db, SQL_ALL_CAMPAIGN_ALIASES).all();
 }
 
 /** One site's alias rows (site 0 = install-wide). */
 export function listCampaignAliases(db: Db, siteId: number): CampaignAliasRow[] {
-  return stmt<CampaignAliasRow>(db, SQL_LIST_CAMPAIGN_ALIASES).all(siteId) as CampaignAliasRow[];
+  return stmt<CampaignAliasRow>(db, SQL_LIST_CAMPAIGN_ALIASES).all(siteId);
 }
 
 /** Full-list replace for one site — the PUT route's semantics. */
@@ -1024,7 +1016,7 @@ WHERE id = ? RETURNING ${CAMPAIGN_COLUMNS}`;
 const SQL_DELETE_CAMPAIGN = 'DELETE FROM campaigns WHERE id = ?';
 
 export function listCampaigns(db: Db, siteId: number): CampaignRow[] {
-  return stmt<CampaignRow>(db, SQL_LIST_CAMPAIGNS).all(siteId) as CampaignRow[];
+  return stmt<CampaignRow>(db, SQL_LIST_CAMPAIGNS).all(siteId);
 }
 
 export function getCampaign(db: Db, id: number): CampaignRow | undefined {
@@ -1103,7 +1095,7 @@ const SQL_UPDATE_GOAL = `UPDATE goals SET name = ?, filters = ?, value_expr = ?,
 const SQL_DELETE_GOAL = 'DELETE FROM goals WHERE id = ?';
 
 export function listGoals(db: Db, siteId: number): GoalRow[] {
-  return stmt<GoalRow>(db, SQL_LIST_GOALS).all(siteId) as GoalRow[];
+  return stmt<GoalRow>(db, SQL_LIST_GOALS).all(siteId);
 }
 
 export function getGoal(db: Db, id: number): GoalRow | undefined {
@@ -1183,9 +1175,9 @@ export function getAnnotation(db: Db, id: number): AnnotationRow | undefined {
 /** All annotations, or one site's plus the install-wide (NULL-site) ones. */
 export function listAnnotations(db: Db, siteId?: number): AnnotationRow[] {
   if (siteId === undefined) {
-    return stmt<AnnotationRow>(db, SQL_LIST_ANNOTATIONS).all() as AnnotationRow[];
+    return stmt<AnnotationRow>(db, SQL_LIST_ANNOTATIONS).all();
   }
-  return stmt<AnnotationRow>(db, SQL_LIST_SITE_ANNOTATIONS).all(siteId) as AnnotationRow[];
+  return stmt<AnnotationRow>(db, SQL_LIST_SITE_ANNOTATIONS).all(siteId);
 }
 
 export function createAnnotation(
@@ -1360,7 +1352,7 @@ export function getApiToken(db: Db, id: number): ApiTokenRow | undefined {
 }
 
 export function listApiTokens(db: Db): ApiTokenRow[] {
-  return stmt<ApiTokenRow>(db, SQL_LIST_API_TOKENS).all() as ApiTokenRow[];
+  return stmt<ApiTokenRow>(db, SQL_LIST_API_TOKENS).all();
 }
 
 /** Revokes a live token; false if unknown or already revoked. */
@@ -1410,7 +1402,7 @@ export function getViewerByEmail(db: Db, email: string): ViewerRow | undefined {
 }
 
 export function listViewers(db: Db): ViewerRow[] {
-  return stmt<ViewerRow>(db, SQL_LIST_VIEWERS).all() as ViewerRow[];
+  return stmt<ViewerRow>(db, SQL_LIST_VIEWERS).all();
 }
 
 export function insertViewer(
@@ -1556,7 +1548,7 @@ export function getUserByEmail(db: Db, email: string): UserRow | undefined {
 }
 
 export function listUsers(db: Db): UserRow[] {
-  return stmt<UserRow>(db, SQL_LIST_USERS).all() as UserRow[];
+  return stmt<UserRow>(db, SQL_LIST_USERS).all();
 }
 
 export function insertUser(db: Db, email: string, now: number): UserRow {
@@ -1594,11 +1586,9 @@ const SQL_CLEAR_USER_SITES = 'DELETE FROM user_sites WHERE user_id = ?';
 const SQL_REMOVE_SITE_FROM_USERS = 'DELETE FROM user_sites WHERE site_id = ?';
 
 export function listUserSites(db: Db, userId: number): number[] {
-  return (
-    stmt<{ site_id: number }>(db, SQL_LIST_USER_SITES).all(userId) as Array<{
-      site_id: number;
-    }>
-  ).map((row) => row.site_id);
+  return stmt<{ site_id: number }>(db, SQL_LIST_USER_SITES)
+    .all(userId)
+    .map((row) => row.site_id);
 }
 
 /** Ownership grows on site create: one row, in the creating transaction. */

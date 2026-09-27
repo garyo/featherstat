@@ -30,7 +30,7 @@ export interface TeeOptions {
   maxInFlight?: number;
 }
 
-export interface TeeStats {
+interface TeeStats {
   forwarded: number;
   dropped: number;
   failed: number;

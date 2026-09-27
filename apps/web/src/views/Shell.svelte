@@ -41,7 +41,7 @@ import RealtimeView from './RealtimeView.svelte';
 import SiteView from './SiteView.svelte';
 
 /**
- * The authenticated app (previously the whole of App.svelte): view state, the
+ * The authenticated app: view state, the
  * one SSE stream, the one query client, the site directory, and the header.
  * Mounted only in the `ready` auth phase, so its connections carry a session;
  * unmounting on logout closes them.

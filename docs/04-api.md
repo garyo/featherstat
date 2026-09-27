@@ -684,7 +684,9 @@ buckets rather than the top groups; the schema refuses that combination with a
     retention horizon refuses the whole query honestly.
 - **Click-to-filter falls out for free**: clicking a row in any breakdown adds
   a `filters` entry and re-issues the same batch.
-- **Caching**: response ETag = hash(max event rowid, schema version, the
+- **Caching**: response ETag = hash(`dataVersion` — `data_epoch`·2⁴⁰ + max
+  event rowid, so appends move it and every in-place history rewrite bumps the
+  epoch (CLAUDE.md invariant 10) — schema version, the
   engagement threshold (a code constant bounce depends on), canonicalized
   request body, resolved per-site windows *including their
   timezones and any rolling instants* — so a preset like `today` expires at
@@ -912,11 +914,14 @@ aliases, the prop registry, annotations, site-scoped dashboards with their
 share links, alert and ntfy rules naming the site, the `uid` opt-in and salt,
 and — when no live site is left in its timezone — that zone's day salts),
 sheds the site from its owners and from every token and viewer scope — a
-grant left naming no site is revoked — and enqueues the chunked, watermarked
-purge of the bulk rows (`jobs/site-purge.ts`: events, sessions, the bot and
-exclusion drop counters, every rollup table), which bumps the data epoch on
-completion. `routes/site-delete.test.ts` enumerates every `site_id` and
-`site_scope` column from the live schema and requires each to come out clean. The tombstoned row is never
+grant left naming no site is revoked — drops any timezone backfill or prop
+scrub still pending for it (the purge removes every row they would rewrite),
+and enqueues the chunked, watermarked purge of the bulk rows
+(`jobs/site-purge.ts`: events, sessions, the bot and exclusion drop counters,
+every rollup table), which bumps the data epoch on completion.
+`routes/site-delete.test.ts` enumerates every `site_id` and `site_scope` column
+from the live schema and requires each to come out clean, and no settings key
+to keep the id as a segment. The tombstoned row is never
 deleted: `sites.id` is a plain `INTEGER PRIMARY KEY`, so a removed row would
 let SQLite hand the id to the next site created, and anything still naming it
 would silently start naming the newcomer.

@@ -8,7 +8,7 @@ import { num } from './series.ts';
  * lands there. Slots are categorical palette positions assigned by rank.
  */
 
-export const MAX_SEGMENTS = 3;
+const MAX_SEGMENTS = 3;
 const OTHER = 'Other';
 
 export interface DeviceSegment {

@@ -9,8 +9,8 @@ code.
 
 ## Phase 0 — Bootstrap
 
-**WP0 · Repo.** Decide the name (front-runner: wakescope — claim the npm name
-and domains when decided). `git init` in this folder (docs move to `docs/` as
+**WP0 · Repo.** Name the project — **featherstat** (chosen 2026-07-28; package
+scope `@featherstat/*`). `git init` in this folder (docs move to `docs/` as
 already laid out), MIT LICENSE, README trimmed to the public-facing pitch.
 GitHub repo, public from day one — cheaper than a later "open-sourcing" pass,
 and it forces hygiene (no secrets, scrubbed fixtures) from the start.
@@ -53,9 +53,12 @@ every later WP runs against realistic data.*
 
 ## Phase 2 — Query engine (M0)
 
-**WP7 · Compiler + endpoint.** Query vocabulary → parameterized SQL with
-snapshot tests; `POST /api/query` batch execution in one read transaction;
-ETag = (site max rowid, schema version, body hash). *Acceptance: replay DB
+**WP7 · Compiler + endpoint.** Query vocabulary → parameterized SQL, tested by
+explicit assertions on the SQL text and bound parameters rather than snapshots
+(a snapshot passes whatever it first recorded; `compiler.test.ts` states what
+must hold); `POST /api/query` batch execution in one read transaction;
+ETag = (data version, schema version, body hash — docs/04 § 3 has the full
+list). *Acceptance: replay DB
 answers the full 01-context widget set < 50 ms on dev hardware; 304 path
 covered.*
 

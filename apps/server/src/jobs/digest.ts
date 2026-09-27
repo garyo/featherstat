@@ -71,7 +71,7 @@ export function runDigest(
 }
 
 /** 7 days vs the 7 before, all four dimensions, three movers each. */
-export function digestRequest(siteId: number): QueryRequest {
+function digestRequest(siteId: number): QueryRequest {
   return {
     site: siteId,
     range: { preset: '7d' },

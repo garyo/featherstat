@@ -37,6 +37,7 @@ import {
   type SourceFile,
   webSourceFiles,
 } from '../../apps/web/src/ownership.guard.ts';
+import { widgetIoBreaches } from '../../apps/web/src/widget-io.guard.ts';
 import { buildAll, bundleBreaches } from '../../packages/tracker/src/build.ts';
 import { responseSizeBreaches } from '../contract/response-size.guard.ts';
 import {
@@ -339,6 +340,16 @@ const markupOwnership = defineGuard<SourceFile[]>({
     'a second file grows the ranked-bar markup': (files) => {
       files.push({ name: 'widgets/Forked.svelte', source: '<div class="bar-row">…</div>' });
     },
+    // The markup written any other way a browser accepts still draws the row.
+    'a fork quotes the class in single quotes': (files) => {
+      files.push({ name: 'widgets/Forked.svelte', source: "<div class='cond-row'>…</div>" });
+    },
+    'a fork hides the class among others': (files) => {
+      files.push({ name: 'widgets/Forked.svelte', source: '<div class="x cond-row">…</div>' });
+    },
+    'a fork sets the class with a directive': (files) => {
+      files.push({ name: 'widgets/Forked.svelte', source: '<div class:cond-row={on}>…</div>' });
+    },
     'the shared rendering moves and nobody updates the table': (files) => {
       files.splice(
         files.findIndex((file) => file.name === 'widgets/FeedRows.svelte'),
@@ -348,6 +359,38 @@ const markupOwnership = defineGuard<SourceFile[]>({
     // A walk that returns nothing satisfies every "exactly these owners" check by
     // accident — the way this guard would die quietly rather than loudly.
     'the tree walk stops finding files': (files) => {
+      files.splice(0, files.length);
+    },
+  },
+});
+
+const widgetIo = defineGuard<SourceFile[]>({
+  id: 'widget-io',
+  binds: 'no widget fetches, holds a query or admin client, or opens a stream of its own',
+  source: 'apps/web/src/widget-io.guard.ts',
+  tier: 'cheap',
+  stage: () => webSourceFiles(),
+  holds: (files) => widgetIoBreaches(files).length === 0,
+  violations: {
+    'a widget fetches its own query': (files) => {
+      files.push({
+        name: 'widgets/Rogue.svelte',
+        source: "<script>const res = await fetch('/api/query');</script>",
+      });
+    },
+    'a widget takes the query client': (files) => {
+      files.push({
+        name: 'widgets/Rogue.svelte',
+        source: "<script>import type { QueryClient } from '../lib/api.ts';</script>",
+      });
+    },
+    'a widget opens its own stream': (files) => {
+      files.push({
+        name: 'widgets/nested/Rogue.svelte',
+        source: "<script>const live = new EventSource('/api/live');</script>",
+      });
+    },
+    'the tree walk stops finding widgets': (files) => {
       files.splice(0, files.length);
     },
   },
@@ -528,6 +571,7 @@ export const GUARDS: readonly Guard[] = [
   webBundles,
   trackerBundles,
   markupOwnership,
+  widgetIo,
   matomoCorpus,
   responseSize,
   epochDiscipline,

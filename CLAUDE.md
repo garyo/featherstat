@@ -85,28 +85,33 @@ list to actually hold in your head.
 - **10 · Every history rewrite bumps `data_epoch`.** `dataVersion` is
   `epoch·2⁴⁰ + MAX(events.id)`, so an in-place rewrite that skips the bump
   leaves every pre-rewrite ETag answering 304 forever. Current rewriters:
-  campaign backfill, referrer backfill (both including their post-backfill
+  campaign, referrer and timezone backfills (each including its post-backfill
   rollup rebuild), prop scrub, site purge, and reconcile's drift repair (bump
   conditional on having repaired — a clean nightly run costs the caches
-  nothing). **"Having repaired" is durable, not per-run**: both backfills set a
-  `:dirty` setting in the same transaction as the row they change and clear it
-  only after the bump, because a run that crashes mid-rewrite and resumes into
-  a remainder needing no change would otherwise skip the bump it owed.
-  `apps/server/test/guards/epoch.guard.ts` scans the job sources and objects
-  to a rewriter without the bump — or a new job that rewrites events/sessions
-  or rebuilds rollup days unregistered; the meta-guard proves the scan binds.
-  (Residue: a rewriter outside `src/jobs/` is outside the scan.)
+  nothing). **"Having repaired" is durable, not per-run**: the backfills set a
+  dirty setting in the same transaction as the row they change and clear it
+  only after the bump (`settleRewrite` in `jobs/rewrite.ts`), because a run
+  that crashes mid-rewrite and resumes into a remainder needing no change
+  would otherwise skip the bump it owed.
+  `apps/server/test/guards/epoch.guard.ts` scans every job source under
+  `src/jobs/` and objects to a rewriter without the bump — or a new job that
+  rewrites events/sessions or rebuilds rollup days unregistered; the
+  meta-guard proves the scan binds. (Residue: a rewriter outside `src/jobs/`
+  is outside the scan — today the Matomo importer, which bumps once its dirty
+  sites' rollups are rebuilt.)
 
 ### Memory — no guard, or only half of one
 
 - **1 · Widgets declare queries; views batch them.** One `/api/query` request
   per view state. Never per-widget fetching — that's the Matomo failure mode
-  this project exists to fix. *Guarded half*: `collectBatch` lives in
+  this project exists to fix. *Guarded*: `collectBatch` lives in
   `packages/shared`, so server and client cannot build different batches
   (`views/batch.test.ts`, `layout.test.ts`, and the batch invariants the
-  dashboard write path validates). *Unguarded half*: nothing stops a new widget
-  importing a fetch. Widgets read `env` and nothing else; wanting a query client
-  inside one means the view is wrong.
+  dashboard write path validates), and `apps/web/src/widget-io.test.ts` refuses
+  any file under `widgets/` that calls `fetch`, imports `lib/api`, `lib/admin`
+  or `lib/live`, or opens a stream. Widgets read `env` and nothing else; wanting
+  a query client inside one means the view is wrong. *Unguarded*: that a view
+  sends one request per state — nothing stops a view splitting its batch.
 - **3 · Raw IP is transient.** Used for the visitor hash + GeoIP lookup in
   memory, then discarded. *Guarded half*: no column holds one, and
   `realtime/hub.test.ts` proves nothing IP-shaped reaches the wire. *Unguarded
@@ -135,12 +140,12 @@ list to actually hold in your head.
   and keeps the stream readers out of the batch, and the corollary — **one
   rendering per thing rendered** — is now a table in
   `apps/web/src/ownership.test.ts` (markup → the one file allowed to own it).
-  Extract and decorate; never teach a second file the markup. *Unguarded*: that
-  a new drawing file lands in `widgets/` and reaches `registry.ts` at all —
-  `REGISTRY` is a `Partial<Record<VizType, …>>`, so an unregistered viz
-  type-checks. The Journeys sankey and flows table are the standing exception
-  (their edge-click and depth controls are coupled) — open work, not licence for
-  the next one.
+  Extract and decorate; never teach a second file the markup. Registration is
+  typed: `registry.ts` must cover every `VizType` not on its `PLANNED` list, so
+  an unregistered viz fails the type-check. *Unguarded*: that a new drawing file
+  lands in `widgets/` and becomes a `VizType` at all. The Journeys sankey and
+  flows table are the standing exception (their edge-click and depth controls
+  are coupled) — open work, not licence for the next one.
 
 ## Conventions
 

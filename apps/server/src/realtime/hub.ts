@@ -31,9 +31,9 @@ import { VisitorAliaser } from './alias.ts';
 
 /**
  * Hits retained for `Last-Event-ID` resume; a slower reconnect gets what is
- * left. Sized in HITS, and a hit is now every heartbeat too — an engaged reader
- * spends four a minute — so this is 4× what it held when pings were dropped, to
- * reach as far back in TIME as it did before. The feed's whole value is how far
+ * left. Sized in HITS, and every heartbeat is a hit — an engaged reader spends
+ * four a minute — so the capacity is set by how far back in TIME the feed should
+ * reach, not by how many actions it holds. The feed's whole value is how far
  * back you can look; paying for that in memory is the cheap side of the trade.
  */
 const RING_CAPACITY = 2_000;
@@ -73,11 +73,10 @@ export class RealtimeHub {
    * and the client collapses a page's run of them into one line whose span is
    * the time on that page.
    *
-   * Pings used to be dropped here as noise. They are what MEASURES a page, so
-   * dropping them meant the feed could only ever show a figure computed
-   * somewhere else — which is how it came to show one thing live and another
-   * after a restart. Cheaper to send the heartbeat than to derive its meaning
-   * twice.
+   * Pings are not noise here: they are what MEASURES a page. Without them the
+   * feed could only show a figure computed somewhere else, which the live path
+   * and a restart's seeding cannot agree on. Cheaper to send the heartbeat than
+   * to derive its meaning twice.
    *
    * "Active now" counts the `presence` population — every stored hit — while
    * the `visitors` KPI counts `actions`. That difference is deliberate and not
@@ -168,17 +167,16 @@ export class RealtimeHub {
 
   /**
    * Boot seeding of the feed itself: the newest stored events refill the ring,
-   * so a restart (every deploy) no longer blanks the realtime view. Same
+   * so a restart (every deploy) does not blank the realtime view. Same
    * projection and aliaser as the live path — within a UTC day, seeded hits
    * wear the same names live ones did. Pushed oldest-first so ring ids stay
    * monotonic; pre-restart resume cursors keep the documented "gets what's
    * left" semantics (docs/04 § 4).
    *
-   * "Same projection" is now literally true, and that is the point. This path
-   * used to substitute the visit's TOTAL engaged time for the per-hit figure it
-   * could not reconstruct, so a row meant one thing live and another after a
-   * deploy — invisible until someone restarted the server and read the feed. A
-   * row carries nothing derived any more, so there is nothing here to diverge.
+   * "Same projection" is literal, and that is the point: a row carries nothing
+   * derived, so there is no per-hit figure this path would have to reconstruct
+   * from storage, and nothing to diverge between a row seen live and the same
+   * row after a deploy.
    */
   seedRecent(db: Db, limit = SEED_RECENT_LIMIT): void {
     const rows = stmt<EventRow>(db, SQL_RECENT_EVENTS).all(limit);
