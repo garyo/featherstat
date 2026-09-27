@@ -15,6 +15,7 @@ import {
   canManageSite,
   canReadSite,
   isManager,
+  narrowScope,
   parseSiteScope,
   readableSites,
   serializeSiteScope,
@@ -122,6 +123,14 @@ describe('scope helpers', () => {
     for (const garbage of ['', 'null', '{"a":1}', '[1,"2"]', '[0]', '[-3]', 'not json']) {
       expect(parseSiteScope(garbage)).toEqual(new Set());
     }
+  });
+
+  it("narrows a grant to its minter's sites, and leaves one that fits alone", () => {
+    const owned = new Set([2, 3]);
+    expect(narrowScope(new Set([2]), owned)).toBeUndefined();
+    expect(narrowScope(new Set([1, 2]), owned)).toEqual([2]);
+    expect(narrowScope(new Set([1]), owned)).toEqual([]);
+    expect(narrowScope('all', owned)).toEqual([2, 3]);
   });
 
   it('scopes reads; admin reads everything', () => {

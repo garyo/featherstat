@@ -1246,6 +1246,7 @@ const SQL_LIST_API_TOKENS = `SELECT ${API_TOKEN_COLUMNS} FROM api_tokens ORDER B
 const SQL_REVOKE_API_TOKEN =
   'UPDATE api_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL';
 const SQL_TOUCH_API_TOKEN = 'UPDATE api_tokens SET last_used_at = ? WHERE id = ?';
+const SQL_SET_API_TOKEN_SCOPE = 'UPDATE api_tokens SET site_scope = ? WHERE id = ?';
 
 export function insertApiToken(
   db: Db,
@@ -1282,6 +1283,12 @@ export function touchApiToken(db: Db, id: number, now: number): void {
   stmt(db, SQL_TOUCH_API_TOKEN).run(now, id);
 }
 
+/** Narrows a standing token to its minter's current sites (routes/users.ts). */
+export function setApiTokenScope(db: Db, id: number, siteScope: string): void {
+  assertWritable(db);
+  stmt(db, SQL_SET_API_TOKEN_SCOPE).run(siteScope, id);
+}
+
 export interface ViewerRow {
   id: number;
   email: string;
@@ -1301,6 +1308,7 @@ const SQL_INSERT_VIEWER =
 // Re-inviting is a decision to restore access, so it clears any revocation.
 const SQL_REINVITE_VIEWER = `UPDATE viewers SET site_scope = ?, revoked_at = NULL WHERE id = ? RETURNING ${VIEWER_COLUMNS}`;
 const SQL_REVOKE_VIEWER = 'UPDATE viewers SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL';
+const SQL_SET_VIEWER_SCOPE = 'UPDATE viewers SET site_scope = ? WHERE id = ?';
 
 export function getViewer(db: Db, id: number): ViewerRow | undefined {
   return stmt<ViewerRow>(db, SQL_GET_VIEWER).get(id);
@@ -1347,6 +1355,12 @@ export function reinviteViewer(db: Db, id: number, siteScope: string): ViewerRow
 export function revokeViewer(db: Db, id: number, now: number): boolean {
   assertWritable(db);
   return stmt(db, SQL_REVOKE_VIEWER).run(now, id).changes > 0;
+}
+
+/** Narrows a standing viewer to its inviter's current sites (routes/users.ts). */
+export function setViewerScope(db: Db, id: number, siteScope: string): void {
+  assertWritable(db);
+  stmt(db, SQL_SET_VIEWER_SCOPE).run(siteScope, id);
 }
 
 export interface MagicLinkRow {

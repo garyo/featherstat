@@ -939,8 +939,9 @@ whose claim path `/welcome/<token>` appears exactly once in the response;
 `POST /api/admin/users/:id/invite` re-mints, which doubles as a password
 reset (the old password works until the new link is claimed);
 `PATCH /api/admin/users/:id {sites}` replaces the assignment;
-`DELETE /api/admin/users/:id` disables — sessions and outstanding invites die
-with it. `POST /claim/:token {password}` (public, rate-limited like
+`DELETE /api/admin/users/:id` disables — sessions, outstanding invites and
+every viewer and token the user minted die with it (a re-invite restores the
+account, not those grants). `POST /claim/:token {password}` (public, rate-limited like
 `/invite`; all failures one identical 410) consumes the link, sets the user's
 first password and signs them in. From then on `POST /api/admin/login` with
 `{email, password}` issues a user session — email absent still means the
@@ -950,8 +951,12 @@ names no emails. User sessions share the admin's fixed 14-day TTL (they can
 log back in). `GET /api/admin/me` answers `principal: "user"` plus `email`.
 A user's viewer/token mints must fit inside their own sites (`'all'` or any
 foreign site is a 400), and list/revoke see only their own mints
-(`created_by_user_id`); grants stay fixed at mint — reassigning a site does
-not shrink a standing viewer or token scope.
+(`created_by_user_id`). A grant never outlasts its minter's power: a `PATCH`
+that takes sites away narrows each of the user's standing viewers and tokens
+to the sites they still own, in the same transaction, and revokes one left
+with none. Share links are deliberately not in that set — a link belongs to
+its dashboard, not to whoever minted it, so it survives the minter and is
+revoked by whoever manages the dashboard's site now.
 
 First-run setup (`POST /api/admin/setup`) additionally requires the one-time
 **setup token** the server prints to its log at first boot: between `docker
