@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AdminError, createAdminClient, OFFLINE_STATUS } from './admin.ts';
+import { UNREADABLE_ANSWER } from './api.ts';
 
 interface Call {
   input: string;
@@ -66,6 +67,11 @@ describe('createAdminClient', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it('refuses a session probe it cannot read, rather than trusting it', async () => {
+    const { admin } = client(() => json(200, { authenticated: 'yes' }));
+    await expect(admin.me()).rejects.toThrow(UNREADABLE_ANSWER);
   });
 
   it('PATCHes site updates to the id path', async () => {

@@ -759,24 +759,23 @@ export const CSRF_COOKIE = '__Host-csrf';
 export const CSRF_HEADER = 'x-csrf-token';
 
 /** `GET /api/admin/me` — the auth bootstrap: which screen the UI should show. */
-export interface AdminMe {
-  authenticated: boolean;
+export const AdminMeSchema = z.object({
+  authenticated: z.boolean(),
   /** No password configured yet — the UI may only offer first-run setup. */
-  needsSetup: boolean;
+  needsSetup: z.boolean(),
   /** Present when authenticated: the token mutations echo as `CSRF_HEADER`. */
-  csrf?: string;
+  csrf: z.string().optional(),
   /** Present when authenticated: which kind of session this is, so the SPA
    * can hide the admin surface from a viewer instead of 403-ing into it. */
-  principal?: 'admin' | 'user' | 'viewer';
+  principal: z.enum(['admin', 'user', 'viewer']).optional(),
   /** Present for a user session: who is signed in. */
-  email?: string;
-}
+  email: z.string().optional(),
+});
+export type AdminMe = z.infer<typeof AdminMeSchema>;
 
 /** Login/setup success: the session rides in cookies, the CSRF token in the body. */
-export interface AdminSessionGrant {
-  ok: true;
-  csrf: string;
-}
+export const AdminSessionGrantSchema = z.object({ ok: z.literal(true), csrf: z.string() });
+export type AdminSessionGrant = z.infer<typeof AdminSessionGrantSchema>;
 
 export interface AdminBotDrops {
   siteId: number;

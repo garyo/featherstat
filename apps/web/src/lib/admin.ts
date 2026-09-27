@@ -1,20 +1,24 @@
 import {
   type AdminDiagnostics,
   type AdminMe,
-  type AdminSessionGrant,
+  AdminMeSchema,
+  AdminSessionGrantSchema,
   type AdminSiteCreate,
   type AdminSitePatch,
   CSRF_COOKIE,
   CSRF_HEADER,
   type Dashboard,
   type DashboardDetail,
+  DashboardDetailSchema,
   type DashboardInfo,
+  DashboardInfoSchema,
   type ExclusionRule,
   type ExclusionState,
   type NtfySettingsInput,
   type NtfySettingsView,
   type SiteInfo,
 } from '@featherstat/shared';
+import { UNREADABLE_ANSWER } from './api.ts';
 
 /**
  * The admin API client (docs/04 § 5). The session rides in HttpOnly cookies;
@@ -50,6 +54,18 @@ export class AdminError extends Error {
     super(message);
     this.name = 'AdminError';
   }
+}
+
+/** What a response body is checked against — any zod schema from `@featherstat/shared`. */
+export interface ResponseSchema<T> {
+  safeParse(value: unknown): { success: true; data: T } | { success: false };
+}
+
+export interface CallInit<T> {
+  method?: string;
+  body?: unknown;
+  /** Checks the body; without one it is trusted as `T`. */
+  schema?: ResponseSchema<T>;
 }
 
 export interface AdminClientOptions {
@@ -94,7 +110,7 @@ export interface AdminClient {
    * so forty admin-object methods need not ride the entry chunk this module
    * is part of.
    */
-  call<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T>;
+  call<T>(path: string, init?: CallInit<T>): Promise<T>;
   ntfySettings(): Promise<NtfySettingsView>;
   saveNtfySettings(settings: NtfySettingsInput): Promise<NtfySettingsView>;
   /** The off switch: forgets endpoint, token and rules (a PUT cannot express it). */
@@ -109,7 +125,7 @@ export function createAdminClient(options: AdminClientOptions = {}): AdminClient
 
   async function call<T>(
     path: string,
-    init: { method?: string; body?: unknown; authenticated?: boolean } = {},
+    init: CallInit<T> & { authenticated?: boolean } = {},
   ): Promise<T> {
     const method = init.method ?? 'GET';
     const headers: Record<string, string> = {};
@@ -133,28 +149,34 @@ export function createAdminClient(options: AdminClientOptions = {}): AdminClient
       const failure = await errorBody(response);
       throw new AdminError(response.status, failure.message, failure.issues);
     }
-    return (await response.json()) as T;
+    const body: unknown = await response.json();
+    if (init.schema === undefined) return body as T;
+    const parsed = init.schema.safeParse(body);
+    if (!parsed.success) throw new AdminError(response.status, UNREADABLE_ANSWER);
+    return parsed.data;
   }
 
   return {
     async me() {
-      const me = await call<AdminMe>('/api/admin/me', { authenticated: false });
+      const me = await call('/api/admin/me', { authenticated: false, schema: AdminMeSchema });
       csrf = me.csrf ?? csrf;
       return me;
     },
     async setup(password, setupToken) {
-      const grant = await call<AdminSessionGrant>('/api/admin/setup', {
+      const grant = await call('/api/admin/setup', {
         method: 'POST',
         body: { password, setupToken },
         authenticated: false,
+        schema: AdminSessionGrantSchema,
       });
       csrf = grant.csrf;
     },
     async login(password, email) {
-      const grant = await call<AdminSessionGrant>('/api/admin/login', {
+      const grant = await call('/api/admin/login', {
         method: 'POST',
         body: email === undefined || email === '' ? { password } : { password, email },
         authenticated: false,
+        schema: AdminSessionGrantSchema,
       });
       csrf = grant.csrf;
     },
@@ -173,22 +195,31 @@ export function createAdminClient(options: AdminClientOptions = {}): AdminClient
     diagnostics: () => call('/api/admin/diagnostics'),
     exclusions: () => call('/api/admin/exclusions'),
     saveExclusions: (rules) => call('/api/admin/exclusions', { method: 'PUT', body: { rules } }),
-    listDashboards: () => call('/api/admin/dashboards'),
-    getDashboard: (id) => call(`/api/admin/dashboards/${id}`),
+    listDashboards: () => call('/api/admin/dashboards', { schema: DashboardInfoSchema.array() }),
+    getDashboard: (id) => call(`/api/admin/dashboards/${id}`, { schema: DashboardDetailSchema }),
     createDashboard: (layout, template) =>
       call(
         template === undefined
           ? '/api/admin/dashboards'
           : `/api/admin/dashboards?template=${encodeURIComponent(template)}`,
-        { method: 'POST', body: layout },
+        { method: 'POST', body: layout, schema: DashboardDetailSchema },
       ),
     updateDashboard: (id, layout) =>
-      call(`/api/admin/dashboards/${id}`, { method: 'PUT', body: layout }),
+      call(`/api/admin/dashboards/${id}`, {
+        method: 'PUT',
+        body: layout,
+        schema: DashboardDetailSchema,
+      }),
     async deleteDashboard(id) {
       await call(`/api/admin/dashboards/${id}`, { method: 'DELETE' });
     },
-    duplicateDashboard: (id) => call(`/api/admin/dashboards/${id}/duplicate`, { method: 'POST' }),
-    resetDashboard: (id) => call(`/api/admin/dashboards/${id}/reset`, { method: 'POST' }),
+    duplicateDashboard: (id) =>
+      call(`/api/admin/dashboards/${id}/duplicate`, {
+        method: 'POST',
+        schema: DashboardDetailSchema,
+      }),
+    resetDashboard: (id) =>
+      call(`/api/admin/dashboards/${id}/reset`, { method: 'POST', schema: DashboardDetailSchema }),
     createShareLink: (dashboardId) =>
       call(`/api/admin/dashboards/${dashboardId}/share`, { method: 'POST' }),
     revokeShareLinks: (dashboardId) =>
