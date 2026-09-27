@@ -192,11 +192,19 @@ function buildStatement(
 
   const where: string[] = [];
   // The dimension-table statements read one rolled group's rows: the query's
-  // rolled dimension, or the undimensioned dim_id 0 totals. A server constant,
-  // bound anyway (invariant 9's posture).
+  // rolled dimension (a server constant, bound anyway — invariant 9's
+  // posture), or the undimensioned totals. Those are written as the literal
+  // the partial covering index `…_total` is defined over (migration 105):
+  // SQLite chooses a partial index only when the query implies its WHERE, and
+  // a bound value implies it only through a STAT4 re-prepare — a plan this
+  // hot should not depend on how the library was compiled.
   if (source !== 'rollup_traffic_hour') {
-    where.push(`${ALIAS}.dim_id = ?`);
-    params.push(rolledDim === undefined ? NO_DIM_ID : dimIdOf(rolledDim));
+    if (rolledDim === undefined) {
+      where.push(`${ALIAS}.dim_id = ${NO_DIM_ID}`);
+    } else {
+      where.push(`${ALIAS}.dim_id = ?`);
+      params.push(dimIdOf(rolledDim));
+    }
   }
   for (const node of filters) where.push(filterNodeSql(node, source, rolledDim, params));
 

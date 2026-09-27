@@ -607,7 +607,12 @@ The tables (see `db/migrations/100-v2-init.ts`, the authoritative DDL):
   included) so the read path emits exactly the groups a raw `GROUP BY` over
   the events table would — a key only heartbeats touched still gets its
   zero-valued row; the metrics are additive event counts over non-ping rows,
-  plus `visitors` / `sessions_touched` — **exact** per-day distincts.
+  plus `visitors` / `sessions_touched` — **exact** per-day distincts. The key
+  leads with `(site_id, local_date)` for the write path; the `dim_id 0` totals
+  every KPI tile and time series reads also sit in a partial covering index
+  (`ix_…_total`, both EAV tables), so those reads never walk the other
+  dimensions' rows. Per-dimension reads stay on the key: an index serving them
+  must carry the counters every flush rewrites (migration 105 has the numbers).
 - `rollup_sessions_day` — day grain × session-capable dimension, keyed by the
   date the session **started**. Every column is an additive numerator or
   denominator (`visits`, `measured_sessions`, `engaged_ms`, `bounced`,
