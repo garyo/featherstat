@@ -23,4 +23,12 @@ import { it } from 'vitest';
  * installed reaches main unchallenged. Detecting one in CI needs a baseline
  * calibrated to CI's own hardware, not a wider number here.
  */
-export const itWhereCalibrated = it.skipIf(process.env.CI !== undefined);
+export const itWhereCalibrated = it.skipIf(onCi());
+
+/**
+ * `$CI` set and non-empty — the same test `scripts/ci.sh` makes (`-n "${CI:-}"`)
+ * before skipping the bench, so `CI=` cannot skip one half and run the other.
+ */
+function onCi(): boolean {
+  return (process.env.CI ?? '') !== '';
+}

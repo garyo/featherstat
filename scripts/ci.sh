@@ -64,7 +64,8 @@ gate 'test' bun run test
 # where they were calibrated. Same call as `itWhereCalibrated`
 # (apps/server/test/replay/calibrated.ts), which sits out the same two in-test
 # wall-clock assertions. The skip is printed, never silent: a gate that vanishes
-# quietly is one nobody notices has stopped running.
+# quietly is one nobody notices has stopped running. "Under $CI" means set and
+# non-empty, here and in calibrated.ts alike.
 if [ -n "${CI:-}" ]; then
   printf '\n%s━━ bench %s(skipped: hardware-calibrated, runs in the pre-push hook)%s\n' \
     "$bold" "$dim" "$reset"
