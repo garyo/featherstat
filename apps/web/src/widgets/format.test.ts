@@ -8,6 +8,7 @@ import {
   formatDuration,
   METRIC_LABELS,
   windowLabel,
+  zoneLabel,
 } from './format.ts';
 
 describe('numbers (docs/05 § Numbers)', () => {
@@ -74,6 +75,32 @@ describe('windowLabel', () => {
   it('is undefined before the first response, so the caller words its own placeholder', () => {
     expect(windowLabel(undefined)).toBeUndefined();
     expect(windowLabel([])).toBeUndefined();
+  });
+});
+
+describe('zoneLabel', () => {
+  const window = (siteId: number, timezone: string): SiteWindow => ({
+    siteId,
+    timezone,
+    from: '2026-07-01',
+    to: '2026-07-30',
+  });
+
+  it('names the one clock the hours on screen keep', () => {
+    expect(zoneLabel([window(1, 'America/New_York')])).toBe('New York time');
+    expect(zoneLabel([window(1, 'America/Argentina/Buenos_Aires')])).toBe('Buenos Aires time');
+    expect(zoneLabel([window(1, 'UTC')])).toBe('UTC');
+  });
+
+  it('says each site keeps its own when a batch spans zones', () => {
+    expect(zoneLabel([window(1, 'Europe/Paris'), window(2, 'Pacific/Auckland')])).toBe(
+      "each site's local time",
+    );
+    expect(zoneLabel([window(1, 'Europe/Paris'), window(2, 'Europe/Paris')])).toBe('Paris time');
+  });
+
+  it('is undefined before the first response', () => {
+    expect(zoneLabel(undefined)).toBeUndefined();
   });
 });
 

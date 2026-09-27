@@ -17,7 +17,7 @@ import {
   type ViewRange,
 } from '../lib/state.ts';
 import { dashboardEnv } from '../widgets/env.ts';
-import { windowLabel } from '../widgets/format.ts';
+import { windowLabel, zoneLabel } from '../widgets/format.ts';
 import type { AppEnv } from '../widgets/types.ts';
 import { createBatchRunner } from './batch.svelte.ts';
 import {
@@ -122,12 +122,13 @@ const env = $derived(
   }),
 );
 const span = $derived(windowLabel(runner.response?.meta.windows));
+const zone = $derived(zoneLabel(runner.response?.meta.windows));
 const note = $derived.by(() => {
   if (runner.error !== undefined && runner.response !== undefined) {
     return failureNote(runner.stale, range, held);
   }
   const compared = compareNote(held, cmp) ?? 'no comparison';
-  return span === undefined ? compared : `${span} · ${compared}`;
+  return span === undefined ? compared : `${span} · ${zone} · ${compared}`;
 });
 </script>
 

@@ -24,7 +24,7 @@ import {
   type ViewRange,
 } from '../lib/state.ts';
 import { dashboardEnv } from '../widgets/env.ts';
-import { windowLabel } from '../widgets/format.ts';
+import { windowLabel, zoneLabel } from '../widgets/format.ts';
 import type { AppEnv } from '../widgets/types.ts';
 import { createBatchRunner } from './batch.svelte.ts';
 import {
@@ -194,6 +194,7 @@ const held = $derived(heldRange(runner.held, range));
  * re-runs on `dayKey`). The browser resolves no presets.
  */
 const span = $derived(windowLabel(runner.response?.meta.windows));
+const zone = $derived(zoneLabel(runner.response?.meta.windows));
 /**
  * ONE environment for this page, handed to the dashboard AND to the editor's
  * preview — the preview used to be assembled from a shorter list of props, so
@@ -218,7 +219,7 @@ const note = $derived.by(() => {
   }
   const compared = compareNote(held, cmp) ?? 'no comparison';
   if (span === undefined) return compared.charAt(0).toUpperCase() + compared.slice(1);
-  return `${span} · ${compared}`;
+  return `${span} · ${zone} · ${compared}`;
 });
 </script>
 

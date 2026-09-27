@@ -20,6 +20,7 @@ import {
   type ViewRange,
 } from '../lib/state.ts';
 import { dashboardEnv } from '../widgets/env.ts';
+import { windowLabel, zoneLabel } from '../widgets/format.ts';
 import type { AppEnv } from '../widgets/types.ts';
 import { createBatchRunner } from './batch.svelte.ts';
 import { collectBatch, hourlyWhenIntraday, wantsAnnotations } from './batch.ts';
@@ -153,7 +154,10 @@ const note = $derived.by(() => {
     return failureNote(runner.stale, range, held);
   }
   const compared = compareNote(held, cmp) ?? 'no comparison';
-  return `${compared} · active-now is live`;
+  const windows = runner.response?.meta.windows;
+  const span = windowLabel(windows);
+  if (span === undefined) return `${compared} · active-now is live`;
+  return `${span} · ${zoneLabel(windows)} · ${compared} · active-now is live`;
 });
 </script>
 

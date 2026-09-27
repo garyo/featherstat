@@ -156,6 +156,20 @@ export function windowLabel(windows: readonly SiteWindow[] | undefined): string 
 }
 
 /**
+ * Whose clock the hours on screen keep (`New York time`). Buckets, heatmap
+ * hours and "today" are all in each site's own zone, which a bare `14:00`
+ * never says. Several zones across one batch have no single clock to name.
+ */
+export function zoneLabel(windows: readonly SiteWindow[] | undefined): string | undefined {
+  const zones = new Set((windows ?? []).map((window) => window.timezone));
+  if (zones.size === 0) return undefined;
+  if (zones.size > 1) return "each site's local time";
+  const [zone = 'UTC'] = zones;
+  const place = zone.slice(zone.lastIndexOf('/') + 1).replaceAll('_', ' ');
+  return zone === 'UTC' ? 'UTC' : `${place} time`;
+}
+
+/**
  * A duration worth printing. Under a second there is nothing to say and `0s`
  * reads as a bug, so the segment is dropped instead — the same rule the visitor
  * tally has always applied to its own figure.
