@@ -194,6 +194,20 @@ describe('events and links', () => {
     });
   });
 
+  it('records a middle click as an outlink, and ignores a right click', () => {
+    start();
+    const link = document.createElement('a');
+    link.href = 'https://github.com/garyo/pcons';
+    document.body.append(link);
+    link.dispatchEvent(new MouseEvent('auxclick', { bubbles: true, button: 2 }));
+    expect(sent()).toHaveLength(1);
+    link.dispatchEvent(new MouseEvent('auxclick', { bubbles: true, button: 1 }));
+    expect(sent()[1]).toMatchObject({
+      type: 'outlink',
+      targetUrl: 'https://github.com/garyo/pcons',
+    });
+  });
+
   it('sends custom props on the wire untouched, for track() and page() alike', () => {
     start();
     track('signup', { category: 'account', props: { plan: 'pro', seats: 3, beta: true } });

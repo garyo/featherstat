@@ -1,6 +1,6 @@
 import type { HitType } from '@featherstat/shared';
 import { isExitPingWorthwhile } from '../exit.ts';
-import { classifyLink } from '../links.ts';
+import { classifyLink, isLinkActivation } from '../links.ts';
 import { whenActivated } from '../prerender.ts';
 import { isRepeatView } from '../repeat.ts';
 import { documentHeight, READ_THRESHOLD_PCT, scrollDepthPct } from '../scroll.ts';
@@ -178,6 +178,7 @@ export function init(config: TrackerConfig): () => void {
     if (location.href !== runtime?.url) page();
   };
   const onClick = (event: Event): void => {
+    if (!isLinkActivation(event)) return;
     const anchor = (event.target as Element | null)?.closest?.('a');
     if (!anchor?.href) return;
     const target = classifyLink(anchor.href, location.hostname, anchor.hasAttribute('download'));
@@ -205,7 +206,10 @@ export function init(config: TrackerConfig): () => void {
   document.addEventListener('visibilitychange', onVisibility);
   window.addEventListener('pagehide', exitPing);
   for (const event of INPUT_EVENTS) document.addEventListener(event, onInput, INPUT_OPTIONS);
-  if (config.autoLinks !== false) document.addEventListener('click', onClick, true);
+  if (config.autoLinks !== false) {
+    document.addEventListener('click', onClick, true);
+    document.addEventListener('auxclick', onClick, true);
+  }
   if (autoPageviews) window.addEventListener('popstate', onNavigate);
   const unhook = autoPageviews ? hookHistory(onNavigate) : undefined;
   /** Drops a first page view still waiting on activation (prerender.ts). */
@@ -228,6 +232,7 @@ export function init(config: TrackerConfig): () => void {
       window.removeEventListener('pagehide', exitPing);
       for (const event of INPUT_EVENTS) document.removeEventListener(event, onInput, INPUT_OPTIONS);
       document.removeEventListener('click', onClick, true);
+      document.removeEventListener('auxclick', onClick, true);
       window.removeEventListener('popstate', onNavigate);
       unhook?.();
       unwait?.();

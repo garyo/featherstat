@@ -197,7 +197,9 @@ Props are a native-collector feature only (§ 2).
 
 - `packages/tracker` ships `tracker.js` (< 2 KB gz, ESM):
   `init({site, endpoint})`, auto pageviews with a `history` hook (opt-out),
-  auto outlink/download, focus-gated engagement pings,
+  auto outlink/download (a primary or middle click — both trackers ignore a
+  right click, which opens a menu rather than the link), focus-gated
+  engagement pings,
   `track(action, {category, name, value, props})`,
   `page(url?, title?, props?)` — auto pageviews send no props —
   and scroll depth (below).

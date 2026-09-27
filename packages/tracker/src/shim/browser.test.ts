@@ -352,6 +352,20 @@ describe('link tracking', () => {
     expect(sent()).toHaveLength(1);
   });
 
+  it('records a middle click, which opens the link in a new tab', () => {
+    anchor('https://github.com/garyo/pcons').dispatchEvent(
+      new MouseEvent('auxclick', { bubbles: true, button: 1 }),
+    );
+    expect(sent()[1]?.get('link')).toBe('https://github.com/garyo/pcons');
+  });
+
+  it('ignores a right click: a context menu is not leaving', () => {
+    anchor('https://github.com/garyo/pcons').dispatchEvent(
+      new MouseEvent('auxclick', { bubbles: true, button: 2 }),
+    );
+    expect(sent()).toHaveLength(1);
+  });
+
   it('finds the anchor from a nested click target', () => {
     const link = anchor('https://github.com/garyo/pcons');
     const span = document.createElement('span');
