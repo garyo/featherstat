@@ -8,7 +8,7 @@ import {
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { Auth, AuthEnv } from '../auth/auth.ts';
-import { canManageSite } from '../auth/principal.ts';
+import { canManageSite, canReadSite, type Principal } from '../auth/principal.ts';
 import {
   type CampaignRow,
   createCampaign,
@@ -34,9 +34,10 @@ import { tryWrite } from './segments.ts';
  *   ingest cache and enqueues the chunked backfill in the SAME transaction
  *   as the rows, then kicks the job.
  * - Campaigns registry CRUD under `/api/admin/campaigns`, plus
- *   `GET /api/campaigns?site=` for any principal behind the gate — the
- *   `campaign_status` dimension reads the registry at query time, so a client
- *   offering the dimension needs the list the same way it needs segments.
+ *   `GET /api/campaigns?site=` for any principal behind the gate that can
+ *   read the site — the `campaign_status` dimension reads the registry at
+ *   query time, so a client offering the dimension needs the list the same
+ *   way it needs segments.
  */
 
 /** 200 aliases × a few hundred bytes fits many times over. */
@@ -60,6 +61,8 @@ export function createCampaignRoutes(
     c.res.headers.set('Cache-Control', 'no-store');
   });
   app.use('/api/admin/*', auth.gate);
+  // The read list scopes on the principal, so it carries its own gate too.
+  app.use('/api/campaigns', auth.gate);
   app.use('/api/admin/*', auth.csrfGuard);
 
   // --- Aliases -------------------------------------------------------------
@@ -114,17 +117,21 @@ export function createCampaignRoutes(
       ? undefined
       : c.json({ error: `unknown site ${siteId}` }, 404);
 
-  const list = (c: Context): Response => {
-    const siteId = Number(c.req.query('site'));
-    if (!Number.isInteger(siteId) || siteId <= 0) return c.json({ error: 'invalid site id' }, 400);
-    return c.json(listCampaigns(db, siteId).map(toInfo));
-  };
-  app.get('/api/campaigns', list);
-  app.get('/api/admin/campaigns', (c) => {
-    const siteId = Number(c.req.query('site'));
-    if (!Number.isInteger(siteId) || siteId <= 0) return c.json({ error: 'invalid site id' }, 400);
-    return deniedSite(c, siteId) ?? list(c);
-  });
+  /** One site's list where `allowed` holds; elsewhere exactly like nonexistent. */
+  const listWhere =
+    (allowed: (principal: Principal, siteId: number) => boolean) =>
+    (c: Context): Response => {
+      const siteId = Number(c.req.query('site'));
+      if (!Number.isInteger(siteId) || siteId <= 0) {
+        return c.json({ error: 'invalid site id' }, 400);
+      }
+      if (!allowed(c.get('principal'), siteId)) {
+        return c.json({ error: `unknown site ${siteId}` }, 404);
+      }
+      return c.json(listCampaigns(db, siteId).map(toInfo));
+    };
+  app.get('/api/campaigns', listWhere(canReadSite));
+  app.get('/api/admin/campaigns', listWhere(canManageSite));
 
   app.post('/api/admin/campaigns', async (c) => {
     const siteId = Number(c.req.query('site'));

@@ -281,38 +281,58 @@ describe('login, logout, expiry', () => {
     expect((await postQuery(cookie)).status).toBe(401);
   });
 
-  it('rate limits login to 5 attempts per minute per IP', async () => {
+  const loginFrom = async (ip: string, password = 'wrong-password'): Promise<Response> =>
+    await secured.app.request('/api/admin/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-forwarded-for': ip },
+      body: JSON.stringify({ password }),
+    });
+
+  it('refuses an address after 5 failed logins a minute; successes cost nothing', async () => {
     await setup();
-    const attempt = async (ip: string): Promise<Response> =>
+    for (let i = 0; i < 8; i += 1)
+      expect((await loginFrom('203.0.113.9', PASSWORD)).status).toBe(200);
+    for (let i = 0; i < 5; i += 1) expect((await loginFrom('203.0.113.9')).status).toBe(401);
+    expect((await loginFrom('203.0.113.9')).status).toBe(429);
+    // Refused before verification — the right password is refused there too…
+    expect((await loginFrom('203.0.113.9', PASSWORD)).status).toBe(429);
+    // …but only there: other addresses are unaffected.
+    expect((await loginFrom('203.0.113.10', PASSWORD)).status).toBe(200);
+    clock += 61_000;
+    expect((await loginFrom('203.0.113.9')).status).toBe(401); // window slid
+  });
+
+  /**
+   * An attempt-charged global budget let anyone shut the owner out with one
+   * request every two seconds. A flood of failures from many addresses now
+   * marks the door as under attack instead: every address that has failed is
+   * refused, a clean one is still verified — so the right password gets in and
+   * a distributed guesser is held to one guess per address per minute.
+   */
+  it('never locks the right password out under a failure flood from many addresses', async () => {
+    await setup();
+    const flooder = (i: number): string => `10.0.${Math.floor(i / 250)}.${i % 250}`;
+    for (let i = 0; i < 30; i += 1) expect((await loginFrom(flooder(i))).status).toBe(401);
+    // Under attack: a flooder's second guess is refused unverified…
+    expect((await loginFrom(flooder(0))).status).toBe(429);
+    expect((await loginFrom(flooder(29), PASSWORD)).status).toBe(429);
+    // …while the owner, from an address with no failure, still logs in.
+    expect((await loginFrom('203.0.113.9', PASSWORD)).status).toBe(200);
+  }, 30_000); // thirty real scrypts
+
+  it('treats a flood against one account as an attack on that account alone', async () => {
+    await setup();
+    const userLogin = async (ip: string): Promise<Response> =>
       await secured.app.request('/api/admin/login', {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-forwarded-for': ip },
-        body: JSON.stringify({ password: 'wrong-password' }),
+        body: JSON.stringify({ email: 'nobody@example.com', password: 'guess' }),
       });
-    for (let i = 0; i < 5; i += 1) expect((await attempt('203.0.113.9')).status).toBe(401);
-    expect((await attempt('203.0.113.9')).status).toBe(429);
-    expect((await attempt('203.0.113.10')).status).toBe(401); // other IPs unaffected
-    clock += 61_000;
-    expect((await attempt('203.0.113.9')).status).toBe(401); // window slid
-  });
-
-  it('holds a global login budget: rotating spoofed XFF keys still hits a wall', async () => {
-    await setup();
-    const attempt = async (i: number): Promise<Response> =>
-      await secured.app.request('/api/admin/login', {
-        method: 'POST',
-        // One fake entry per request; the "proxy" hop stays constant — but even
-        // if every key were distinct, the global budget must still engage.
-        headers: {
-          'content-type': 'application/json',
-          'x-forwarded-for': `10.0.${Math.floor(i / 250)}.${i % 250}`,
-        },
-        body: JSON.stringify({ password: 'wrong-password' }),
-      });
-    const statuses: number[] = [];
-    for (let i = 0; i < 40; i += 1) statuses.push((await attempt(i)).status);
-    expect(statuses.filter((status) => status === 429).length).toBeGreaterThan(0);
-    expect(statuses.slice(30)).toEqual(Array(10).fill(429)); // budget exhausted, all blocked
+    for (let i = 0; i < 10; i += 1) expect((await userLogin(`198.51.100.${i}`)).status).toBe(401);
+    // The account is under attack: an address that failed against it is refused…
+    expect((await userLogin('198.51.100.0')).status).toBe(429);
+    // …but the same address may still log in to an account nobody is attacking.
+    expect((await loginFrom('198.51.100.0', PASSWORD)).status).toBe(200);
   });
 
   /**
@@ -810,5 +830,18 @@ describe('search-engine hygiene', () => {
     const beacon = await secured.app.request('/matomo.php?idsite=1&rec=1&send_image=0');
     expect(beacon.status).toBe(204);
     expect(beacon.headers.get('x-robots-tag')).toBe('noindex, nofollow');
+  });
+});
+
+describe('HSTS', () => {
+  it('pins https — direct or through a TLS-terminating proxy — and never plain http', async () => {
+    const direct = await secured.app.request('https://analytics.example/healthz');
+    expect(direct.headers.get('strict-transport-security')).toBe('max-age=31536000');
+    const proxied = await secured.app.request('/healthz', {
+      headers: { 'x-forwarded-proto': 'https' },
+    });
+    expect(proxied.headers.get('strict-transport-security')).toBe('max-age=31536000');
+    const plain = await secured.app.request('/healthz');
+    expect(plain.headers.get('strict-transport-security')).toBeNull();
   });
 });

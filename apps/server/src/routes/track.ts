@@ -106,7 +106,18 @@ export function trustedProxyHops(env: NodeJS.ProcessEnv = process.env): number {
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : 1;
 }
 
+/**
+ * `X-Real-IP` is a single value a client can simply send, so it counts only
+ * when the operator says their proxy sets it (nginx's `proxy_set_header
+ * X-Real-IP`) with `TRUST_X_REAL_IP=1`. Traefik — the documented deployment —
+ * always appends `X-Forwarded-For`, which is read hop-counted instead.
+ */
+export function trustsRealIp(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.TRUST_X_REAL_IP === '1' || env.TRUST_X_REAL_IP === 'true';
+}
+
 const DEFAULT_HOPS = trustedProxyHops();
+const DEFAULT_REAL_IP = trustsRealIp();
 
 /**
  * The client address, spoof-resistant: a proxy APPENDS the peer it saw, so the
@@ -115,7 +126,11 @@ const DEFAULT_HOPS = trustedProxyHops();
  * the request did not traverse the proxy chain; fall back to the socket peer
  * rather than trusting any remaining entry.
  */
-export function clientIp(c: Context, hops: number = DEFAULT_HOPS): string {
+export function clientIp(
+  c: Context,
+  hops: number = DEFAULT_HOPS,
+  realIp: boolean = DEFAULT_REAL_IP,
+): string {
   if (hops > 0) {
     const forwarded = c.req.header('x-forwarded-for');
     if (forwarded !== undefined) {
@@ -125,9 +140,9 @@ export function clientIp(c: Context, hops: number = DEFAULT_HOPS): string {
         .filter((entry) => entry !== '');
       const trusted = entries[entries.length - hops];
       if (trusted !== undefined) return trusted;
-    } else {
-      const realIp = c.req.header('x-real-ip');
-      if (realIp !== undefined && realIp !== '') return realIp;
+    } else if (realIp) {
+      const real = c.req.header('x-real-ip');
+      if (real !== undefined && real !== '') return real;
     }
   }
   return socketAddress(c);

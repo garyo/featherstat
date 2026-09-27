@@ -13,7 +13,7 @@ import {
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { AuthVariables } from '../auth/auth.ts';
-import { readableSites } from '../auth/principal.ts';
+import { canReadSite, readableSites } from '../auth/principal.ts';
 import { RateLimiter } from '../auth/ratelimit.ts';
 import {
   annotationsVersion,
@@ -38,7 +38,7 @@ import { clientIp } from './track.ts';
  * when its window moves even though no data did.
  */
 /** 32 queries × 16 filters of 2 KB values still fit comfortably — beyond this is abuse. */
-const MAX_QUERY_BODY_BYTES = 1024 * 1024;
+export const MAX_QUERY_BODY_BYTES = 1024 * 1024;
 
 /**
  * What a batch is allowed to cost, and how often (docs/04 § 3 "Rate limit").
@@ -144,7 +144,12 @@ export function createQueryRoutes(db: Db, options: QueryRouteOptions = {}): Hono
     if (!expansion.ok) return c.json({ error: expansion.message }, 400);
     const request = expansion.request;
     const derived = resolveDerived(db, request);
-    const goals = resolveGoals(db, request);
+    const who = c.get('principal');
+    const goals = resolveGoals(
+      db,
+      request,
+      (siteId) => who === undefined || canReadSite(who, siteId),
+    );
 
     // CSV negotiation (docs/04 § 3): one query per CSV, resolved before the
     // ETag so an unanswerable selection 400s without charging or executing.
@@ -157,7 +162,6 @@ export function createQueryRoutes(db: Db, options: QueryRouteOptions = {}): Hono
     // The one scoping chokepoint (docs/04 § 5): a non-admin principal's
     // readable set bounds both the resolved windows (and so the ETag) and the
     // execution itself; out-of-scope answers exactly like nonexistent.
-    const who = c.get('principal');
     const allowedSites =
       who === undefined || who.kind === 'admin'
         ? undefined
@@ -231,6 +235,10 @@ export function createQueryRoutes(db: Db, options: QueryRouteOptions = {}): Hono
     }
     // Re-derived from the executed snapshot's version, in case a flush landed in between.
     const tag = etag(response.meta.dataVersion, schema, canonicalBody, windows, now);
+    // The version counts writes across EVERY site: inside the hashed ETag it
+    // only revalidates, but readable it would meter other tenants' traffic, so
+    // only the admin — who reads every site anyway — sees it.
+    if (who !== undefined && who.kind !== 'admin') response.meta.dataVersion = 0;
     if (csvQuery !== undefined) {
       const entry = response.results[csvQuery.id];
       if (entry === undefined || isQueryError(entry)) {

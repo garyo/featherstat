@@ -7,15 +7,17 @@ import {
   type RealtimeHit,
   type RealtimeSnapshot,
 } from '@featherstat/shared';
-import type { Hono } from 'hono';
+import { Hono, type MiddlewareHandler } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DESKTOP_UA, event, openTestDb, T0 } from '../../test/rows.ts';
+import type { AuthVariables } from '../auth/auth.ts';
+import type { Principal } from '../auth/principal.ts';
 import type { Db } from '../db/index.ts';
 import { createApp } from '../index.ts';
 import type { GeoProvider } from '../pipeline/geo.ts';
 import { createPipeline, type Pipeline } from '../pipeline/index.ts';
 import { createRealtimeHub, type RealtimeHub } from './hub.ts';
-import { MAX_QUEUED_FRAMES } from './sse.ts';
+import { MAX_QUEUED_FRAMES, MAX_STREAMS_PER_PRINCIPAL } from './sse.ts';
 
 /** RFC 5737 documentation address — the only kind this repo may hold (invariant 3). */
 const CLIENT_IP = '203.0.113.5';
@@ -35,7 +37,8 @@ const BOSTON: GeoProvider = {
 let db: Db;
 let pipeline: Pipeline;
 let hub: RealtimeHub;
-let app: Hono;
+/** Only `request` is used, so the principal-injecting wrapper below fits too. */
+let app: Pick<Hono, 'request'>;
 let open: Frames[];
 
 beforeEach(() => {
@@ -271,6 +274,65 @@ describe('GET /api/realtime', () => {
     await frames.close();
     await settle();
     expect(vi.getTimerCount()).toBe(baseline);
+  });
+});
+
+describe('GET /api/realtime — the principal behind the stream', () => {
+  const viewer = (sites: number[]): Principal => ({
+    kind: 'viewer',
+    sessionId: 'viewer-session',
+    viewerId: 1,
+    sites: new Set(sites),
+  });
+  /** What `Auth.refresh` answers on the next tick — the test moves it. */
+  let current: Principal | undefined;
+
+  beforeEach(() => {
+    const who = viewer([1, 2]);
+    current = who;
+    const asViewer: MiddlewareHandler<{ Variables: Partial<AuthVariables> }> = async (c, next) => {
+      c.set('principal', who);
+      await next();
+    };
+    app = new Hono()
+      .use('*', asViewer)
+      .route('/', createApp({ sink: pipeline.sink, db, hub, refreshPrincipal: () => current }));
+  });
+
+  it('stays open while the principal stands unchanged', async () => {
+    const frames = await connect();
+    await frames.next();
+    vi.advanceTimersByTime(ACTIVE_TICK_MS);
+    expect((await frames.next()).event).toBe('active');
+  });
+
+  it('closes on the next tick once the principal is revoked', async () => {
+    const frames = await connect();
+    await frames.next();
+    current = undefined;
+    vi.advanceTimersByTime(ACTIVE_TICK_MS);
+    await expect(frames.next()).rejects.toThrow('stream closed');
+  });
+
+  it('closes once the scope would cover different sites, and not before', async () => {
+    const narrow = await connect({}, '?sites=2');
+    const wide = await connect();
+    await Promise.all([narrow.next(), wide.next()]);
+    current = viewer([2, 3]);
+    vi.advanceTimersByTime(ACTIVE_TICK_MS);
+    // Still exactly site 2 for the stream that asked for it; site 1 is gone for the other.
+    expect((await narrow.next()).event).toBe('active');
+    await expect(wide.next()).rejects.toThrow('stream closed');
+  });
+
+  it(`caps one principal at ${MAX_STREAMS_PER_PRINCIPAL} open streams`, async () => {
+    const streams: Frames[] = [];
+    for (let i = 0; i < MAX_STREAMS_PER_PRINCIPAL; i += 1) streams.push(await connect());
+    const refused = await app.request('/api/realtime');
+    expect(refused.status).toBe(429);
+    await streams[0]?.close();
+    await settle();
+    await connect(); // the freed slot opens again (connect asserts the 200)
   });
 });
 

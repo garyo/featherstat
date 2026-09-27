@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { RateLimiter } from './ratelimit.ts';
+import { FailureBudget, RateLimiter } from './ratelimit.ts';
 
 const T0 = 1_700_000_000_000;
 
@@ -47,5 +47,36 @@ describe('RateLimiter', () => {
     expect(limiter.size()).toBe(50);
     limiter.allow('late', T0 + 120_000);
     expect(limiter.size()).toBe(1);
+  });
+});
+
+describe('FailureBudget', () => {
+  const limits = { perAddress: 3, perAccount: 4, global: 6, windowMs: 60_000 };
+
+  it('refuses an address only after its own failures, whatever its successes', () => {
+    const budget = new FailureBudget(limits);
+    for (let i = 0; i < 3; i += 1) {
+      expect(budget.refuses('a', 'acct', T0)).toBe(false);
+      budget.fail('a', 'acct', T0);
+    }
+    expect(budget.refuses('a', 'acct', T0)).toBe(true);
+    expect(budget.refuses('a', 'other', T0)).toBe(true); // the address earned it
+    expect(budget.refuses('b', 'acct', T0)).toBe(false);
+    expect(budget.refuses('a', 'acct', T0 + 60_001)).toBe(false);
+  });
+
+  it('under an account flood refuses addresses that failed, never clean ones', () => {
+    const budget = new FailureBudget(limits);
+    for (const address of ['a', 'b', 'c', 'd']) budget.fail(address, 'acct', T0);
+    expect(budget.refuses('a', 'acct', T0)).toBe(true);
+    expect(budget.refuses('e', 'acct', T0)).toBe(false);
+    expect(budget.refuses('a', 'quiet', T0)).toBe(false);
+  });
+
+  it('under a door-wide flood does the same for every account', () => {
+    const budget = new FailureBudget({ ...limits, perAccount: undefined });
+    for (let i = 0; i < 6; i += 1) budget.fail(`x${i}`, `acct${i}`, T0);
+    expect(budget.refuses('x0', 'fresh', T0)).toBe(true);
+    expect(budget.refuses('clean', 'fresh', T0)).toBe(false);
   });
 });

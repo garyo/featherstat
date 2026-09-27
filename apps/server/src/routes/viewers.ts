@@ -5,11 +5,11 @@ import {
   type ViewerInfo,
   ViewerInviteSchema,
 } from '@featherstat/shared';
-import { type Context, Hono } from 'hono';
+import { type Context, Hono, type MiddlewareHandler } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { Auth, AuthEnv } from '../auth/auth.ts';
 import { canGrantScope, parseSiteScope, serializeSiteScope } from '../auth/principal.ts';
-import { RateLimiter } from '../auth/ratelimit.ts';
+import { FailureBudget } from '../auth/ratelimit.ts';
 import {
   consumeMagicLink,
   type Db,
@@ -31,8 +31,11 @@ import { clientIp } from './track.ts';
 
 /**
  * Viewers (docs/04 § 5): invited read-only principals, claimed without SMTP.
- * The admin mints a single-use magic link and delivers it out of band; visiting
- * `GET /invite/:token` consumes it and issues a 90-day sliding viewer session.
+ * The admin mints a single-use magic link and delivers it out of band. Visiting
+ * `/invite/<token>` only loads the SPA page; its button POSTs `/invite/:token`,
+ * which consumes the link and issues a 90-day sliding viewer session — so a
+ * link unfurler's GET cannot burn it, and a cross-site form cannot plant a
+ * session (the POST must be JSON, which no form can send without a preflight).
  * Mint/list/revoke live under the admin wall; the claim route is public — it is
  * not under `/api/`, so the prefix gate skips it, exactly like `/share/:token`.
  *
@@ -47,13 +50,13 @@ const LINK_TOKEN_SHAPE = /^fsv_[A-Za-z0-9_-]{43}$/;
 const MAX_VIEWER_BODY_BYTES = 64 * 1024;
 
 /**
- * The claim route is unauthenticated and keyed on the IP, like `/share/:token`
- * — and tighter: a legitimate viewer claims once, so anything sustained here is
- * a token probe. Attempts are charged (`allow`), not just successes.
+ * The claim route is unauthenticated and keyed on the IP, like `/share/:token`.
+ * Only dead links are charged (FailureBudget): a legitimate viewer claims once
+ * and never fails, so anything sustained here is a token probe — and a probe
+ * flood must not stop a live link from claiming. A claim names no account.
  */
-const CLAIMS_PER_IP = 10;
-const CLAIMS_GLOBAL = 60;
-const CLAIM_WINDOW_MS = 60_000;
+export const CLAIM_FAILURES = { perAddress: 10, global: 60, windowMs: 60_000 };
+export const CLAIM_ACCOUNT = 'link';
 
 /**
  * The delivery seam: featherstat has no SMTP, so the default just logs that a
@@ -77,8 +80,7 @@ export function createViewerRoutes(
 ): Hono<AuthEnv> {
   const app = new Hono<AuthEnv>();
   const deliver = options.deliver ?? logInvite;
-  const ipClaims = new RateLimiter(CLAIMS_PER_IP, CLAIM_WINDOW_MS);
-  const globalClaims = new RateLimiter(CLAIMS_GLOBAL, CLAIM_WINDOW_MS);
+  const failures = new FailureBudget(CLAIM_FAILURES);
 
   app.use('/api/admin/*', bodyLimit({ maxSize: MAX_VIEWER_BODY_BYTES }));
   // Mint responses carry the raw link — never cacheable.
@@ -168,7 +170,8 @@ export function createViewerRoutes(
     const id = parseDashboardId(c.req.param('id'));
     if (id === undefined) return c.json({ error: 'invalid viewer id' }, 400);
     // Viewer and links revoke together; live sessions die at the gate, which
-    // re-reads the viewer row on every request (auth.ts, principal.test.ts).
+    // re-reads the viewer row on every request, and an open realtime stream
+    // closes on its next tick (auth.ts `refresh`, realtime/sse.ts).
     const revoked = withWriteTransaction(db, () => {
       const viewer = getViewer(db, id);
       if (viewer === undefined || !ownsMint(c, viewer.created_by_user_id)) return false;
@@ -180,16 +183,21 @@ export function createViewerRoutes(
     return c.json({ ok: true });
   });
 
-  app.get('/invite/:token', (c) => {
-    if (!ipClaims.allow(clientIp(c), auth.now()) || !globalClaims.allow('*', auth.now())) {
+  app.post('/invite/:token', jsonOnly, (c) => {
+    const address = clientIp(c);
+    if (failures.refuses(address, CLAIM_ACCOUNT, auth.now())) {
       return c.json({ error: 'too many attempts — try again in a minute' }, 429, {
         'Retry-After': '60',
       });
     }
+    const dead = (): Response => {
+      failures.fail(address, CLAIM_ACCOUNT, auth.now());
+      return deadLink(c);
+    };
     const raw = c.req.param('token');
     // Malformed, unknown, used, expired and revoked all answer identically —
     // a probe learns nothing, and the tokens are unguessable anyway.
-    if (!LINK_TOKEN_SHAPE.test(raw)) return deadLink(c);
+    if (!LINK_TOKEN_SHAPE.test(raw)) return dead();
     const viewerId = withWriteTransaction(db, () => {
       const link = getMagicLink(db, sha256(raw));
       if (link === undefined || link.viewer_id === null) return undefined;
@@ -199,13 +207,26 @@ export function createViewerRoutes(
       if (!consumeMagicLink(db, link.token_hash, auth.now())) return undefined;
       return viewer.id;
     });
-    if (viewerId === undefined) return deadLink(c);
-    auth.login(c, { kind: 'viewer', viewerId });
-    return c.redirect('/', 302);
+    if (viewerId === undefined) return dead();
+    const issued = auth.login(c, { kind: 'viewer', viewerId });
+    return c.json({ ok: true, csrf: issued.csrfToken });
   });
 
   return app;
 }
+
+/**
+ * The public claim routes sign someone in, so a cross-site page must not be
+ * able to fire them: a form can only send form or text bodies, and a
+ * cross-origin `application/json` POST needs a preflight nothing here answers.
+ */
+export const jsonOnly: MiddlewareHandler = async (c, next) => {
+  const type = c.req.header('content-type') ?? '';
+  if (!type.toLowerCase().startsWith('application/json')) {
+    return c.json({ error: 'send the claim as application/json' }, 415);
+  }
+  await next();
+};
 
 function sha256(token: string): Buffer {
   return createHash('sha256').update(token).digest();

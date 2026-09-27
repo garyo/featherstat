@@ -82,8 +82,13 @@ async function invite(
   return (await res.json()) as MagicLinkMinted;
 }
 
-async function claim(url: string): Promise<Response> {
-  return await secured.app.request(url);
+/** `/invite/<token>` is the SPA page; its button POSTs the same path. */
+async function claim(url: string, headers: Record<string, string> = {}): Promise<Response> {
+  return await secured.app.request(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...headers },
+    body: '{}',
+  });
 }
 
 describe('viewer lifecycle', () => {
@@ -93,8 +98,8 @@ describe('viewer lifecycle', () => {
     expect(minted.expiresAt).toBe(T0 + 7 * DAY_MS);
 
     const claimed = await claim(minted.url);
-    expect(claimed.status).toBe(302);
-    expect(claimed.headers.get('location')).toBe('/');
+    expect(claimed.status).toBe(200);
+    expect(((await claimed.json()) as { csrf?: string }).csrf).toBeTruthy();
     const cookie = cookiesOf(claimed);
     expect(cookie).toContain('__Host-session=');
     expect(cookie).toContain('__Host-csrf='); // the /me flow expects the pair
@@ -119,6 +124,24 @@ describe('viewer lifecycle', () => {
     await invite([1]);
     expect((await claim('/invite/not-a-token')).status).toBe(410);
     expect((await claim(`/invite/fsv_${'A'.repeat(43)}`)).status).toBe(410);
+  });
+
+  it('survives a GET and a cross-site form: only a JSON POST claims', async () => {
+    const minted = await invite([1]);
+    // A link unfurler (Slack, SafeLinks) fetches the URL: that is the SPA page,
+    // never the claim — without a built SPA here, nothing at all answers it.
+    const unfurl = await secured.app.request(minted.url);
+    expect(unfurl.status).toBe(404);
+    expect(unfurl.headers.getSetCookie()).toEqual([]);
+    // A form post is refused before it touches the link.
+    const form = await secured.app.request(minted.url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: 'a=b',
+    });
+    expect(form.status).toBe(415);
+    expect(form.headers.getSetCookie()).toEqual([]);
+    expect((await claim(minted.url)).status).toBe(200);
   });
 
   it('refuses an expired link', async () => {
@@ -147,7 +170,7 @@ describe('viewer lifecycle', () => {
     // Same email again = re-invite: revocation clears, the fresh link claims.
     const reinvited = await invite([1, 2]);
     expect(reinvited.viewerId).toBe(minted.viewerId);
-    expect((await claim(reinvited.url)).status).toBe(302);
+    expect((await claim(reinvited.url)).status).toBe(200);
     const after = await secured.app.request('/api/admin/viewers', {
       headers: { cookie: admin.cookie },
     });
@@ -166,7 +189,7 @@ describe('viewer lifecycle', () => {
     expect(remint.status).toBe(201);
     const second = (await remint.json()) as MagicLinkMinted;
     expect(second.url).not.toBe(minted.url);
-    expect((await claim(second.url)).status).toBe(302);
+    expect((await claim(second.url)).status).toBe(200);
 
     await secured.app.request(`/api/admin/viewers/${minted.viewerId}`, {
       method: 'DELETE',
@@ -217,15 +240,27 @@ describe('viewer lifecycle', () => {
   it('rate-limits claim attempts per IP', async () => {
     await invite([1]);
     const probe = () =>
-      secured.app.request(`/invite/fsv_${'A'.repeat(43)}`, {
-        headers: { 'x-forwarded-for': '203.0.113.7' },
-      });
+      claim(`/invite/fsv_${'A'.repeat(43)}`, { 'x-forwarded-for': '203.0.113.7' });
     for (let i = 0; i < 10; i += 1) expect((await probe()).status).toBe(410);
     expect((await probe()).status).toBe(429);
     // Another address keeps its own budget.
-    const other = await secured.app.request(`/invite/fsv_${'A'.repeat(43)}`, {
-      headers: { 'x-forwarded-for': '203.0.113.8' },
+    const other = await claim(`/invite/fsv_${'A'.repeat(43)}`, {
+      'x-forwarded-for': '203.0.113.8',
     });
     expect(other.status).toBe(410);
+  });
+
+  it('lets a live link claim through a probe flood from many addresses', async () => {
+    const minted = await invite([1]);
+    for (let i = 0; i < 70; i += 1) {
+      const probe = await claim(`/invite/fsv_${'A'.repeat(43)}`, {
+        'x-forwarded-for': `10.0.0.${i}`,
+      });
+      expect(probe.status).toBe(410);
+    }
+    expect(
+      (await claim(`/invite/fsv_${'A'.repeat(43)}`, { 'x-forwarded-for': '10.0.0.1' })).status,
+    ).toBe(429);
+    expect((await claim(minted.url, { 'x-forwarded-for': '203.0.113.7' })).status).toBe(200);
   });
 });

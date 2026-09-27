@@ -2,8 +2,12 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { Context, MiddlewareHandler } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import {
+  type AdminSessionRow,
+  type ApiTokenRow,
   type Db,
   extendAdminSession,
+  getAdminSession,
+  getApiToken,
   getApiTokenByHash,
   getSetting,
   getUser,
@@ -92,6 +96,13 @@ export interface Auth {
   /** The request's cookie principal, or undefined — for the public `me` route,
    * which answers before the gate and needs the kind, not just the id. */
   cookiePrincipal(c: Context): Principal | undefined;
+  /**
+   * The principal the gate resolved earlier, re-read as it stands now: its
+   * current scope, or undefined once its session, token, user or viewer is
+   * gone. A response that outlives its request (the realtime stream) asks
+   * this to learn of a revocation the gate would have caught.
+   */
+  refresh(principal: Principal): Principal | undefined;
 }
 
 /** What a session can be issued as — the magic-link claim passes the viewer
@@ -137,18 +148,23 @@ export function createAuth(db: Db, options: AuthOptions = {}): Auth {
     if (credential === undefined || !TOKEN_SHAPE.test(credential)) return undefined;
     const hash = createHash('sha256').update(credential).digest();
     const row = getApiTokenByHash(db, hash);
-    if (row === undefined || row.revoked_at !== null) return undefined;
+    const principal = tokenPrincipal(row);
+    if (principal === undefined || row === undefined) return undefined;
     if (row.last_used_at === null || now() - row.last_used_at > TOKEN_TOUCH_INTERVAL_MS) {
       withWriteTransaction(db, () => touchApiToken(db, row.id, now()));
     }
-    return { kind: 'token', tokenId: row.id, sites: parseSiteScope(row.site_scope) };
+    return principal;
   };
 
+  /** A token row → principal, or undefined once revoked. */
+  const tokenPrincipal = (row: ApiTokenRow | undefined): Principal | undefined =>
+    row === undefined || row.revoked_at !== null
+      ? undefined
+      : { kind: 'token', tokenId: row.id, sites: parseSiteScope(row.site_scope) };
+
   /** Session row → principal; a session whose viewer was revoked or whose
-   * user was disabled dies here — revocation reaches live sessions at the gate. */
-  const cookiePrincipalOf = (c: Context): Principal | undefined => {
-    const session = verifySessionCookie(db, secret, getCookie(c, SESSION_COOKIE), now());
-    if (session === undefined) return undefined;
+   * user was disabled dies here. */
+  const sessionPrincipal = (session: AdminSessionRow): Principal | undefined => {
     if (session.principal_kind === 'admin') return { kind: 'admin', sessionId: session.id };
     if (session.principal_kind === 'user' && session.user_id !== null) {
       const user = getUser(db, session.user_id);
@@ -163,14 +179,6 @@ export function createAuth(db: Db, options: AuthOptions = {}): Auth {
     if (session.principal_kind === 'viewer' && session.viewer_id !== null) {
       const viewer = getViewer(db, session.viewer_id);
       if (viewer === undefined || viewer.revoked_at !== null) return undefined;
-      // Sliding TTL: a viewer cannot log back in (their magic link was single
-      // use), so an ACTIVE viewer's session renews itself once it has burned
-      // half its life — at most one write per half-TTL, not one per request.
-      if (session.expires_at - now() < VIEWER_SESSION_TTL_MS / 2) {
-        withWriteTransaction(db, () =>
-          extendAdminSession(db, session.id, now() + VIEWER_SESSION_TTL_MS),
-        );
-      }
       return {
         kind: 'viewer',
         sessionId: session.id,
@@ -179,6 +187,24 @@ export function createAuth(db: Db, options: AuthOptions = {}): Auth {
       };
     }
     return undefined;
+  };
+
+  /** The request's cookie → principal. Rows are re-read on every request, so
+   * revocation reaches live sessions at the gate — and open realtime streams
+   * on their next tick, through `refresh`. */
+  const cookiePrincipalOf = (c: Context): Principal | undefined => {
+    const session = verifySessionCookie(db, secret, getCookie(c, SESSION_COOKIE), now());
+    if (session === undefined) return undefined;
+    const principal = sessionPrincipal(session);
+    // Sliding TTL: a viewer cannot log back in (their magic link was single
+    // use), so an ACTIVE viewer's session renews itself once it has burned
+    // half its life — at most one write per half-TTL, not one per request.
+    if (principal?.kind === 'viewer' && session.expires_at - now() < VIEWER_SESSION_TTL_MS / 2) {
+      withWriteTransaction(db, () =>
+        extendAdminSession(db, session.id, now() + VIEWER_SESSION_TTL_MS),
+      );
+    }
+    return principal;
   };
 
   const gate: MiddlewareHandler<AuthEnv> = async (c, next) => {
@@ -275,6 +301,14 @@ export function createAuth(db: Db, options: AuthOptions = {}): Auth {
     cookiePrincipal(c) {
       if (disabled) return { kind: 'admin', sessionId: DEV_SESSION_ID };
       return cookiePrincipalOf(c);
+    },
+    refresh(principal) {
+      if (disabled) return principal;
+      if (principal.kind === 'token') return tokenPrincipal(getApiToken(db, principal.tokenId));
+      const session = getAdminSession(db, principal.sessionId);
+      return session === undefined || session.expires_at <= now()
+        ? undefined
+        : sessionPrincipal(session);
     },
   };
 }

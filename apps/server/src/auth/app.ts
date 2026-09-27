@@ -1,4 +1,4 @@
-import { Hono, type MiddlewareHandler } from 'hono';
+import { type Context, Hono, type MiddlewareHandler } from 'hono';
 import { observeWriteTransactions } from '../db/index.ts';
 import { type AppOptions, createApp } from '../index.ts';
 import {
@@ -107,6 +107,22 @@ const SECURITY_HEADERS: Record<string, string> = {
   'X-Robots-Tag': 'noindex, nofollow',
 };
 
+/**
+ * HSTS, sent only on a response to a request that arrived over https — on
+ * plain http it is ignored by spec, and pinning a host that serves no TLS
+ * would lock its users out. No `includeSubDomains`: sibling hosts are the
+ * operator's, not ours to pin. `X-Forwarded-Proto` is taken on trust because
+ * a forged one only pins the forger's own browser.
+ */
+const HSTS = 'max-age=31536000';
+
+function arrivedOverHttps(c: Context): boolean {
+  return (
+    new URL(c.req.url).protocol === 'https:' ||
+    c.req.header('x-forwarded-proto')?.split(',')[0]?.trim() === 'https'
+  );
+}
+
 export interface SecuredAppOptions extends AppOptions {
   auth?: AuthOptions;
   /** Feeds the ingest counters on `/metrics`. */
@@ -155,6 +171,7 @@ export function createSecuredApp(options: SecuredAppOptions = {}): SecuredApp {
   app.use('*', async (c, next) => {
     await next();
     for (const [name, value] of Object.entries(SECURITY_HEADERS)) c.res.headers.set(name, value);
+    if (arrivedOverHttps(c)) c.res.headers.set('Strict-Transport-Security', HSTS);
   });
   let auth: Auth | undefined;
   let ntfy: NtfyNotifier | undefined;
@@ -168,6 +185,7 @@ export function createSecuredApp(options: SecuredAppOptions = {}): SecuredApp {
     // a token keeps a single budget however it asks.
     const queryLimits = createQueryRateLimits();
     appOptions.queryLimits = queryLimits;
+    appOptions.refreshPrincipal = createdAuth.refresh;
     app.use('/api/*', corsOnBearer);
     app.use('/mcp', corsOnBearer);
     app.use('/api/*', (c, next) =>
@@ -219,7 +237,7 @@ export function createSecuredApp(options: SecuredAppOptions = {}): SecuredApp {
     // Minting/revoking are admin surfaces; `GET /share/:token` rides in the same
     // router and stays public — it is not under `/api/`, so the prefix gate skips it.
     app.route('/', createShareRoutes(db, createdAuth));
-    // Same shape again: viewer admin under the wall, `GET /invite/:token` public.
+    // Same shape again: viewer admin under the wall, `POST /invite/:token` public.
     app.route('/', createViewerRoutes(db, createdAuth));
     // And again: users admin under the wall, `POST /claim/:token` public.
     app.route('/', createUserRoutes(db, createdAuth));

@@ -11,7 +11,8 @@ import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { Auth, AuthEnv } from '../auth/auth.ts';
 import { hashPassword } from '../auth/password.ts';
-import { RateLimiter } from '../auth/ratelimit.ts';
+import { narrowScope, parseSiteScope, serializeSiteScope } from '../auth/principal.ts';
+import { FailureBudget } from '../auth/ratelimit.ts';
 import {
   consumeMagicLink,
   type Db,
@@ -19,29 +20,38 @@ import {
   disableUser,
   enableUser,
   expireUserMagicLinks,
+  expireViewerMagicLinks,
   getMagicLink,
   getSite,
   getUser,
   getUserByEmail,
   insertMagicLink,
   insertUser,
+  listApiTokens,
   listUserSites,
   listUsers,
+  listViewers,
   pruneMagicLinks,
+  revokeApiToken,
+  revokeViewer,
+  setApiTokenScope,
   setUserPassword,
   setUserSites,
+  setViewerScope,
   type UserRow,
   withWriteTransaction,
 } from '../db/index.ts';
 import { parseDashboardId } from './dashboards.ts';
 import { clientIp } from './track.ts';
+import { CLAIM_ACCOUNT, CLAIM_FAILURES, jsonOnly } from './viewers.ts';
 
 /**
  * Users (docs/04 § 5): password-holding accounts that own and manage sites.
  * The admin creates one by email and mints a single-use invite link, delivered
  * out of band exactly like a viewer's; claiming it at `POST /claim/:token`
  * sets the user's first password and signs them in. Re-inviting doubles as a
- * password reset — the old hash stays valid until the new link is claimed.
+ * password reset — the old hash stays valid until the new link is claimed,
+ * and the claim ends every session the old one opened.
  *
  * Mint/list/reassign/disable live under the admin wall; the claim route is
  * public — not under `/api/`, so the prefix gate skips it, like `/invite`.
@@ -52,11 +62,6 @@ const MAGIC_LINK_TTL_MS = 7 * DAY_MS;
 const LINK_TOKEN_SHAPE = /^fsu_[A-Za-z0-9_-]{43}$/;
 /** User bodies are an email, a site list, or a password — far under this. */
 const MAX_USER_BODY_BYTES = 64 * 1024;
-
-/** Same posture as the viewer claim route: attempts are charged, not successes. */
-const CLAIMS_PER_IP = 10;
-const CLAIMS_GLOBAL = 60;
-const CLAIM_WINDOW_MS = 60_000;
 
 /** The delivery seam, mirroring viewers.ts: no SMTP, so the default just logs. */
 export type DeliverUserInvite = (user: UserRow, url: string) => void;
@@ -76,8 +81,7 @@ export function createUserRoutes(
 ): Hono<AuthEnv> {
   const app = new Hono<AuthEnv>();
   const deliver = options.deliver ?? logInvite;
-  const ipClaims = new RateLimiter(CLAIMS_PER_IP, CLAIM_WINDOW_MS);
-  const globalClaims = new RateLimiter(CLAIMS_GLOBAL, CLAIM_WINDOW_MS);
+  const failures = new FailureBudget(CLAIM_FAILURES);
 
   app.use('/api/admin/*', bodyLimit({ maxSize: MAX_USER_BODY_BYTES }));
   // Mint responses carry the raw link — never cacheable.
@@ -152,6 +156,7 @@ export function createUserRoutes(
       if (user === undefined) return undefined;
       const sites = body.data.sites.filter((siteId) => getSite(db, siteId) !== undefined);
       setUserSites(db, id, sites);
+      fitGrants(db, id, sites, auth.now());
       return toUserInfo(user, sites);
     });
     if (info === undefined) return c.json({ error: `unknown user ${id}` }, 404);
@@ -161,12 +166,14 @@ export function createUserRoutes(
   app.delete('/api/admin/users/:id', (c) => {
     const id = parseDashboardId(c.req.param('id'));
     if (id === undefined) return c.json({ error: 'invalid user id' }, 400);
-    // User, invites and sessions go together; a re-invite restores access.
+    // User, invites, sessions and every grant they minted go together; a
+    // re-invite restores the account, never the grants.
     const disabled = withWriteTransaction(db, () => {
       const gone = disableUser(db, id, auth.now());
       if (gone) {
         expireUserMagicLinks(db, id, auth.now());
         deleteUserSessions(db, id);
+        fitGrants(db, id, [], auth.now());
       }
       return gone;
     });
@@ -174,16 +181,21 @@ export function createUserRoutes(
     return c.json({ ok: true });
   });
 
-  app.post('/claim/:token', bodyLimit({ maxSize: MAX_USER_BODY_BYTES }), async (c) => {
-    if (!ipClaims.allow(clientIp(c), auth.now()) || !globalClaims.allow('*', auth.now())) {
+  app.post('/claim/:token', bodyLimit({ maxSize: MAX_USER_BODY_BYTES }), jsonOnly, async (c) => {
+    const address = clientIp(c);
+    if (failures.refuses(address, CLAIM_ACCOUNT, auth.now())) {
       return c.json({ error: 'too many attempts — try again in a minute' }, 429, {
         'Retry-After': '60',
       });
     }
+    const dead = (): Response => {
+      failures.fail(address, CLAIM_ACCOUNT, auth.now());
+      return deadLink(c);
+    };
     const raw = c.req.param('token');
     // Malformed, unknown, used, expired and disabled all answer identically —
     // a probe learns nothing, and the tokens are unguessable anyway.
-    if (!LINK_TOKEN_SHAPE.test(raw)) return deadLink(c);
+    if (!LINK_TOKEN_SHAPE.test(raw)) return dead();
     const body = await parseBody(c, UserClaimSchema);
     if (body.ok === false) return body.response;
     // Hashing is async and the write transaction is not: derive first, spend
@@ -199,14 +211,46 @@ export function createUserRoutes(
       // The UPDATE is the claim: single use even under concurrent requests.
       if (!consumeMagicLink(db, link.token_hash, auth.now())) return undefined;
       setUserPassword(db, user.id, passwordHash);
+      // A claim may be a password reset: whoever held the old password is
+      // signed out everywhere; the claim's own session is issued after this.
+      deleteUserSessions(db, user.id);
       return user.id;
     });
-    if (userId === undefined) return deadLink(c);
+    if (userId === undefined) return dead();
     const issued = auth.login(c, { kind: 'user', userId });
     return c.json({ ok: true, csrf: issued.csrfToken });
   });
 
   return app;
+}
+
+/**
+ * Keeps a user's standing grants inside their power, in the caller's
+ * transaction: every live token and viewer they minted narrows to `sites`, and
+ * one left with no site is revoked (a viewer's outstanding links with it).
+ * Share links are not grants of the user's — they belong to the dashboard, and
+ * whoever manages its site now revokes them (docs/04 § 5).
+ */
+function fitGrants(db: Db, userId: number, sites: readonly number[], now: number): void {
+  const owned = new Set(sites);
+  for (const token of listApiTokens(db)) {
+    if (token.created_by_user_id !== userId || token.revoked_at !== null) continue;
+    const kept = narrowScope(parseSiteScope(token.site_scope), owned);
+    if (kept === undefined) continue;
+    if (kept.length === 0) revokeApiToken(db, token.id, now);
+    else setApiTokenScope(db, token.id, serializeSiteScope(kept));
+  }
+  for (const viewer of listViewers(db)) {
+    if (viewer.created_by_user_id !== userId || viewer.revoked_at !== null) continue;
+    const kept = narrowScope(parseSiteScope(viewer.site_scope), owned);
+    if (kept === undefined) continue;
+    if (kept.length > 0) {
+      setViewerScope(db, viewer.id, serializeSiteScope(kept));
+    } else {
+      revokeViewer(db, viewer.id, now);
+      expireViewerMagicLinks(db, viewer.id, now);
+    }
+  }
 }
 
 function sha256(token: string): Buffer {

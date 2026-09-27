@@ -286,6 +286,9 @@ transaction.
 
 Response:
 `{ results: { [id]: { rows, compare?, bucket?, axis?, measures? } | { error } }, meta: { generatedInMs, dataVersion, windows } }`.
+`dataVersion` is the instance-wide write counter the ETag hashes; it is
+readable only by the admin — every other principal (and the share route, and
+MCP) gets `0`, since the counter moves with every site's traffic.
 A query the vocabulary cannot answer honestly (e.g. `bounce_rate` × `title`) or
 a kind that ships in a later milestone yields a per-query `error` entry — the
 batch itself still succeeds, and never returns wrong numbers.
@@ -406,7 +409,9 @@ batch itself still succeeds, and never returns wrong numbers.
     (`entry_path`/`exit_path`) refuse too — goal statements aggregate the
     events table. All refusals, plus an unknown goal id, a goal of a site
     outside the request's scope, and an unreadable stored row, are honest
-    per-query `{error}` entries, never a 500.
+    per-query `{error}` entries, never a 500. A goal on a site the principal
+    cannot read is an unknown goal id, word for word — "another site" would
+    confirm it exists.
   - Goal metrics always route to **raw rows** (the planner treats any
     non-built-in metric as raw), and definitions resolve on the main thread
     and hash into the ETag — editing a goal expires every cached answer that
@@ -807,6 +812,14 @@ fails closed, never widening to every site.
   proxies from reaping the stream. A connection that stops draining is
   dropped once ~1000 frames are queued for it; reconnecting with
   `Last-Event-ID` recovers what the ring still holds.
+- **A stream is re-authorized, not just authorized once.** The gate
+  resolves the principal at connect, but a stream outlives its request, so
+  every `active` tick re-reads it (`Auth.refresh`) and closes the stream once
+  the session, token, user or viewer is gone or its scope would now cover
+  different sites; the client's reconnect then meets the gate like any
+  request. One session or token holds at most 16 streams at once
+  (`MAX_STREAMS_PER_PRINCIPAL`) — each is a subscriber every ingested hit
+  fans out to — and the next answers 429.
 
 This feeds the live counter, the realtime feed, and the map/globe from a
 single stream.
@@ -843,7 +856,8 @@ segments, derived-metrics, goals and campaigns CRUD (`/api/admin/segments`,
 `GET /api/segments`, `GET /api/derived-metrics`, `GET /api/goals?site=` and
 `GET /api/campaigns?site=`, session-gated but open to
 every principal — a viewer or token composes queries with them exactly as the
-admin does), campaign aliases (`GET`/`PUT /api/admin/campaign-aliases?site=`,
+admin does; the two per-site lists answer only for a site the principal can
+read, and another site's list 404s exactly like a nonexistent site), campaign aliases (`GET`/`PUT /api/admin/campaign-aliases?site=`,
 full-list replace per site, site 0 = install-wide; a PUT invalidates the live
 ingest cache, enqueues the chunked utm backfill in the same transaction, and
 kicks it — docs/03 § Campaigns), share/API tokens, ntfy notification settings (`GET`/`PUT`/`DELETE
@@ -969,15 +983,22 @@ revocation — and mints a **single-use magic link** (raw token
 `fsv_<43 base64url>`, sha256-at-rest like every other token, 7-day expiry);
 `POST /api/admin/viewers/:id/invite` re-mints; `DELETE /api/admin/viewers/:id`
 revokes the viewer and expires their outstanding links (live sessions die at
-the gate, which re-reads the viewer row on every request). The mint response
+the gate, which re-reads the viewer row on every request, and an open realtime
+stream closes on its next tick). The mint response
 carries the claim path `/invite/<token>` **exactly once** — the admin copies
 it out of band. `deliverInvite` (routes/viewers.ts) is the one-function seam
 where SMTP/ntfy delivery slots in later.
 
-Visiting `GET /invite/:token` (public, per-IP rate-limited like
-`/share/:token`) consumes the link atomically — used, expired, unknown,
+Opening `/invite/<token>` only loads the SPA page — a chat app or mail
+scanner that fetches the link to unfurl it spends nothing — and the page's
+button sends `POST /invite/:token` (public, and failure-limited like login
+below: dead links are charged, a live one always claims), which consumes the link atomically — used, expired, unknown,
 malformed and revoked-viewer all answer the same 410, so a probe learns
-nothing — issues a viewer session and 302s to `/`. Viewer sessions get their
+nothing — issues a viewer session and answers `{ok, csrf}` like `/claim`.
+Both claim POSTs refuse anything but `application/json` with a 415: a
+cross-site form cannot send that type, and a cross-origin script cannot
+without a preflight nothing answers, so no other page can plant a session
+(login CSRF). Viewer sessions get their
 own **90-day sliding TTL** (admin sessions keep 14 fixed days): a viewer
 cannot log back in, their link was single-use, so an active viewer's session
 renews itself whenever it has burned half its life, and only 90 days of true
@@ -998,10 +1019,12 @@ existing email, restoring a disabled account — and mints a **single-use
 invite link** (raw token `fsu_<43 base64url>`, sha256-at-rest, 7-day expiry)
 whose claim path `/welcome/<token>` appears exactly once in the response;
 `POST /api/admin/users/:id/invite` re-mints, which doubles as a password
-reset (the old password works until the new link is claimed);
+reset (the old password works until the new link is claimed, and claiming
+it signs the user out of every existing session);
 `PATCH /api/admin/users/:id {sites}` replaces the assignment;
-`DELETE /api/admin/users/:id` disables — sessions and outstanding invites die
-with it. `POST /claim/:token {password}` (public, rate-limited like
+`DELETE /api/admin/users/:id` disables — sessions, outstanding invites and
+every viewer and token the user minted die with it (a re-invite restores the
+account, not those grants). `POST /claim/:token {password}` (public, rate-limited like
 `/invite`; all failures one identical 410) consumes the link, sets the user's
 first password and signs them in. From then on `POST /api/admin/login` with
 `{email, password}` issues a user session — email absent still means the
@@ -1011,17 +1034,41 @@ names no emails. User sessions share the admin's fixed 14-day TTL (they can
 log back in). `GET /api/admin/me` answers `principal: "user"` plus `email`.
 A user's viewer/token mints must fit inside their own sites (`'all'` or any
 foreign site is a 400), and list/revoke see only their own mints
-(`created_by_user_id`); grants stay fixed at mint — reassigning a site does
-not shrink a standing viewer or token scope.
+(`created_by_user_id`). A grant never outlasts its minter's power: a `PATCH`
+that takes sites away narrows each of the user's standing viewers and tokens
+to the sites they still own, in the same transaction, and revokes one left
+with none. Share links are deliberately not in that set — a link belongs to
+its dashboard, not to whoever minted it, so it survives the minter and is
+revoked by whoever manages the dashboard's site now.
+
+**Viewer emails are unique across the instance, and that is a known,
+accepted signal.** A user inviting an address someone else already invited
+gets `409 email already invited` rather than a re-scope of a viewer that is
+not theirs — which tells that user the address is a viewer somewhere on this
+instance. It names no site, no minter and no scope, the user must already
+hold the address to ask, and the users of one instance are accounts its admin
+created, not strangers. Scoping uniqueness per minter would remove the signal
+at the cost of a `viewers` table rebuild and two viewer rows for one person;
+revisit if an instance ever hosts mutually untrusting users.
 
 First-run setup (`POST /api/admin/setup`) additionally requires the one-time
 **setup token** the server prints to its log at first boot: between `docker
 run` and the owner opening the page, an unconfigured install is reachable by
 anyone, and the token makes claiming it require console access. Setup and
-login share the same rate limits (per-IP plus a global budget). The client
+login share one **failure-only** budget (`FailureBudget`, auth/ratelimit.ts):
+successes are never charged, and an address past 5 failures a minute is
+refused (429) before any verification. A flood of failures — 10 a minute
+against one account (the admin password, or one email, known or not), or 30
+across the door — never locks the owner out: it only refuses every address
+that has already failed in the window, while a clean address is still
+verified, so the right password gets in and a distributed guesser is held to
+one guess per address per minute. The claim routes use the same shape with no
+accounts (10 dead links per address, 60 across the door). The client
 address comes from the `TRUSTED_PROXY_HOPS`-th `X-Forwarded-For` entry from
 the end (default 1 — one trusted proxy); with `0`, forwarded headers are
-ignored entirely.
+ignored entirely. `X-Real-IP` is a single client-sendable value, so it is
+read only with `TRUST_X_REAL_IP=1` (a proxy that sets it), and only when no
+`X-Forwarded-For` arrived.
 
 ## 6. MCP — analysts hook up their LLM
 
@@ -1030,6 +1077,8 @@ process (`@modelcontextprotocol/sdk`, MIT), **stateless**: every POST
 constructs its own server + transport and stands alone — no session id, no
 handshake ordering, no load-balancer affinity. Responses are plain JSON
 (`enableJsonResponse`), so a curl-shaped JSON-RPC POST is a complete client.
+Bodies are capped at the query route's 1 MiB (413 past it) — a `query` call
+carries one `QueryRequest`, and nothing else here needs more.
 
 **Auth: the same Bearer API tokens, and ONLY those.** The route runs the
 ordinary gate, then requires `principal.kind === 'token'`: anonymous is 401,

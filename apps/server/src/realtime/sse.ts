@@ -10,7 +10,7 @@ import {
 import { Hono } from 'hono';
 import { type SSEMessage, type SSEStreamingApi, streamSSE } from 'hono/streaming';
 import type { AuthVariables } from '../auth/auth.ts';
-import { canReadSite } from '../auth/principal.ts';
+import { canReadSite, type Principal } from '../auth/principal.ts';
 import type { RealtimeEntry, RealtimeHub } from './hub.ts';
 
 /** docs/04 § 4: the comment that keeps proxies from reaping us. */
@@ -22,8 +22,26 @@ const HEARTBEAT_FRAME = ': keep-alive\n\n';
  */
 export const MAX_QUEUED_FRAMES = 1_000;
 
+/**
+ * Streams one principal may hold open at once. Every stream is a subscriber
+ * the ingest path fans each hit out to, so a leaked token must not be able to
+ * open thousands; a person's tabs never come near this.
+ */
+export const MAX_STREAMS_PER_PRINCIPAL = 16;
+
 /** `?sites=1,4`; absent or `all` means every site. */
 type SiteFilter = ReadonlySet<number> | undefined;
+
+export interface RealtimeRouteOptions {
+  /**
+   * Re-reads the principal the gate resolved at connect (`Auth.refresh`). A
+   * stream outlives its request, so on every `active` tick it asks again and
+   * closes once the answer is gone or would scope it differently — a revoked
+   * token, a logged-out session, a narrowed viewer. The client's reconnect
+   * then meets the gate like any request.
+   */
+  refresh?: (principal: Principal) => Principal | undefined;
+}
 
 /**
  * `GET /api/realtime` (docs/04 § 4). One stream carries everything live: a
@@ -37,52 +55,108 @@ type SiteFilter = ReadonlySet<number> | undefined;
  */
 export function createRealtimeRoutes(
   hub: RealtimeHub,
+  options: RealtimeRouteOptions = {},
 ): Hono<{ Variables: Partial<AuthVariables> }> {
   const app = new Hono<{ Variables: Partial<AuthVariables> }>();
+  const { refresh } = options;
+  const streams = new StreamCounts(MAX_STREAMS_PER_PRINCIPAL);
   app.get('/api/realtime', (c) => {
     const requested = parseSites(c.req.query('sites'));
     if (requested === null) {
       return c.json({ error: "sites must be 'all' or a comma-separated list of site ids" }, 400);
     }
-    // A scoped principal's stream narrows to its readable sites: `all` means
-    // "all of mine", and naming someone else's site yields silence, not data.
     const who = c.get('principal');
-    const sites =
-      who === undefined || who.kind === 'admin' || who.sites === 'all'
-        ? requested
-        : new Set([...(requested ?? who.sites)].filter((id) => canReadSite(who, id)));
+    const sites = streamSites(requested, who);
+    const key = who === undefined ? undefined : streamKey(who);
+    if (key !== undefined && !streams.acquire(key)) {
+      return c.json({ error: 'too many open realtime streams' }, 429, { 'Retry-After': '60' });
+    }
+    const entitled = (): boolean => {
+      if (who === undefined || refresh === undefined) return true;
+      const current = refresh(who);
+      return current !== undefined && sameSites(streamSites(requested, current), sites);
+    };
     const resumeFrom = parseEventId(c.req.header('last-event-id'));
     return streamSSE(c, async (stream) => {
-      const send = queuedWriter(stream);
-      // Nothing awaits between the snapshot and `subscribe`, so a hit landing
-      // right now lands in exactly one of them.
-      send(frame('snapshot', snapshotFor(hub, sites, resumeFrom)));
-      if (resumeFrom !== undefined) {
-        for (const entry of hub.since(resumeFrom)) {
-          if (covers(sites, entry.hit.siteId)) send(hitFrame(entry));
+      try {
+        const send = queuedWriter(stream);
+        // Nothing awaits between the snapshot and `subscribe`, so a hit landing
+        // right now lands in exactly one of them.
+        send(frame('snapshot', snapshotFor(hub, sites, resumeFrom)));
+        if (resumeFrom !== undefined) {
+          for (const entry of hub.since(resumeFrom)) {
+            if (covers(sites, entry.hit.siteId)) send(hitFrame(entry));
+          }
         }
+
+        const unsubscribe = hub.subscribe((message) => {
+          if (message.kind === 'hit') {
+            if (covers(sites, message.entry.hit.siteId)) send(hitFrame(message.entry));
+          } else if (covers(sites, message.tick.siteId)) {
+            send(frame('version', message.tick));
+          }
+        });
+        let end = (): void => undefined;
+        const ended = new Promise<void>((resolve) => {
+          end = resolve;
+          stream.onAbort(resolve);
+        });
+        const recount = setInterval(() => {
+          if (entitled()) send(frame('active', activeFrame(hub, sites)));
+          else end();
+        }, ACTIVE_TICK_MS);
+        const heartbeat = setInterval(() => send(HEARTBEAT_FRAME), HEARTBEAT_MS);
+
+        await ended;
+        clearInterval(recount);
+        clearInterval(heartbeat);
+        unsubscribe();
+      } finally {
+        if (key !== undefined) streams.release(key);
       }
-
-      const unsubscribe = hub.subscribe((message) => {
-        if (message.kind === 'hit') {
-          if (covers(sites, message.entry.hit.siteId)) send(hitFrame(message.entry));
-        } else if (covers(sites, message.tick.siteId)) {
-          send(frame('version', message.tick));
-        }
-      });
-      const recount = setInterval(
-        () => send(frame('active', activeFrame(hub, sites))),
-        ACTIVE_TICK_MS,
-      );
-      const heartbeat = setInterval(() => send(HEARTBEAT_FRAME), HEARTBEAT_MS);
-
-      await new Promise<void>((resolve) => stream.onAbort(resolve));
-      clearInterval(recount);
-      clearInterval(heartbeat);
-      unsubscribe();
     });
   });
   return app;
+}
+
+/**
+ * The sites a principal's stream covers. A scoped principal's stream narrows to
+ * its readable sites: `all` means "all of mine", and naming someone else's site
+ * yields silence, not data.
+ */
+function streamSites(requested: SiteFilter, who: Principal | undefined): SiteFilter {
+  if (who === undefined || who.kind === 'admin' || who.sites === 'all') return requested;
+  return new Set([...(requested ?? who.sites)].filter((id) => canReadSite(who, id)));
+}
+
+function sameSites(a: SiteFilter, b: SiteFilter): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  return a.size === b.size && [...a].every((id) => b.has(id));
+}
+
+/** Open streams per key, refusing past a cap. */
+class StreamCounts {
+  private readonly open = new Map<string, number>();
+
+  constructor(private readonly cap: number) {}
+
+  acquire(key: string): boolean {
+    const count = this.open.get(key) ?? 0;
+    if (count >= this.cap) return false;
+    this.open.set(key, count + 1);
+    return true;
+  }
+
+  release(key: string): void {
+    const left = (this.open.get(key) ?? 1) - 1;
+    if (left > 0) this.open.set(key, left);
+    else this.open.delete(key);
+  }
+}
+
+/** One budget per session or token — the unit a revocation or a leak concerns. */
+function streamKey(who: Principal): string {
+  return who.kind === 'token' ? `token:${who.tokenId}` : `session:${who.sessionId}`;
 }
 
 /**

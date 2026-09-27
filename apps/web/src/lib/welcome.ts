@@ -1,13 +1,27 @@
 /**
- * User-invite claim links (docs/04 § 5): the admin shares `/welcome/<token>`;
- * the page there asks the invitee to choose a password and POSTs it to
- * `POST /claim/:token`, which consumes the single-use link and signs them in.
+ * Claim links (docs/04 § 5). Both are ordinary navigation paths the SPA
+ * fallback serves, so opening one — or a chat app unfurling it — spends
+ * nothing; the page's own POST is the claim:
+ *
+ * - `/welcome/<fsu_…>` — a user invite: the invitee chooses a password and the
+ *   page POSTs it to `/claim/:token`.
+ * - `/invite/<fsv_…>` — a viewer's magic link: one button POSTs
+ *   `/invite/:token`, which signs the viewer in.
  */
 
-/** `fsu_` + base64url of 32 random bytes — routes/users.ts LINK_TOKEN_SHAPE, verbatim. */
-const WELCOME_PATH = /^\/welcome\/(fsu_[A-Za-z0-9_-]{43})\/?$/;
+export interface ClaimLink {
+  kind: 'user' | 'viewer';
+  token: string;
+}
 
-/** The invite token this URL carries, or undefined for every other path. */
-export function welcomeTokenFromPath(pathname: string): string | undefined {
-  return WELCOME_PATH.exec(pathname)?.[1];
+/** `fsu_`/`fsv_` + base64url of 32 random bytes — the server's LINK_TOKEN_SHAPEs, verbatim. */
+const WELCOME_PATH = /^\/welcome\/(fsu_[A-Za-z0-9_-]{43})\/?$/;
+const INVITE_PATH = /^\/invite\/(fsv_[A-Za-z0-9_-]{43})\/?$/;
+
+/** The claim link this URL is, or undefined for every other path. */
+export function claimLinkFromPath(pathname: string): ClaimLink | undefined {
+  const user = WELCOME_PATH.exec(pathname)?.[1];
+  if (user !== undefined) return { kind: 'user', token: user };
+  const viewer = INVITE_PATH.exec(pathname)?.[1];
+  return viewer === undefined ? undefined : { kind: 'viewer', token: viewer };
 }

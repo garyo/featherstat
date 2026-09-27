@@ -9,7 +9,7 @@ import { event, openTestDb, session, syncRollups, T0 } from '../../test/rows.ts'
 import { createSecuredApp, type SecuredApp } from '../auth/app.ts';
 import { type Db, insertEvents, upsertSessions, withWriteTransaction } from '../db/index.ts';
 import { createPipeline, type Pipeline } from '../pipeline/index.ts';
-import { TOKEN_BATCHES_PER_MIN } from './query.ts';
+import { MAX_QUERY_BODY_BYTES, TOKEN_BATCHES_PER_MIN } from './query.ts';
 
 /**
  * `/mcp` (docs/04 § 6) over the raw streamable-HTTP wire: JSON-RPC POSTs with
@@ -194,6 +194,20 @@ describe('protocol surface', () => {
       'site',
     ]);
   });
+
+  it('refuses a body past the query cap before parsing it', async () => {
+    const minted = await mintToken('all');
+    const res = await secured.app.request('/mcp', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${minted.token}`,
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
+      },
+      body: rpcBody('tools/list', { padding: 'x'.repeat(MAX_QUERY_BODY_BYTES) }),
+    });
+    expect(res.status).toBe(413);
+  });
 });
 
 describe('describe_analytics', () => {
@@ -228,6 +242,8 @@ describe('query tool', () => {
     const response = JSON.parse(textOf(answered)) as QueryResponse;
     const rows = (response.results.pv as { rows: Array<{ pageviews: number }> }).rows;
     expect(rows[0]?.pageviews).toBe(2);
+    // The instance-wide write counter is the admin's alone (docs/04 § 3).
+    expect(response.meta.dataVersion).toBe(0);
   });
 
   it('answers an out-of-scope site exactly like a nonexistent one', async () => {

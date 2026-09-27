@@ -5,9 +5,10 @@
  *
  * Two ways to spend a budget, and the difference matters:
  *
- * - `allow` charges the ATTEMPT. Right for login and for share links, where the
- *   attempt itself is the thing being limited and a caller that keeps knocking
- *   should stay locked out.
+ * - `allow` charges the ATTEMPT. Right for share links, where the attempt
+ *   itself is the thing being limited and a caller that keeps knocking should
+ *   stay locked out. (Doors that verify a secret charge only failures instead —
+ *   `FailureBudget`, below.)
  * - `exhausted` + `charge` charge the WORK. Right for `/api/query`, where a
  *   refused request costs nothing and a dashboard reconnecting every few seconds
  *   would otherwise hold its own lockout open forever — a false positive that
@@ -17,6 +18,8 @@
 const PRUNE_EVERY_MS = 60_000;
 /** Longer than any real address — a forged header cannot bloat the key set with novels. */
 const MAX_KEY_LENGTH = 64;
+/** The one key a door-wide budget is kept under. */
+const GLOBAL_KEY = '*';
 
 export class RateLimiter {
   private readonly hits = new Map<string, number[]>();
@@ -74,5 +77,67 @@ export class RateLimiter {
     for (const [key, timestamps] of this.hits) {
       if (timestamps.every((ts) => ts <= cutoff)) this.hits.delete(key);
     }
+  }
+}
+
+export interface FailureLimits {
+  /** Failures one address may make per window before it alone is refused. */
+  perAddress: number;
+  /** Failures against one account per window before it counts as under attack;
+   * absent for a door with no accounts (an invite claim names only its link). */
+  perAccount?: number;
+  /** Failures across the whole door per window before it counts as under attack. */
+  global: number;
+  windowMs: number;
+}
+
+/**
+ * Failure-only budgets for the public doors that verify a secret — login,
+ * first-run setup, invite claims. A budget charged per ATTEMPT on such a door
+ * is a lockout anyone can trigger: one request every two seconds from anywhere
+ * shuts the owner out. So only failures are charged, and the refusals are
+ * arranged so the right secret still opens the door:
+ *
+ * - an address past its own failure budget is refused before any verification —
+ *   the one hard lockout, and it falls on the address that earned it;
+ * - while its account or the whole door is under a failure flood, an address
+ *   with ANY failure in the window is refused too, but a clean address is still
+ *   verified: the owner typing the right password gets in, and a distributed
+ *   guesser is held to one guess per address per window.
+ *
+ * Callers that verify must still spend the same work on every attempt this
+ * does not refuse (constant time); this only decides which attempts reach
+ * verification.
+ */
+export class FailureBudget {
+  private readonly perAddress: RateLimiter;
+  private readonly strained: RateLimiter;
+  private readonly perAccount: RateLimiter | undefined;
+  private readonly global: RateLimiter;
+
+  constructor(limits: FailureLimits) {
+    this.perAddress = new RateLimiter(limits.perAddress, limits.windowMs);
+    this.strained = new RateLimiter(1, limits.windowMs);
+    this.perAccount =
+      limits.perAccount === undefined
+        ? undefined
+        : new RateLimiter(limits.perAccount, limits.windowMs);
+    this.global = new RateLimiter(limits.global, limits.windowMs);
+  }
+
+  /** True when this attempt must be answered 429 without being verified. */
+  refuses(address: string, account: string, now: number): boolean {
+    if (this.perAddress.exhausted(address, now)) return true;
+    const underAttack =
+      this.global.exhausted(GLOBAL_KEY, now) || this.perAccount?.exhausted(account, now) === true;
+    return underAttack && this.strained.exhausted(address, now);
+  }
+
+  /** Charges one verified failure to the address, the account and the door. */
+  fail(address: string, account: string, now: number): void {
+    this.perAddress.charge(address, now);
+    this.strained.charge(address, now);
+    this.perAccount?.charge(account, now);
+    this.global.charge(GLOBAL_KEY, now);
   }
 }

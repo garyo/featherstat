@@ -22,6 +22,7 @@ import {
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import type { Auth, AuthEnv } from '../auth/auth.ts';
 import { canReadSite, type Principal, readableSites } from '../auth/principal.ts';
 import { type Db, listDerivedMetrics, listGoals, listPropKeys, listSites } from '../db/index.ts';
@@ -32,6 +33,7 @@ import { expandSegments, resolveDerived, resolveGoals } from '../query/stored.ts
 import {
   createQueryRateLimits,
   type ExecuteQuery,
+  MAX_QUERY_BODY_BYTES,
   QUERY_WINDOW_MS,
   type QueryRateLimits,
 } from './query.ts';
@@ -76,6 +78,8 @@ export function createMcpRoutes(db: Db, auth: Auth, options: McpRouteOptions = {
   const app = new Hono<AuthEnv>();
   // Born authenticated (deny-by-default): the gate 401s anonymous callers, and
   // the only principal MCP speaks for is a token — cookies 403 (documented).
+  // A query tool call carries a QueryRequest: the query route's cap fits it.
+  app.use('/mcp', bodyLimit({ maxSize: MAX_QUERY_BODY_BYTES }));
   app.use('/mcp', auth.gate);
   app.use('/mcp', async (c, next) => {
     if (c.get('principal')?.kind !== 'token') {
@@ -170,10 +174,15 @@ function buildServer(
       const response = await runBatch(
         expanded,
         resolveDerived(db, expanded),
-        resolveGoals(db, expanded),
+        resolveGoals(db, expanded, (siteId) => canReadSite(who, siteId)),
       );
       if ('refused' in response) return refusal(response.refused);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(response) }] };
+      // A token is never the admin: the instance-wide write counter stays
+      // out of its answers, exactly as on /api/query.
+      const meta = { ...response.meta, dataVersion: 0 };
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({ ...response, meta }) }],
+      };
     },
   );
 

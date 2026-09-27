@@ -96,7 +96,7 @@ export const CHUNK_MAX_GZIP: Readonly<Record<string, number>> = {
   /** The share page and the dialog that mints links for it — small by construction. */
   share: 2_048,
   dialog: 2_048,
-  /** The invite-claim page (`/welcome/<token>`) — a password form and one POST. */
+  /** The claim pages (`/welcome/<token>`, `/invite/<token>`) — a form and one POST each. */
   welcome: 2_048,
   /** The dashboard-library management panel — a list of rows and five verbs. */
   manage: 2_560,
@@ -128,7 +128,7 @@ export const CHUNK_MARKERS: Readonly<Record<string, readonly string[]>> = {
   WidgetFilters: ['Only count rows where'],
   share: ['Shared dashboard'],
   dialog: ['Create share link'],
-  welcome: ['Claim account'],
+  welcome: ['Claim account', 'Open the dashboards'],
   // NOT the switcher's "Manage dashboards…" line — that trigger rides the entry.
   manage: ['New empty dashboard'],
 };

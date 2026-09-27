@@ -1,11 +1,15 @@
 import type { ApiTokenMinted } from '@featherstat/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { openTestDb, T0 } from '../../test/rows.ts';
+import { DESKTOP_UA, openTestDb, T0 } from '../../test/rows.ts';
 import {
   addUserSite,
   type Db,
   disableUser,
   insertUser,
+  insertViewer,
+  revokeApiToken,
+  revokeViewer,
+  setViewerScope,
   withWriteTransaction,
 } from '../db/index.ts';
 import { createPipeline, type Pipeline } from '../pipeline/index.ts';
@@ -15,6 +19,8 @@ import {
   canManageSite,
   canReadSite,
   isManager,
+  narrowScope,
+  type Principal,
   parseSiteScope,
   readableSites,
   serializeSiteScope,
@@ -124,6 +130,14 @@ describe('scope helpers', () => {
     }
   });
 
+  it("narrows a grant to its minter's sites, and leaves one that fits alone", () => {
+    const owned = new Set([2, 3]);
+    expect(narrowScope(new Set([2]), owned)).toBeUndefined();
+    expect(narrowScope(new Set([1, 2]), owned)).toEqual([2]);
+    expect(narrowScope(new Set([1]), owned)).toEqual([]);
+    expect(narrowScope('all', owned)).toEqual([2, 3]);
+  });
+
   it('scopes reads; admin reads everything', () => {
     const admin = { kind: 'admin', sessionId: 's' } as const;
     const token = { kind: 'token', tokenId: 1, sites: new Set([2]) } as const;
@@ -166,6 +180,88 @@ describe('token principals', () => {
     const res = await bearerRequest(minted.token, '/api/sites');
     expect(res.status).toBe(200);
     expect(((await res.json()) as Array<{ id: number }>).map((s) => s.id)).toEqual([2]);
+  });
+
+  it('lists goals and campaigns for its own sites only; another site is nonexistent', async () => {
+    const minted = await mintToken([1]);
+    for (const list of ['/api/goals', '/api/campaigns']) {
+      expect((await bearerRequest(minted.token, `${list}?site=1`)).status, list).toBe(200);
+      const foreign = await bearerRequest(minted.token, `${list}?site=2`);
+      const missing = await bearerRequest(minted.token, `${list}?site=99`);
+      expect(foreign.status, list).toBe(404);
+      expect(await foreign.json()).toEqual({ error: 'unknown site 2' });
+      expect(missing.status, list).toBe(404);
+      expect(await missing.json()).toEqual({ error: 'unknown site 99' });
+    }
+  });
+
+  it("answers another site's goal exactly like a nonexistent one", async () => {
+    const admin = await adminSession();
+    const created = await secured.app.request('/api/admin/goals?site=2', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        cookie: admin.cookie,
+        'x-csrf-token': admin.csrf,
+      },
+      body: JSON.stringify({
+        name: 'Signed up',
+        filters: [{ dim: 'path', op: 'eq', value: '/signup' }],
+      }),
+    });
+    expect(created.status).toBe(201);
+    const { id } = (await created.json()) as { id: number };
+
+    const errorFor = async (token: string, goalId: number): Promise<unknown> => {
+      const res = await bearerRequest(token, '/api/query', {
+        method: 'POST',
+        body: JSON.stringify({
+          site: 1,
+          range: { preset: '7d' },
+          queries: [{ id: 'g', metrics: [`goal:${goalId}:conversions`] }],
+        }),
+      });
+      return ((await res.json()) as { results: { g: unknown } }).results.g;
+    };
+    const scoped = await mintToken([1]);
+    expect(await errorFor(scoped.token, 9999)).toMatchObject({
+      error: { message: 'unknown goal 9999' },
+    });
+    expect(await errorFor(scoped.token, id)).toMatchObject({
+      error: { message: `unknown goal ${id}` },
+    });
+    // A principal that can read site 2 is told the truth about it.
+    const wide = await mintToken([1, 2]);
+    expect(await errorFor(wide.token, id)).toMatchObject({
+      error: { message: expect.stringContaining('another site') },
+    });
+  });
+
+  it("never sees the instance-wide data version — other sites' traffic moves it", async () => {
+    const hit = await secured.app.request(
+      '/matomo.php?idsite=2&rec=1&send_image=0&url=https%3A%2F%2Ftwo.test%2F',
+      { headers: { 'user-agent': DESKTOP_UA, 'x-forwarded-for': '203.0.113.7' } },
+    );
+    expect(hit.status).toBe(204);
+    pipeline.flush();
+    const versionOf = async (res: Response): Promise<number> =>
+      ((await res.json()) as { meta: { dataVersion: number } }).meta.dataVersion;
+
+    const admin = await adminSession();
+    const asAdmin = await secured.app.request('/api/query', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: admin.cookie },
+      body: queryBody(1),
+    });
+    expect(await versionOf(asAdmin)).toBeGreaterThan(0);
+
+    const minted = await mintToken([1]);
+    const asToken = await bearerRequest(minted.token, '/api/query', {
+      method: 'POST',
+      body: queryBody(1),
+    });
+    expect(asToken.status).toBe(200);
+    expect(await versionOf(asToken)).toBe(0);
   });
 
   it('posts queries without a CSRF token — Bearer carries no ambient credential', async () => {
@@ -274,6 +370,43 @@ describe('token principals', () => {
     for (const scheme of ['Bearerish', 'Basic', 'Bear']) {
       expect((await bearerRequest(minted.token, '/api/sites', { scheme })).status).toBe(401);
     }
+  });
+});
+
+describe('Auth.refresh — the principal as it stands now', () => {
+  it('follows a token, a viewer and a session to their revocation', async () => {
+    const auth = secured.auth;
+    if (auth === undefined) throw new Error('secured app without auth');
+    const minted = await mintToken([1, 2]);
+    const token = { kind: 'token', tokenId: minted.id, sites: new Set([1, 2]) } as const;
+    expect(auth.refresh(token)).toEqual(token);
+
+    const viewerId = withWriteTransaction(db, () => {
+      const row = insertViewer(db, {
+        email: 'client@example.com',
+        site_scope: serializeSiteScope([1, 2]),
+        created_at: T0,
+      });
+      return row.id;
+    });
+    const session = issueSession(db, ensureAuthSecret(db), T0, { kind: 'viewer', viewerId });
+    const viewer: Principal = {
+      kind: 'viewer',
+      sessionId: session.id,
+      viewerId,
+      sites: new Set([1, 2]),
+    };
+    withWriteTransaction(db, () => {
+      setViewerScope(db, viewerId, serializeSiteScope([2]));
+      revokeApiToken(db, minted.id, T0);
+    });
+    expect(auth.refresh(viewer)).toEqual({ ...viewer, sites: new Set([2]) });
+    expect(auth.refresh(token)).toBeUndefined();
+
+    withWriteTransaction(db, () => revokeViewer(db, viewerId, T0));
+    expect(auth.refresh(viewer)).toBeUndefined();
+    // A session that is gone (logout, expiry) is gone for every kind.
+    expect(auth.refresh({ kind: 'admin', sessionId: 'no-such-session' })).toBeUndefined();
   });
 });
 
@@ -390,6 +523,13 @@ describe('viewer principals', () => {
       body: queryBody(1),
     });
     expect(outOfScope.status).toBe(404);
+
+    for (const list of ['/api/goals', '/api/campaigns']) {
+      const own = await secured.app.request(`${list}?site=2`, { headers: { cookie } });
+      const foreign = await secured.app.request(`${list}?site=1`, { headers: { cookie } });
+      expect(own.status, list).toBe(200);
+      expect(foreign.status, list).toBe(404);
+    }
   });
 
   it('is 403d from /mcp like any cookie session', async () => {

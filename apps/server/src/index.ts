@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import type { Principal } from './auth/principal.ts';
 import type { Db } from './db/index.ts';
 import type { HitSink } from './pipeline/index.ts';
 import type { RealtimeHub } from './realtime/hub.ts';
@@ -17,6 +18,8 @@ export interface AppOptions {
   db?: Db;
   /** Mounts the realtime stream. */
   hub?: RealtimeHub;
+  /** Re-reads a gated principal, so an open stream learns of a revocation (auth.refresh). */
+  refreshPrincipal?: (principal: Principal) => Principal | undefined;
   /** Built tracker bundles; defaults to `packages/tracker/dist` (a bundled server must pass it). */
   assetsDir?: string;
   /** Batch runner override — main.ts supplies the worker read pool's. */
@@ -33,6 +36,7 @@ export function createApp({
   assetsDir,
   executeQuery,
   queryLimits,
+  refreshPrincipal,
 }: AppOptions = {}): Hono {
   const app = new Hono();
   app.get('/healthz', (c) => c.json({ ok: true }));
@@ -42,6 +46,8 @@ export function createApp({
     app.route('/', createQueryRoutes(db, { execute: executeQuery, limits: queryLimits }));
     app.route('/', createSiteRoutes(db));
   }
-  if (hub !== undefined) app.route('/', createRealtimeRoutes(hub));
+  if (hub !== undefined) {
+    app.route('/', createRealtimeRoutes(hub, { refresh: refreshPrincipal }));
+  }
   return app;
 }

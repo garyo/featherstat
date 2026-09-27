@@ -43,6 +43,16 @@ export function canGrantScope(principal: Principal, sites: 'all' | readonly numb
   return sites.every((siteId) => principal.sites.has(siteId));
 }
 
+/**
+ * A standing grant cut down to `owned` — its minter's current sites — or
+ * undefined when it already fits. `'all'` narrows too: no user can mint one,
+ * and a grant must never outlast its minter's power.
+ */
+export function narrowScope(scope: SiteScope, owned: ReadonlySet<number>): number[] | undefined {
+  const kept = scope === 'all' ? [...owned] : [...scope].filter((siteId) => owned.has(siteId));
+  return scope !== 'all' && kept.length === scope.size ? undefined : kept;
+}
+
 /** `site: "all"` means "all sites this principal can read" — never more. */
 export function readableSites(principal: Principal, all: readonly number[]): number[] {
   return all.filter((siteId) => canReadSite(principal, siteId));

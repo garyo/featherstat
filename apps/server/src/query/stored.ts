@@ -151,8 +151,14 @@ export function resolveDerived(db: Db, request: QueryRequest): Record<string, st
  * cached answer. Columns ship verbatim; the executor re-parses and fails
  * closed. A ref with no stored row is deliberately absent — the executor
  * turns it into a per-query error, so one bad id costs its query, not the batch.
+ * So is a goal on a site the caller cannot read (`readable`): it must answer
+ * "unknown goal" exactly like a missing id, or the refusal would confirm it.
  */
-export function resolveGoals(db: Db, request: QueryRequest): GoalDefinitions | undefined {
+export function resolveGoals(
+  db: Db,
+  request: QueryRequest,
+  readable: (siteId: number) => boolean = () => true,
+): GoalDefinitions | undefined {
   const goals: Record<string, { siteId: number; filters: string; valueExpr: string | null }> = {};
   let found = false;
   for (const query of request.queries) {
@@ -162,7 +168,7 @@ export function resolveGoals(db: Db, request: QueryRequest): GoalDefinitions | u
       const { id } = goalRefParts(metric);
       if (goals[id] !== undefined) continue;
       const row = getGoal(db, id);
-      if (row === undefined) continue;
+      if (row === undefined || !readable(row.site_id)) continue;
       goals[id] = { siteId: row.site_id, filters: row.filters, valueExpr: row.value_expr };
       found = true;
     }

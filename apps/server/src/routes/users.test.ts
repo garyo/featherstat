@@ -1,4 +1,10 @@
-import { DAY_MS, type UserInfo, type UserInviteMinted } from '@featherstat/shared';
+import {
+  type ApiTokenMinted,
+  DAY_MS,
+  type UserInfo,
+  type UserInviteMinted,
+  type ViewerInfo,
+} from '@featherstat/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openTestDb, T0 } from '../../test/rows.ts';
 import { createSecuredApp, type SecuredApp } from '../auth/app.ts';
@@ -141,6 +147,13 @@ describe('user lifecycle', () => {
     expect((await claim(`/welcome/fsu_${'A'.repeat(43)}`)).status).toBe(410);
     // A viewer link never claims a password, whatever its shape.
     expect((await claim(`/welcome/fsv_${'A'.repeat(43)}`)).status).toBe(410);
+    // A cross-site form cannot claim: the body must be JSON.
+    const form = await secured.app.request(minted.url.replace('/welcome/', '/claim/'), {
+      method: 'POST',
+      headers: { 'content-type': 'text/plain' },
+      body: JSON.stringify({ password: USER_PASSWORD }),
+    });
+    expect(form.status).toBe(415);
     clock = minted.expiresAt; // expiry is exclusive: expires_at > now must fail
     expect((await claim(minted.url)).status).toBe(410);
   });
@@ -189,7 +202,7 @@ describe('user lifecycle', () => {
 
   it('re-mints for an active user as a password reset and 404s a disabled one', async () => {
     const minted = await createUser([1]);
-    await claim(minted.url);
+    const oldSession = cookiesOf(await claim(minted.url));
     const admin = await adminSession();
     const remint = await secured.app.request(`/api/admin/users/${minted.userId}/invite`, {
       method: 'POST',
@@ -200,8 +213,12 @@ describe('user lifecycle', () => {
     expect(second.url).not.toBe(minted.url);
     // The old password keeps working until the reset link is claimed…
     expect((await loginAs(USER_EMAIL, USER_PASSWORD)).status).toBe(200);
-    // …then the new one replaces it.
-    expect((await claim(second.url, 'the-reset-password')).status).toBe(200);
+    // …then the new one replaces it, and every session the old one opened ends.
+    const reset = await claim(second.url, 'the-reset-password');
+    expect(reset.status).toBe(200);
+    const sites = (cookie: string) => secured.app.request('/api/sites', { headers: { cookie } });
+    expect((await sites(oldSession)).status).toBe(401);
+    expect((await sites(cookiesOf(reset))).status).toBe(200);
     expect((await loginAs(USER_EMAIL, 'the-reset-password')).status).toBe(200);
     expect((await loginAs(USER_EMAIL, USER_PASSWORD)).status).toBe(401);
 
@@ -248,6 +265,71 @@ describe('user lifecycle', () => {
     const cookie = cookiesOf(await claim(minted.url));
     const sites = await secured.app.request('/api/sites', { headers: { cookie } });
     expect(((await sites.json()) as Array<{ id: number }>).map((s) => s.id)).toEqual([2]);
+  });
+
+  it("narrows the user's grants on reassignment and revokes them on disable", async () => {
+    const minted = await createUser([1, 2]);
+    const cookie = cookiesOf(await claim(minted.url));
+    const { csrf } = (await (
+      await secured.app.request('/api/admin/me', { headers: { cookie } })
+    ).json()) as { csrf: string };
+    const asUser = async (path: string, body: unknown): Promise<Response> =>
+      await secured.app.request(path, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', cookie, 'x-csrf-token': csrf },
+        body: JSON.stringify(body),
+      });
+    const token = (await (
+      await asUser('/api/admin/tokens', { name: 'both', sites: [1, 2] })
+    ).json()) as ApiTokenMinted;
+    expect(
+      (await asUser('/api/admin/viewers', { email: 'a@example.com', sites: [1] })).status,
+    ).toBe(201);
+    expect(
+      (await asUser('/api/admin/viewers', { email: 'b@example.com', sites: [1, 2] })).status,
+    ).toBe(201);
+
+    const admin = await adminSession();
+    const adminHeaders = { cookie: admin.cookie, 'x-csrf-token': admin.csrf };
+    const query = async (site: number): Promise<number> =>
+      (
+        await secured.app.request('/api/query', {
+          method: 'POST',
+          headers: { authorization: `Bearer ${token.token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({
+            site,
+            range: { preset: '7d' },
+            queries: [{ id: 'k', metrics: ['pageviews'] }],
+          }),
+        })
+      ).status;
+    const viewers = async (): Promise<ViewerInfo[]> =>
+      (await (
+        await secured.app.request('/api/admin/viewers', { headers: adminHeaders })
+      ).json()) as ViewerInfo[];
+
+    // Site 1 leaves the user: the token keeps only site 2, the viewer who had
+    // nothing else is revoked, and the other keeps the site still theirs.
+    const patched = await secured.app.request(`/api/admin/users/${minted.userId}`, {
+      method: 'PATCH',
+      headers: { ...adminHeaders, 'content-type': 'application/json' },
+      body: JSON.stringify({ sites: [2] }),
+    });
+    expect(patched.status).toBe(200);
+    expect(await query(1)).toBe(404);
+    expect(await query(2)).toBe(200);
+    const [a, b] = await viewers();
+    expect(a).toMatchObject({ email: 'a@example.com', sites: [1], revokedAt: T0 });
+    expect(b).toMatchObject({ email: 'b@example.com', sites: [2], revokedAt: null });
+
+    // Disabling the user takes everything they minted down with them.
+    const disabled = await secured.app.request(`/api/admin/users/${minted.userId}`, {
+      method: 'DELETE',
+      headers: adminHeaders,
+    });
+    expect(disabled.status).toBe(200);
+    expect(await query(2)).toBe(401);
+    expect((await viewers())[1]?.revokedAt).toBe(T0);
   });
 
   it('changes its own password via /api/admin/password, never the admin hash', async () => {
