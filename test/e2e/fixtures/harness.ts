@@ -33,12 +33,47 @@ export interface Harness {
   stop(): Promise<void>;
 }
 
+/** A real server on its own throwaway database, booted but not yet claimed. */
+export interface Server {
+  baseURL: string;
+  /** The first-run token the server logged — spent by whoever claims the admin. */
+  setupToken: string;
+  /** The temp directory holding the database; gone after `stop`. */
+  dir: string;
+  stop(): Promise<void>;
+}
+
 export async function startHarness(): Promise<Harness> {
+  const server = await startServer({ seed: true });
+  const storageState = join(server.dir, 'state.json');
+  try {
+    // Claim the admin through the real route, so the setup flow is exercised
+    // rather than faked, and keep the session it hands back.
+    const api = await request.newContext({ baseURL: server.baseURL });
+    const claimed = await api.post('/api/admin/setup', {
+      data: { password: SETUP_PASSWORD, setupToken: server.setupToken },
+    });
+    if (!claimed.ok()) {
+      throw new Error(`setup refused: ${claimed.status()} ${await claimed.text()}`);
+    }
+    await api.storageState({ path: storageState });
+    await api.dispose();
+  } catch (failure) {
+    await server.stop();
+    throw failure;
+  }
+  return { baseURL: server.baseURL, storageState, stop: server.stop };
+}
+
+/**
+ * Boots the server over a new database: seeded for the shared harness, empty
+ * for a spec that needs an instance nobody has set up yet.
+ */
+export async function startServer({ seed }: { seed: boolean }): Promise<Server> {
   const dir = mkdtempSync(join(tmpdir(), 'featherstat-e2e-'));
   const dbPath = join(dir, 'e2e.db');
-  const storageState = join(dir, 'state.json');
 
-  run('bun', ['run', '--cwd', 'apps/server', 'seed'], { DB_PATH: dbPath });
+  if (seed) run('bun', ['run', '--cwd', 'apps/server', 'seed'], { DB_PATH: dbPath });
 
   const port = await freePort();
   const server = spawn(
@@ -65,32 +100,22 @@ export async function startHarness(): Promise<Harness> {
     },
   );
 
-  const baseURL = `http://127.0.0.1:${port}`;
   const stop = async (): Promise<void> => {
-    server.kill('SIGTERM');
-    await new Promise((resolve) => server.once('exit', resolve));
+    // A server that died during boot has no exit left to wait for.
+    if (server.exitCode === null && server.signalCode === null) {
+      server.kill('SIGTERM');
+      await new Promise((resolve) => server.once('exit', resolve));
+    }
     rmSync(dir, { recursive: true, force: true });
   };
 
   try {
-    const token = await bootToken(server);
-    // Claim the admin through the real route, so the setup flow is exercised
-    // rather than faked, and keep the session it hands back.
-    const api = await request.newContext({ baseURL });
-    const claimed = await api.post('/api/admin/setup', {
-      data: { password: SETUP_PASSWORD, setupToken: token },
-    });
-    if (!claimed.ok()) {
-      throw new Error(`setup refused: ${claimed.status()} ${await claimed.text()}`);
-    }
-    await api.storageState({ path: storageState });
-    await api.dispose();
+    const setupToken = await bootToken(server);
+    return { baseURL: `http://127.0.0.1:${port}`, setupToken, dir, stop };
   } catch (failure) {
     await stop();
     throw failure;
   }
-
-  return { baseURL, storageState, stop };
 }
 
 /** Resolves once the server has logged both the token and its port. */

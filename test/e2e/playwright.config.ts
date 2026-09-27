@@ -5,13 +5,15 @@ import { defineConfig, devices } from '@playwright/test';
  * harness.ts). Manual for now — `bun run e2e` — and deliberately NOT part of
  * `bun run ci`: the pre-push gate stays fast, which is what keeps it being run.
  *
- * Two projects, because some specs write:
+ * Three projects, because some specs write:
  *
  * - `read` is everything that only looks, fully parallel over one seeded
  *   database.
  * - `write` edits dashboards and settings, so it runs after `read`, one worker,
  *   in file order — and each of its specs cleans up after itself, which is what
  *   lets one seeded database serve the whole run.
+ * - `fresh` boots its own server over an empty database (first-run setup has
+ *   no other way to exist), so it shares nothing and runs beside `read`.
  *
  * Chromium only. Three engines would triple the time for little on an internal
  * dashboard; add one when a real defect argues for it.
@@ -44,6 +46,12 @@ export default defineConfig({
       fullyParallel: false,
       workers: 1,
       dependencies: ['read'],
+    },
+    {
+      name: 'fresh',
+      testMatch: /fresh\/.*\.spec\.ts$/,
+      // Cookies ignore ports: the shared harness's session would ride along.
+      use: { storageState: { cookies: [], origins: [] } },
     },
   ],
 });
