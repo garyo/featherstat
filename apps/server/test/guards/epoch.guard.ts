@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 
@@ -14,7 +14,8 @@ import ts from 'typescript';
  * leaves it still — and every ETag minted before the rewrite would answer 304
  * forever. So each rewriter must call `bumpDataEpoch` after its last chunk.
  *
- * The scan reads every job source in `apps/server/src/jobs` and asks two
+ * The scan reads every job source under `apps/server/src/jobs`, subdirectories
+ * included, and asks two
  * questions of each: does it look like it rewrites history (an UPDATE/DELETE
  * against events, sessions, or a `${table}` template over them), and does it
  * bump the epoch? `REWRITERS` names the files that must do both; anything else
@@ -30,16 +31,20 @@ import ts from 'typescript';
 const JOBS_DIR = fileURLToPath(new URL('../../src/jobs', import.meta.url));
 
 export interface JobSource {
-  /** File name within `apps/server/src/jobs`. */
+  /** Path within `apps/server/src/jobs`, `/`-separated. */
   name: string;
   source: string;
 }
 
 /** Every job implementation (tests excluded — they quote SQL to assert on it). */
 export function jobSources(dir: string = JOBS_DIR): JobSource[] {
-  return readdirSync(dir)
+  return readdirSync(dir, { recursive: true, encoding: 'utf8' })
     .filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'))
-    .map((name) => ({ name, source: readFileSync(join(dir, name), 'utf8') }));
+    .sort()
+    .map((name) => ({
+      name: name.split(sep).join('/'),
+      source: readFileSync(join(dir, name), 'utf8'),
+    }));
 }
 
 /**
