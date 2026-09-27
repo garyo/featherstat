@@ -19,5 +19,5 @@
     }
   },
   "include": ["apps/*/src", "apps/*/test", "packages/*/src", "test"],
-  "exclude": ["apps/web"]
+  "exclude": ["apps/web", "packages/tracker", "test/contract"]
 }

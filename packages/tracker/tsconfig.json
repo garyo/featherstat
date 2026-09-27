@@ -1,0 +1,10 @@
+{
+  // The tracker runs in a browser; its own program carries the DOM lib so the
+  // root program, which covers the server, never sees `document` or `window`.
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM"]
+  },
+  "include": ["src"],
+  "exclude": []
+}

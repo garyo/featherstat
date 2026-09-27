@@ -1,7 +1,6 @@
-/// <reference lib="dom" />
-
-// The repo tsconfig targets Node (server, shared) and ships no DOM lib; the
-// tracker is the one package that runs in a browser, so it pulls the lib in.
+// The tracker is the one package that runs in a browser, so it alone compiles
+// against the DOM lib (packages/tracker/tsconfig.json); the root program, which
+// covers the server and shared code, has none.
 
 interface Document {
   /**

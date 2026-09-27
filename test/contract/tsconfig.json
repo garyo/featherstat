@@ -1,0 +1,10 @@
+{
+  // The contract tests import apps/web's browser code alongside the server's, so
+  // they need the DOM lib the root program withholds from server code.
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM"]
+  },
+  "include": [".", "../../apps/server/src/**/*.d.ts"],
+  "exclude": []
+}
