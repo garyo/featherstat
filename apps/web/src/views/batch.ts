@@ -60,8 +60,8 @@ const EVENT_METRICS = new Set<string>(EVENT_ONLY_METRICS);
  * The blockers are judged PER QUERY: the view's chips, plus that query's own
  * widget-level filters, plus its (possibly pivoted) grouping dimensions. A
  * widget filtered to one page must lose its bounce column while the widget
- * beside it keeps its own — a view-wide answer here is how filtered KPI tiles
- * used to blank confusingly.
+ * beside it keeps its own — a view-wide answer here would blank tiles that no
+ * filter of theirs blocks.
  */
 export function withoutBlockedMetrics(
   queries: readonly Query[],

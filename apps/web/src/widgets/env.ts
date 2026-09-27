@@ -64,10 +64,9 @@ export interface ViewContext {
 /**
  * The one place a dashboard's environment is assembled: what the app can offer,
  * plus what only the view knows. SiteView and AllSitesView hand the SAME value
- * to the dashboard grid and to the editor's preview, so the preview can no
- * longer render with fewer capabilities than the page behind it — it used to
- * lose the range, the filter callback and the realtime jump, because each was a
- * prop the caller had to remember twice.
+ * to the dashboard grid and to the editor's preview, so the preview cannot
+ * render with fewer capabilities than the page behind it — the range, the filter
+ * callback and the realtime jump are never props a caller must remember twice.
  */
 export function dashboardEnv(app: AppEnv, view: ViewContext): ViewEnv {
   return extendEnv(app, {

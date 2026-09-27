@@ -56,9 +56,9 @@ const REQUIRED = [
 ] as const satisfies readonly (readonly [keyof UtmDraft, string])[];
 
 /**
- * What is still missing, in words. The builder used to render nothing at all
- * until all three were in — no output box, no prompt, so the link looked like a
- * feature that did not work. Absence needs a reason on screen.
+ * What is still missing, in words: a builder that renders nothing until all
+ * three are in — no output box, no prompt — reads as a feature that does not
+ * work. Absence needs a reason on screen.
  */
 export function missingUtmFields(draft: UtmDraft): string[] {
   return REQUIRED.filter(([field]) => draft[field].trim() === '').map(([, label]) => label);

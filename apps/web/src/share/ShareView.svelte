@@ -78,10 +78,9 @@ const response = $derived<QueryResponse | undefined>(
 );
 /**
  * The range this page is showing, read off the same `meta.windows` the in-app
- * dashboard reads. A share page has no site directory and so could never resolve
- * a preset; it used to fall back to the DATA extent, which is why the two screens
- * rendered different window semantics through identical widget code. Neither
- * derives anything now, so they agree by construction.
+ * dashboard reads. A share page has no site directory and so cannot resolve a
+ * preset; neither screen derives a window of its own, so the two agree by
+ * construction through identical widget code.
  */
 const span = $derived(windowLabel(payload?.meta.windows));
 const env = $derived(

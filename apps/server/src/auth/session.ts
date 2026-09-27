@@ -20,7 +20,7 @@ import {
  */
 
 // `__Host-` pins the cookies to this host, Secure, Path=/ — a sibling subdomain
-// (or anything writing `Domain=` cookies) can no longer shadow the admin session.
+// (or anything writing `Domain=` cookies) cannot shadow the admin session.
 export const SESSION_COOKIE = '__Host-session';
 export const CSRF_COOKIE = '__Host-csrf';
 export const CSRF_HEADER = 'x-csrf-token';

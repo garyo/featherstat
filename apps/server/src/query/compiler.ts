@@ -262,10 +262,9 @@ const METRICS: Record<Metric, MetricSpec> = {
   },
   /**
    * Engaged time per MEASURED visit — the tile's number, computed where the
-   * population is known. The client used to divide `engaged_ms` by
-   * `engaged_sessions` itself, in two places with different null semantics; the
-   * `of` components are what let a sparkline re-derive it over a slice without
-   * averaging an average.
+   * population is known rather than divided client-side; the `of` components
+   * are what let a sparkline re-derive it over a slice without averaging an
+   * average.
    */
   avg_engagement: {
     preferred: 'sessions',

@@ -35,7 +35,7 @@ interface Props {
 export type EditIntent =
   /** ONLY the field that changed. The editor merges against the live tree, so
    * two edits landing before a re-render cannot restore each other's stale
-   * values — which is exactly what sending the whole row used to do. */
+   * values, as sending the whole row would. */
   | { type: 'set-leaf'; dim?: string; op?: string; value?: string; session?: boolean }
   | { type: 'set-op'; op: 'all' | 'any' }
   | { type: 'negate' }

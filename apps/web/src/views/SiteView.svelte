@@ -200,8 +200,8 @@ const span = $derived(windowLabel(runner.response?.meta.windows));
 const zone = $derived(zoneLabel(runner.response?.meta.windows));
 /**
  * ONE environment for this page, handed to the dashboard AND to the editor's
- * preview — the preview used to be assembled from a shorter list of props, so
- * it rendered without the range qualifier, click-to-filter or the realtime jump.
+ * preview, so the preview has the range qualifier, click-to-filter and the
+ * realtime jump the page has.
  * It follows the range on SCREEN, not the pill, so a refetch cannot label held
  * data with the range being loaded.
  */

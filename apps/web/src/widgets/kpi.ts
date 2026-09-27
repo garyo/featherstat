@@ -19,10 +19,9 @@ import { type SeriesPoint, sliceRanges } from './series.ts';
  * Everything else comes off the result's `measures` header (docs/04 § 3): the
  * unit decides how the number is written and how a delta reads, and the
  * aggregate decides how a run of buckets reduces to one spark point. That is
- * deliberate. The tile used to carry its own arithmetic, and it carried it
- * twice — two avg-engagement divisions ten lines apart with different null
- * semantics, and a bounce rate the tile wrote as 0–1 while its own sparkline
- * computed 0–100.
+ * deliberate: a tile that carries its own arithmetic carries it twice, and its
+ * number and its sparkline drift apart — on null semantics, or on 0–1 against
+ * 0–100.
  *
  * Deltas are signed with an arrow glyph and toned by direction × goodness
  * (docs/05 § Numbers: bounce-rate down is green), so color never carries the

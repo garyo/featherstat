@@ -112,7 +112,7 @@ export function planMetricRoute(
     if (table === 'sessions') {
       // `rollup_sessions_day` is daily and `rollup_traffic_hour` has no session
       // side, so nothing stored can answer a session metric by hour — the raw
-      // tables can, now that sessions carry `local_hour`.
+      // tables can, since sessions carry `local_hour`.
       if (hourShape) return 'raw';
       if (context.sessionRollupsStale === true) return 'raw';
       if (rolledDim !== undefined && !sessionSideRolled(rolledDim)) return 'raw';

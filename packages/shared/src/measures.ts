@@ -4,7 +4,7 @@ import type { HitType } from './index.ts';
  * What a number in a result actually counts, and how it may be recombined
  * (docs/03 § Derived metrics, docs/04 § 3).
  *
- * Two ideas, both of which used to live as prose inside a SQL string:
+ * Two ideas, named here rather than left as prose inside a SQL string:
  *
  * - A **population** is the set of stored rows a metric is drawn from. Naming
  *   populations does something subtler than deduplicating a predicate: it turns
@@ -26,10 +26,10 @@ import type { HitType } from './index.ts';
 
 /**
  * A heartbeat: a continuation signal reporting that a page is still open, not
- * something a visitor did. Every consumer that used to spell `'ping'` by hand —
- * the query compiler, the sequence and dwell kinds, the realtime hub, the ntfy
- * notifier — reads the definition from here, so "which rows are actions" has
- * exactly one answer in the tree.
+ * something a visitor did. Every consumer — the query compiler, the sequence
+ * and dwell kinds, the realtime hub, the ntfy notifier — reads the definition
+ * from here rather than spelling `'ping'` itself, so "which rows are actions"
+ * has exactly one answer in the tree.
  */
 export const HEARTBEAT_HIT_TYPE: HitType = 'ping';
 
