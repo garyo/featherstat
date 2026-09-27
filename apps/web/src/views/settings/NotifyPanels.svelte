@@ -5,7 +5,7 @@ import { type PanelFailure, panelFailure } from '../../lib/admin-failure.ts';
 import { adminObjects } from '../../lib/admin-objects.ts';
 import { type AlertDraft, draftsOf, emptyAlert, rulesOf } from '../../lib/alerts.ts';
 import { createLoader } from '../../lib/loader.svelte.ts';
-import { edited } from '../../lib/settings.ts';
+import { edited } from '../../lib/unsaved.ts';
 import NtfyPanel from '../NtfyPanel.svelte';
 import LoadState from './LoadState.svelte';
 import PanelError from './PanelError.svelte';

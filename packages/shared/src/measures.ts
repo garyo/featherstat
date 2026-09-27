@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import type { HitType } from './index.ts';
 
 /**
@@ -72,21 +73,23 @@ export const ACTION_HIT_TYPES = [
 // ---------------------------------------------------------------------------
 
 /**
- * Never parsed, only emitted: a measure is the server describing its own answer,
- * so these are plain unions and the `Record`s below are what keeps them
- * exhaustive. Nothing here is a request boundary needing a zod schema.
+ * A measure is the server describing its own answer; the `Record`s below keep
+ * each of these vocabularies exhaustive, and the web checks what arrives
+ * (`MeasureSchema`) against the same lists.
  */
-export type Population =
-  | 'presence'
-  | 'actions'
-  | 'pageviews'
-  | 'events'
-  | 'outlinks'
-  | 'downloads'
-  | 'sessions'
-  | 'measured_sessions'
-  | 'measured_pageviews'
-  | 'scrolled_pageviews';
+export const POPULATION_NAMES = [
+  'presence',
+  'actions',
+  'pageviews',
+  'events',
+  'outlinks',
+  'downloads',
+  'sessions',
+  'measured_sessions',
+  'measured_pageviews',
+  'scrolled_pageviews',
+] as const;
+export type Population = (typeof POPULATION_NAMES)[number];
 
 export interface PopulationSpec {
   /** Which stored rows it draws from: hit rows (`events`) or visits (`sessions`). */
@@ -163,7 +166,8 @@ export const POPULATIONS: Record<Population, PopulationSpec> = {
  * `rate` is always a fraction in 0–1: the server never pre-scales a percentage,
  * so a tile and its own sparkline cannot end up on different scales.
  */
-export type Unit = 'count' | 'ms' | 'rate' | 'value';
+export const UNITS = ['count', 'ms', 'rate', 'value'] as const;
+export type Unit = (typeof UNITS)[number];
 
 /**
  * How the measure composes across buckets.
@@ -181,7 +185,8 @@ export type Unit = 'count' | 'ms' | 'rate' | 'value';
  *   without re-running the expression over re-aggregated operands. No
  *   client-side total, ever.
  */
-export type Aggregate = 'sum' | 'distinct' | 'ratio' | 'max' | 'computed';
+export const AGGREGATES = ['sum', 'distinct', 'ratio', 'max', 'computed'] as const;
+export type Aggregate = (typeof AGGREGATES)[number];
 
 /**
  * A ratio's components, named as columns of the SAME result.
@@ -212,6 +217,14 @@ export interface Measure {
  * per row: a 1000-row breakdown must not carry 1000 copies of its own schema.
  */
 export type Measures = Record<string, Measure>;
+
+/** A `Measure` as it arrives in a response body (`QueryResponseSchema`). */
+export const MeasureSchema = z.object({
+  unit: z.enum(UNITS),
+  population: z.enum(POPULATION_NAMES),
+  aggregate: z.enum(AGGREGATES),
+  of: z.object({ numerator: z.string().optional(), denominator: z.string() }).optional(),
+}) satisfies z.ZodType<Measure>;
 
 /** One bucket's values, as a chart holds them. */
 export type BucketValues = Readonly<Record<string, number>>;

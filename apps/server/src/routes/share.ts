@@ -1,12 +1,14 @@
 import { createHash, randomBytes } from 'node:crypto';
 import {
   collectBatch,
-  type Dashboard,
   hourlyWhenIntraday,
+  isLinkToken,
+  LINK_TOKEN_BYTES,
   type QueryRequest,
   type QueryResponse,
   RangeSchema,
   readStoredDashboard,
+  type SharePayload,
   type SiteWindow,
 } from '@featherstat/shared';
 import { type Context, Hono } from 'hono';
@@ -43,9 +45,6 @@ import { clientIp } from './track.ts';
  * server-built request (query vocabulary, never anything freer).
  */
 
-const TOKEN_BYTES = 32;
-/** base64url of TOKEN_BYTES random bytes — anything else can't be ours. */
-const TOKEN_SHAPE = /^[A-Za-z0-9_-]{43}$/;
 const DEFAULT_SHARE_RANGE = '30d';
 
 /**
@@ -60,13 +59,6 @@ const DEFAULT_SHARE_RANGE = '30d';
 const SHARE_BATCHES_PER_IP = 30;
 const SHARE_BATCHES_GLOBAL = 240;
 const SHARE_WINDOW_MS = 60_000;
-
-/** `GET /share/:token` body: the dashboard JSON plus its batch, one response. */
-export interface ShareView {
-  dashboard: Dashboard;
-  results: QueryResponse['results'];
-  meta: QueryResponse['meta'];
-}
 
 export interface ShareRouteOptions {
   /** How a batch runs: inline by default, on the read pool in main.ts. */
@@ -108,7 +100,7 @@ export function createShareRoutes(
     if (row === undefined || !writableBy(c.get('principal'), siteOf(row))) {
       return c.json({ error: `unknown dashboard ${id}` }, 404);
     }
-    const token = randomBytes(TOKEN_BYTES).toString('base64url');
+    const token = randomBytes(LINK_TOKEN_BYTES).toString('base64url');
     withWriteTransaction(db, () =>
       insertShareToken(db, { token_hash: sha256(token), dashboard_id: id, created_at: auth.now() }),
     );
@@ -129,7 +121,7 @@ export function createShareRoutes(
   app.get('/share/:token', async (c) => {
     const raw = c.req.param('token');
     // Unknown, revoked and malformed all answer identically — a probe learns nothing.
-    if (!TOKEN_SHAPE.test(raw)) return unknownLink(c);
+    if (!isLinkToken('share', raw)) return unknownLink(c);
     const token = getShareToken(db, sha256(raw));
     if (token === undefined || token.revoked_at !== null) return unknownLink(c);
     const dashboard = getDashboard(db, token.dashboard_id);
@@ -215,7 +207,7 @@ export function createShareRoutes(
       throw error;
     }
     const tag = batchEtag(response.meta.dataVersion, schema, canonical, windows, now);
-    const body: ShareView = {
+    const body: SharePayload = {
       dashboard: layout,
       results: response.results,
       // dataVersion is a global write counter across ALL sites — inside the

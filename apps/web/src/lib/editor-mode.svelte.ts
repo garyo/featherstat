@@ -22,7 +22,7 @@ export function loadEditor(): Promise<typeof import('../editor/editor.ts') | und
 export interface EditorMode {
   /** The chunk's Editor component once edit mode is on; undefined renders the view. */
   readonly Editor: typeof import('../editor/editor.ts').Editor | undefined;
-  /** True while a draft is open — a switch away must go through `confirmDashboardSwitch`. */
+  /** True while a draft is open — a switch away must ask first (`lib/unsaved.ts`). */
   readonly editing: boolean;
   /** True while the open draft differs from the dashboard it was opened on. */
   readonly dirty: boolean;
@@ -34,21 +34,6 @@ export interface EditorMode {
   /** True when the store accepted the save — editing a template just cloned it,
    * and the caller may want to point the URL at the new row. */
   save(next: Dashboard): Promise<boolean>;
-}
-
-/**
- * Whether a switch away from a dashboard being edited may proceed — every
- * navigation that would discard a draft asks first, and only when the draft
- * holds a change to lose. Pure so the decision is testable; the caller supplies
- * `window.confirm` and, on a yes, closes the mode (discarding the draft) BEFORE
- * switching.
- */
-export function confirmDashboardSwitch(
-  dirty: boolean,
-  name: string | undefined,
-  ask: (message: string) => boolean,
-): boolean {
-  return !dirty || ask(`Discard unsaved changes to ${name ?? 'this dashboard'}?`);
 }
 
 export function createEditorMode(store: DashboardStore, scope: () => SiteScope): EditorMode {

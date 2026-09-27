@@ -1,10 +1,15 @@
 import {
   ACTIVE_TICK_MS,
   type RealtimeActive,
+  RealtimeActiveSchema,
   type RealtimeHit,
+  RealtimeHitSchema,
   type RealtimeSnapshot,
+  RealtimeSnapshotSchema,
   type VersionTick,
+  VersionTickSchema,
 } from '@featherstat/shared';
+import type { ResponseSchema } from './api.ts';
 import type { SiteScope } from './state.ts';
 
 /**
@@ -55,6 +60,15 @@ interface LiveEvents {
 }
 type LiveEventName = keyof LiveEvents;
 
+/** The events the server writes, each checked on arrival; a frame that fails is dropped. */
+type ServerEventName = 'snapshot' | 'hit' | 'active' | 'version';
+const FRAMES: { [K in ServerEventName]: ResponseSchema<LiveEvents[K]> } = {
+  snapshot: RealtimeSnapshotSchema,
+  hit: RealtimeHitSchema,
+  active: RealtimeActiveSchema,
+  version: VersionTickSchema,
+};
+
 /** The slice of `EventSource` this module uses — tests supply their own. */
 export interface EventSourceLike {
   addEventListener(type: string, listener: (event: MessageEvent<string>) => void): void;
@@ -103,11 +117,13 @@ export function createLiveStream(options: LiveStreamOptions = {}): LiveStream {
     for (const listener of [...listeners]) (listener as (value: LiveEvents[K]) => void)(payload);
   };
 
-  const parse = <K extends LiveEventName>(
+  const parse = <K extends ServerEventName>(
+    type: K,
     event: MessageEvent<string>,
   ): LiveEvents[K] | undefined => {
     try {
-      return JSON.parse(event.data) as LiveEvents[K];
+      const parsed = FRAMES[type].safeParse(JSON.parse(event.data));
+      return parsed.success ? parsed.data : undefined;
     } catch {
       return undefined; // a truncated frame is a dropped frame, never a dead stream
     }
@@ -144,9 +160,9 @@ export function createLiveStream(options: LiveStreamOptions = {}): LiveStream {
       watchdog = setTimeout(fail, staleMs);
     };
 
-    const emit = <K extends LiveEventName>(type: K, event: MessageEvent<string>): void => {
+    const emit = <K extends ServerEventName>(type: K, event: MessageEvent<string>): void => {
       alive();
-      const payload = parse<K>(event);
+      const payload = parse(type, event);
       if (payload !== undefined) notify(type, payload);
     };
 
@@ -159,7 +175,7 @@ export function createLiveStream(options: LiveStreamOptions = {}): LiveStream {
     });
     current.addEventListener('snapshot', (event) => {
       alive();
-      const payload = parse<'snapshot'>(event);
+      const payload = parse('snapshot', event);
       if (payload === undefined) return;
       notify('snapshot', payload);
       if (down) {

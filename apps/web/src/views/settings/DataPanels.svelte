@@ -10,11 +10,11 @@ import {
   dataSettingsBody,
   dataSettingsDraft,
   dropTotals,
-  edited,
   formatBytes,
   localInputToMs,
   msToLocalInput,
 } from '../../lib/settings.ts';
+import { edited } from '../../lib/unsaved.ts';
 import { exactNumber } from '../../widgets/format.ts';
 import LoadState from './LoadState.svelte';
 import PanelError from './PanelError.svelte';

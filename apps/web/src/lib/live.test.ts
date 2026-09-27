@@ -80,7 +80,7 @@ describe('live stream', () => {
     stream.on('version', (payload) => versions.push(payload));
 
     latest().emit('hit', hit);
-    latest().emit('active', { active: { 4: 7 } });
+    latest().emit('active', { active: { 4: 7 }, visitors: [] });
     latest().emit('version', tick);
 
     expect(hits).toEqual([hit]);
@@ -88,12 +88,13 @@ describe('live stream', () => {
     expect(versions).toEqual([tick]);
   });
 
-  it('stops delivering after unsubscribe and ignores unparseable frames', () => {
+  it('stops delivering after unsubscribe, and drops a frame it cannot read', () => {
     const stream = createLiveStream({ open });
     const seen: RealtimeHit[] = [];
     const off = stream.on('hit', (payload) => seen.push(payload));
 
     latest().emit('hit', '{ truncated');
+    latest().emit('hit', { ...hit, visitor: 'Nimble Narwhal' }); // parses, but is no hit
     latest().emit('hit', hit);
     off();
     latest().emit('hit', hit);
@@ -169,7 +170,7 @@ describe('live stream', () => {
 
     // Frames keep resetting the deadline …
     vi.advanceTimersByTime(9_000);
-    latest().emit('active', { active: {} });
+    latest().emit('active', { active: {}, visitors: [] });
     vi.advanceTimersByTime(9_999);
     expect(FakeEventSource.opened).toHaveLength(1);
 

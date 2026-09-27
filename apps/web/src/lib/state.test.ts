@@ -10,6 +10,7 @@ import {
   formatDayRange,
   heldRange,
   latestLocalDay,
+  leavesSettingsSection,
   localDayKey,
   parseDashRef,
   parseDetailRef,
@@ -326,6 +327,27 @@ describe('discardsDraft', () => {
   it('has nothing to discard off the Dashboard view', () => {
     const realtime = at({ site: 3, view: 'realtime' });
     expect(discardsDraft(realtime, at({ site: 1 }))).toBe(false);
+  });
+});
+
+describe('leavesSettingsSection', () => {
+  const access = at({ view: 'settings', section: 'access' });
+
+  it('is true for every move that takes the open section off screen', () => {
+    expect(leavesSettingsSection(access, at({}))).toBe(true);
+    expect(leavesSettingsSection(access, { ...access, view: 'realtime', section: undefined })).toBe(
+      true,
+    );
+    expect(leavesSettingsSection(access, { ...access, section: 'users' })).toBe(true);
+  });
+
+  it('keeps the section through moves that stay on it', () => {
+    // The scope picker keeps the view — Settings is not scoped by it.
+    expect(leavesSettingsSection(access, { ...access, site: 3 })).toBe(false);
+  });
+
+  it('has nothing to lose off the Settings view', () => {
+    expect(leavesSettingsSection(at({ site: 3 }), access)).toBe(false);
   });
 });
 

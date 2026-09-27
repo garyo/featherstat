@@ -3,8 +3,9 @@ import type { SiteInfo } from '@featherstat/shared';
 import type { AdminClient } from '../lib/admin.ts';
 import { type PanelFailure, panelFailure } from '../lib/admin-failure.ts';
 import type { AuthRole } from '../lib/auth.svelte.ts';
-import { edited, parseDomains, trackingSnippet } from '../lib/settings.ts';
+import { parseDomains, trackingSnippet } from '../lib/settings.ts';
 import type { SettingsSection } from '../lib/state.ts';
+import { confirmDiscard, edited } from '../lib/unsaved.ts';
 import AccessPanels from './settings/AccessPanels.svelte';
 import CampaignPanels from './settings/CampaignPanels.svelte';
 import DataPanels from './settings/DataPanels.svelte';
@@ -99,9 +100,7 @@ export function unsaved(): boolean {
 function selectSection(next: Section): void {
   if (next === section) return;
   const label = ALL_SECTIONS.find((entry) => entry.id === section)?.label ?? 'this section';
-  if (unsaved() && !window.confirm(`Leave ${label}? Your unsaved changes there will be lost.`)) {
-    return;
-  }
+  if (!confirmDiscard(unsaved(), label, (message) => window.confirm(message))) return;
   if (onselectsection === undefined) chosen = next;
   else onselectsection(next);
 }

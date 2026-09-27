@@ -155,6 +155,15 @@ export function discardsDraft(from: ViewState, to: ViewState): boolean {
   );
 }
 
+/**
+ * Whether moving between two states takes the open Settings section — and any
+ * unsaved form in it — off screen: the page leaves Settings, or history moves
+ * it to another section. (The section nav asks for itself before it moves.)
+ */
+export function leavesSettingsSection(from: ViewState, to: ViewState): boolean {
+  return from.view === 'settings' && (to.view !== 'settings' || to.section !== from.section);
+}
+
 /** Exhaustive by construction: a new preset in `packages/shared` fails to compile until it is labeled. */
 export const RANGE_LABELS: Record<RangePreset, string> = {
   today: 'Today',

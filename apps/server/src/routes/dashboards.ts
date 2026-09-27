@@ -1,5 +1,7 @@
 import {
   type Dashboard,
+  type DashboardDetail,
+  type DashboardInfo,
   DashboardSchema,
   dashboardBatchIssue,
   dashboardTemplate,
@@ -36,23 +38,6 @@ import {
 
 /** 24 widgets × a query with 16 × 2 KB filter values still fit several times over. */
 const MAX_DASHBOARD_BODY_BYTES = 256 * 1024;
-
-/** List row: enough for the library picker without shipping every layout. */
-export interface DashboardInfo {
-  id: number;
-  name: string;
-  site: Dashboard['site'];
-  /** Shipped-template id this row was cloned from (the reset target); null otherwise. */
-  template: string | null;
-  createdAt: number;
-  updatedAt: number;
-  /** LIVE share links pointing at this row — what a delete would revoke. */
-  shareCount: number;
-}
-
-export interface DashboardDetail extends DashboardInfo {
-  layout: Dashboard;
-}
 
 export function createDashboardRoutes(db: Db, auth: Auth): Hono<AuthEnv> {
   const app = new Hono<AuthEnv>();

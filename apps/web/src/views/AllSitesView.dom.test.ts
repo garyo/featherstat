@@ -6,8 +6,9 @@ import type { AdminClient } from '../lib/admin.ts';
 import type { QueryClient } from '../lib/api.ts';
 import type { DashboardStore } from '../lib/dashboards.svelte.ts';
 import type { EditorMode } from '../lib/editor-mode.svelte.ts';
+import { button } from '../lib/fake-admin.ts';
 import type { LiveStream } from '../lib/live.ts';
-import type { ViewRange } from '../lib/state.ts';
+import type { DashRef, ViewRange } from '../lib/state.ts';
 import type { AppEnv } from '../widgets/types.ts';
 import AllSitesView from './AllSitesView.svelte';
 
@@ -96,10 +97,17 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
+interface Extra {
+  store?: DashboardStore;
+  admin?: AdminClient;
+  onselectdash?: (dash: DashRef) => void;
+}
+
 /** Mounts the view with an `app` the test can replace, as the Shell does. */
 function render(
   client: QueryClient,
   range: () => ViewRange = () => '30d',
+  extra: Extra = {},
 ): (next: AppEnv) => Promise<void> {
   const cell = new SvelteMap<'app', AppEnv>([['app', app({ 1: 3 })]]);
   const target = document.createElement('div');
@@ -111,10 +119,10 @@ function render(
         get app() {
           return cell.get('app') as AppEnv;
         },
-        admin: {} as AdminClient,
+        admin: extra.admin ?? ({} as AdminClient),
         client,
         live,
-        store,
+        store: extra.store ?? store,
         mode,
         get range() {
           return range();
@@ -122,7 +130,7 @@ function render(
         cmp: 'previous',
         onselectrange: () => undefined,
         onselectcmp: () => undefined,
-        onselectdash: () => undefined,
+        onselectdash: extra.onselectdash ?? (() => undefined),
       },
     }),
   );
@@ -183,5 +191,34 @@ describe('the overview labels the data on screen, not the range being loaded', (
         "Couldn't load last 7 days — showing last 30 days",
       ),
     );
+  });
+});
+
+describe('sharing the built-in overview', () => {
+  it('moves the view onto the row the first share saved, so a second share reuses it', async () => {
+    let id: number | undefined;
+    const saving: DashboardStore = {
+      ...store,
+      save: async () => {
+        id = 7;
+        return true;
+      },
+      get id() {
+        return id;
+      },
+    };
+    const onselectdash = vi.fn();
+    const { client } = recordingClient();
+    render(client, undefined, {
+      store: saving,
+      admin: { createShareLink: async () => ({ token: 't' }) } as unknown as AdminClient,
+      onselectdash,
+    });
+
+    button(document.body, 'Share').click();
+    await vi.waitFor(() => button(document.body, 'Create share link'));
+    button(document.body, 'Create share link').click();
+
+    await vi.waitFor(() => expect(onselectdash).toHaveBeenCalledWith(7));
   });
 });

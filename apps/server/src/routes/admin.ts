@@ -8,6 +8,7 @@ import {
   AdminLoginSchema,
   type AdminMe,
   type AdminPropsResponse,
+  type AdminSessionGrant,
   AdminSetupSchema,
   AdminSiteCreateSchema,
   AdminSitePatchSchema,
@@ -185,7 +186,7 @@ export function createAdminRoutes(
     await auth.setPassword(body.data.password);
     console.log('first-run setup complete: admin password set, setup token consumed');
     const issued = auth.login(c);
-    return c.json({ ok: true, csrf: issued.csrfToken });
+    return c.json({ ok: true, csrf: issued.csrfToken } satisfies AdminSessionGrant);
   });
 
   app.post('/api/admin/login', async (c) => {
@@ -213,11 +214,11 @@ export function createAdminRoutes(
       const ok = await verifyPassword(password, usableHash ?? DECOY_HASH);
       if (user === undefined || usableHash === null || !ok) return wrong();
       const issued = auth.login(c, { kind: 'user', userId: user.id });
-      return c.json({ ok: true, csrf: issued.csrfToken });
+      return c.json({ ok: true, csrf: issued.csrfToken } satisfies AdminSessionGrant);
     }
     if (!(await verifyPassword(password, hash))) return wrong();
     const issued = auth.login(c);
-    return c.json({ ok: true, csrf: issued.csrfToken });
+    return c.json({ ok: true, csrf: issued.csrfToken } satisfies AdminSessionGrant);
   });
 
   app.use('/api/admin/*', auth.gate);

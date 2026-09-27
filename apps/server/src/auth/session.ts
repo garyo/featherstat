@@ -19,11 +19,10 @@ import {
  * ties cookies to this database — a copied cookie is worthless elsewhere.
  */
 
-// `__Host-` pins the cookies to this host, Secure, Path=/ — a sibling subdomain
+// `__Host-` pins the cookie to this host, Secure, Path=/ — a sibling subdomain
 // (or anything writing `Domain=` cookies) cannot shadow the admin session.
+// Its CSRF partner is `CSRF_COOKIE`, in packages/shared: the SPA reads that one.
 export const SESSION_COOKIE = '__Host-session';
-export const CSRF_COOKIE = '__Host-csrf';
-export const CSRF_HEADER = 'x-csrf-token';
 export const SESSION_TTL_MS = 14 * DAY_MS;
 /**
  * Viewer sessions live longer and SLIDE (auth.ts renews one that has burned

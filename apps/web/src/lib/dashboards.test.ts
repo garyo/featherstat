@@ -1,13 +1,7 @@
-import { allSitesTemplate, overviewTemplate } from '@featherstat/shared';
+import { allSitesTemplate, type DashboardInfo, overviewTemplate } from '@featherstat/shared';
 import { describe, expect, it } from 'vitest';
 import { createAdminClient } from './admin.ts';
-import {
-  builtTemplate,
-  type DashboardInfo,
-  libraryFor,
-  resolveDashRef,
-  withLiveSiteIds,
-} from './dashboards.ts';
+import { builtTemplate, libraryFor, resolveDashRef, withLiveSiteIds } from './dashboards.ts';
 
 const siteOverview = overviewTemplate.build(1);
 const allSites = (siteIds: readonly number[]) => allSitesTemplate.build('all', siteIds);

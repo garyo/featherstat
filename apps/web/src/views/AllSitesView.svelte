@@ -220,6 +220,7 @@ const note = $derived.by(() => {
     {admin}
     {store}
     layout={{ ...dashboard, site: 'all' }}
+    {onselectdash}
     onclose={() => (ShareDialog = undefined)}
   />
 {/if}

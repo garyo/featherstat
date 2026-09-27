@@ -1,3 +1,4 @@
+import { type DashboardInfo, overviewTemplate } from '@featherstat/shared';
 import { flushSync, mount, unmount } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { LibraryEntry } from '../lib/dashboards.ts';
@@ -6,20 +7,16 @@ import ManageDashboards from './ManageDashboards.svelte';
 
 /** Reset and delete both throw a layout away, so neither acts on one click. */
 
-const CLONE: LibraryEntry = {
-  kind: 'stored',
-  ref: 7,
+const INFO: DashboardInfo = {
+  id: 7,
   name: 'My overview',
-  info: {
-    id: 7,
-    name: 'My overview',
-    site: 1,
-    template: 'overview',
-    createdAt: 0,
-    updatedAt: 0,
-    shareCount: 2,
-  },
+  site: 1,
+  template: 'overview',
+  createdAt: 0,
+  updatedAt: 0,
+  shareCount: 2,
 };
+const CLONE: LibraryEntry = { kind: 'stored', ref: 7, name: 'My overview', info: INFO };
 
 let component: Record<string, unknown> | undefined;
 afterEach(() => {
@@ -30,7 +27,11 @@ afterEach(() => {
 
 function open() {
   const { admin, calls } = fakeAdmin({
-    'POST /api/admin/dashboards/7/reset': () => ({}),
+    // A real row: the client checks what it reads (DashboardDetailSchema).
+    'POST /api/admin/dashboards/7/reset': () => ({
+      ...INFO,
+      layout: overviewTemplate.build(1),
+    }),
     'DELETE /api/admin/dashboards/7': () => undefined,
   });
   const onchanged = vi.fn(async () => undefined);

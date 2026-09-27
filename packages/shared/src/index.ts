@@ -11,7 +11,7 @@ import {
   SegmentFilterNodeSchema,
 } from './filters.ts';
 import { GoalMetricRefSchema } from './goals.ts';
-import type { Measures } from './measures.ts';
+import { MeasureSchema, type Measures } from './measures.ts';
 
 // ---------------------------------------------------------------------------
 // Constants (docs/03)
@@ -750,25 +750,32 @@ export const AdminSitePatchSchema = z
   });
 export type AdminSitePatch = z.infer<typeof AdminSitePatchSchema>;
 
+/**
+ * The double-submit CSRF pair: the session's token rides in this readable
+ * cookie (`__Host-` pins it to this host, Secure, Path=/), and every mutation
+ * echoes it in this header.
+ */
+export const CSRF_COOKIE = '__Host-csrf';
+export const CSRF_HEADER = 'x-csrf-token';
+
 /** `GET /api/admin/me` — the auth bootstrap: which screen the UI should show. */
-export interface AdminMe {
-  authenticated: boolean;
+export const AdminMeSchema = z.object({
+  authenticated: z.boolean(),
   /** No password configured yet — the UI may only offer first-run setup. */
-  needsSetup: boolean;
-  /** Present when authenticated: the token mutations echo as `x-csrf-token`. */
-  csrf?: string;
+  needsSetup: z.boolean(),
+  /** Present when authenticated: the token mutations echo as `CSRF_HEADER`. */
+  csrf: z.string().optional(),
   /** Present when authenticated: which kind of session this is, so the SPA
    * can hide the admin surface from a viewer instead of 403-ing into it. */
-  principal?: 'admin' | 'user' | 'viewer';
+  principal: z.enum(['admin', 'user', 'viewer']).optional(),
   /** Present for a user session: who is signed in. */
-  email?: string;
-}
+  email: z.string().optional(),
+});
+export type AdminMe = z.infer<typeof AdminMeSchema>;
 
 /** Login/setup success: the session rides in cookies, the CSRF token in the body. */
-export interface AdminSessionGrant {
-  ok: true;
-  csrf: string;
-}
+export const AdminSessionGrantSchema = z.object({ ok: z.literal(true), csrf: z.string() });
+export type AdminSessionGrant = z.infer<typeof AdminSessionGrantSchema>;
 
 export interface AdminBotDrops {
   siteId: number;
@@ -803,6 +810,32 @@ export const AdminDataSettingsSchema = z.object({
   backupKeep: z.number().int().min(1).max(365),
 });
 export type AdminDataSettings = z.infer<typeof AdminDataSettingsSchema>;
+
+// ---------------------------------------------------------------------------
+// Link tokens (docs/04 § 5) — the secrets the public links carry
+// ---------------------------------------------------------------------------
+
+/** Random bytes behind every link token — base64url, unpadded, on the wire. */
+export const LINK_TOKEN_BYTES = 32;
+const LINK_SECRET = `[A-Za-z0-9_-]{${Math.ceil((LINK_TOKEN_BYTES * 4) / 3)}}`;
+
+/**
+ * What precedes the secret in each kind of link token: a share link's is the
+ * bare secret; a user invite (`/welcome/…`) and a viewer's magic link
+ * (`/invite/…`) say which they are, so neither can be spent as the other.
+ */
+export const LINK_TOKEN_PREFIX = { share: '', user: 'fsu_', viewer: 'fsv_' } as const;
+export type LinkTokenKind = keyof typeof LINK_TOKEN_PREFIX;
+
+/** A link token of this kind, unanchored — for embedding in a path pattern. */
+export function linkTokenPattern(kind: LinkTokenKind): string {
+  return `${LINK_TOKEN_PREFIX[kind]}${LINK_SECRET}`;
+}
+
+/** Whether `raw` has the form of this kind of link token — anything else can't be ours. */
+export function isLinkToken(kind: LinkTokenKind, raw: string): boolean {
+  return new RegExp(`^${linkTokenPattern(kind)}$`).test(raw);
+}
 
 // ---------------------------------------------------------------------------
 // Props governance (docs/03 § Props, docs/04 § 5) — the admin surface's contract
@@ -972,12 +1005,62 @@ export const AnnotationCreateSchema = z.object({
 export type AnnotationCreate = z.infer<typeof AnnotationCreateSchema>;
 
 /** One annotation as the admin list and `meta.annotations` carry it. */
-export interface AnnotationInfo {
-  id: number;
-  siteId: number | null;
-  ts: number;
-  text: string;
-}
+export const AnnotationInfoSchema = z.object({
+  id: z.number(),
+  siteId: z.number().nullable(),
+  ts: z.number(),
+  text: z.string(),
+});
+export type AnnotationInfo = z.infer<typeof AnnotationInfoSchema>;
+
+// ---------------------------------------------------------------------------
+// Query responses, checked on arrival (docs/04 § 3). The interfaces above stay
+// the source of truth — the server builds them — and each schema must produce
+// one (`satisfies`); `test/contract` holds the pair together by parsing every
+// shipped template's real answer and requiring nothing be refused or dropped.
+// ---------------------------------------------------------------------------
+
+const ResultRowSchema = z.record(
+  z.string(),
+  z.union([z.string(), z.number(), z.null(), z.array(z.string())]),
+) satisfies z.ZodType<ResultRow>;
+
+const SiteWindowSchema = z.object({
+  siteId: z.number(),
+  timezone: z.string(),
+  from: z.string(),
+  to: z.string(),
+  fromTs: z.number().optional(),
+  toTs: z.number().optional(),
+  compareFrom: z.string().optional(),
+  compareTo: z.string().optional(),
+}) satisfies z.ZodType<SiteWindow>;
+
+const QueryResultSchema = z.object({
+  rows: z.array(ResultRowSchema),
+  compare: z.array(ResultRowSchema).optional(),
+  ms: z.number().optional(),
+  bucket: BucketSchema.optional(),
+  axis: z
+    .array(z.object({ siteId: z.number(), keys: z.array(z.string()), clip: z.string().optional() }))
+    .optional(),
+  measures: z.record(z.string(), MeasureSchema).optional(),
+}) satisfies z.ZodType<QueryResult>;
+
+const QueryErrorResultSchema = z.object({
+  error: z.object({ code: z.enum(['unsupported', 'not_implemented']), message: z.string() }),
+}) satisfies z.ZodType<QueryErrorResult>;
+
+/** A `/api/query` body — the envelope and every per-query entry in it. */
+export const QueryResponseSchema = z.object({
+  results: z.record(z.string(), z.union([QueryErrorResultSchema, QueryResultSchema])),
+  meta: z.object({
+    generatedInMs: z.number(),
+    dataVersion: z.number(),
+    windows: z.array(SiteWindowSchema),
+    annotations: z.array(AnnotationInfoSchema).optional(),
+  }),
+}) satisfies z.ZodType<QueryResponse>;
 
 // ---------------------------------------------------------------------------
 // Alert rules (docs/04 § 5) — stored as one settings row like the ntfy rules,
@@ -1179,6 +1262,31 @@ export const DashboardSchema = z.object({
 });
 export type Dashboard = z.infer<typeof DashboardSchema>;
 
+/** `GET /api/admin/dashboards` row: enough for the library picker without shipping every layout. */
+export const DashboardInfoSchema = z.object({
+  id: z.number().int().positive(),
+  name: z.string(),
+  site: DashboardSchema.shape.site,
+  /** Shipped-template id this row was cloned from (the reset target); null otherwise. */
+  template: z.string().nullable(),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+  /** LIVE share links pointing at this row — what a delete would revoke. */
+  shareCount: z.number().int().nonnegative(),
+});
+export type DashboardInfo = z.infer<typeof DashboardInfoSchema>;
+
+/** One stored dashboard: the list fields plus its full, validated layout. */
+export const DashboardDetailSchema = DashboardInfoSchema.extend({ layout: DashboardSchema });
+export type DashboardDetail = z.infer<typeof DashboardDetailSchema>;
+
+/** `GET /share/:token` body (docs/04 § 5): the stored layout and its batch, one response. */
+export const SharePayloadSchema = z.object({
+  dashboard: DashboardSchema,
+  ...QueryResponseSchema.shape,
+});
+export type SharePayload = z.infer<typeof SharePayloadSchema>;
+
 // ---------------------------------------------------------------------------
 // Realtime SSE (docs/04 § 4)
 // ---------------------------------------------------------------------------
@@ -1261,6 +1369,63 @@ export interface VersionTick {
   siteId: number;
   version: number;
 }
+
+/*
+ * The frames as the web reads them — checked before any widget sees one. As
+ * with the query envelope, the interfaces above are the source of truth and
+ * each schema must produce one; `realtime/sse.test.ts` requires every frame
+ * the server writes to come back through its schema unchanged.
+ */
+
+const RealtimeVisitorSchema = z.object({
+  ref: z.string(),
+  name: z.string(),
+  color: z.number(),
+}) satisfies z.ZodType<RealtimeVisitor>;
+
+export const RealtimeHitSchema = z.object({
+  siteId: z.number(),
+  ts: z.number(),
+  type: HitTypeSchema,
+  visitor: RealtimeVisitorSchema,
+  path: z.string().optional(),
+  eventCategory: z.string().optional(),
+  eventAction: z.string().optional(),
+  country: z.string().optional(),
+  region: z.string().optional(),
+  city: z.string().optional(),
+  lat: z.number().optional(),
+  lon: z.number().optional(),
+  deviceType: z.string().optional(),
+}) satisfies z.ZodType<RealtimeHit>;
+
+const RealtimeEngagementSchema = z.object({
+  ref: z.string(),
+  name: z.string(),
+  color: z.number(),
+  siteId: z.number(),
+  engagedMs: z.number(),
+  lastTs: z.number(),
+}) satisfies z.ZodType<RealtimeEngagement>;
+
+/** Active visitors by site id — the JSON object's keys are the ids as strings. */
+const ActiveCountsSchema = z.record(z.string(), z.number());
+
+export const RealtimeSnapshotSchema = z.object({
+  active: ActiveCountsSchema,
+  recent: z.array(RealtimeHitSchema),
+  visitors: z.array(RealtimeEngagementSchema),
+}) satisfies z.ZodType<RealtimeSnapshot>;
+
+export const RealtimeActiveSchema = z.object({
+  active: ActiveCountsSchema,
+  visitors: z.array(RealtimeEngagementSchema),
+}) satisfies z.ZodType<RealtimeActive>;
+
+export const VersionTickSchema = z.object({
+  siteId: z.number(),
+  version: z.number(),
+}) satisfies z.ZodType<VersionTick>;
 
 export * from './alias.ts';
 export * from './campaigns.ts';

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AdminError, createAdminClient, OFFLINE_STATUS } from './admin.ts';
+import { UNREADABLE_ANSWER } from './api.ts';
 
 interface Call {
   input: string;
@@ -54,6 +55,23 @@ describe('createAdminClient', () => {
     await admin.logout();
     const headers = calls[1]?.init?.headers as Record<string, string>;
     expect(headers['x-csrf-token']).toBe('me-tok');
+  });
+
+  it('falls back to the readable CSRF cookie the server set', async () => {
+    vi.stubGlobal('document', { cookie: 'theme=dark; __Host-csrf=cookie-tok; other=1' });
+    try {
+      const { admin, calls } = client(() => json(200, { ok: true }));
+      await admin.logout();
+      const headers = calls[0]?.init?.headers as Record<string, string>;
+      expect(headers['x-csrf-token']).toBe('cookie-tok');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('refuses a session probe it cannot read, rather than trusting it', async () => {
+    const { admin } = client(() => json(200, { authenticated: 'yes' }));
+    await expect(admin.me()).rejects.toThrow(UNREADABLE_ANSWER);
   });
 
   it('PATCHes site updates to the id path', async () => {

@@ -6,7 +6,7 @@ import { adminObjects } from '../../lib/admin-objects.ts';
 import type { AuthRole } from '../../lib/auth.svelte.ts';
 import ConfirmButton from '../../lib/components/ConfirmButton.svelte';
 import { createLoader } from '../../lib/loader.svelte.ts';
-import { edited } from '../../lib/settings.ts';
+import { edited } from '../../lib/unsaved.ts';
 import {
   buildUtmUrl,
   emptyUtmDraft,

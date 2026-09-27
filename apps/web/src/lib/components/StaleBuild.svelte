@@ -22,7 +22,10 @@
 <style>
   .stale {
     position: fixed;
-    z-index: 60; /* above the modals (50) — they are what fails to open. */
+    /* Above the page's own stacking. An open modal <dialog> is in the top layer
+       and covers this (inert) until it closes — every chunk loads from a control
+       outside a dialog, so only a history move can overlap the two. */
+    z-index: 60;
     inset: auto 16px 16px;
     margin: 0 auto;
     max-width: 520px;

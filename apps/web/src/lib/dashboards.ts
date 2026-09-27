@@ -1,5 +1,6 @@
 import {
   type Dashboard,
+  type DashboardInfo,
   type DashboardTemplate,
   dashboardTemplate,
   templatesForScope,
@@ -9,27 +10,9 @@ import type { DashRef, SiteScope } from './state.ts';
 /**
  * The dashboard library (docs/05 § The dashboard library): a scope's list is
  * the shipped templates (virtual `t:<id>` entries, code not rows) plus its
- * stored rows. This module is the pure half — wire shapes and resolution
- * rules; the reactive store lives in `dashboards.svelte.ts`.
+ * stored rows. This module is the pure half — the resolution rules (the wire
+ * rows are `packages/shared`'s); the reactive store lives in `dashboards.svelte.ts`.
  */
-
-/** List row of `GET /api/admin/dashboards` (the server's `DashboardInfo`). */
-export interface DashboardInfo {
-  id: number;
-  name: string;
-  site: Dashboard['site'];
-  /** Shipped-template id this row was cloned from (the reset target); null otherwise. */
-  template: string | null;
-  createdAt: number;
-  updatedAt: number;
-  /** Live share links pointing at this row — what deleting it would revoke. */
-  shareCount: number;
-}
-
-/** Detail row: the list fields plus the full validated layout. */
-export interface DashboardDetail extends DashboardInfo {
-  layout: Dashboard;
-}
 
 /** One line of the switcher: a shipped template, or a stored row. */
 export type LibraryEntry =

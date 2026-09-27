@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { DASHBOARD_LAYOUT_VERSION } from '@featherstat/shared';
+import { DASHBOARD_LAYOUT_VERSION, SharePayloadSchema } from '@featherstat/shared';
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { event, openTestDb, session, T0 } from '../../test/rows.ts';
@@ -15,7 +15,7 @@ import {
 import { executeQueryRequest } from '../query/executor.ts';
 import { createAdminRoutes } from './admin.ts';
 import { createDashboardRoutes } from './dashboards.ts';
-import { createShareRoutes, type ShareView } from './share.ts';
+import { createShareRoutes } from './share.ts';
 
 const PASSWORD = 'a-decent-password';
 
@@ -162,7 +162,7 @@ describe('GET /share/:token', () => {
     expect(etag).toMatch(/^"[A-Za-z0-9_-]+"$/);
     expect(res.headers.get('cache-control')).toBe('private, no-cache');
 
-    const view = (await res.json()) as ShareView;
+    const view = SharePayloadSchema.parse(await res.json());
     expect(view.dashboard).toMatchObject({ name: 'Overview', site: 1 });
     expect(view.dashboard.grid).toHaveLength(2);
     // The SAME batch the in-app view runs: the widget's query, its derived
@@ -223,7 +223,7 @@ describe('GET /share/:token', () => {
 
     const res = await app.request(`/share/${token}`);
     expect(res.status).toBe(200);
-    const view = (await res.json()) as ShareView;
+    const view = SharePayloadSchema.parse(await res.json());
     expect(view.dashboard.version).toBe(DASHBOARD_LAYOUT_VERSION);
 
     // The proof is in what the server actually ran: the answered row carries the
@@ -306,7 +306,7 @@ describe('GET /share/:token', () => {
     }
     // The GET answer is the stored batch: the layout's own query ids, nothing else.
     const res = await app.request(`/share/${token}`);
-    const view = (await res.json()) as ShareView;
+    const view = SharePayloadSchema.parse(await res.json());
     expect(Object.keys(view.results).sort()).toEqual(['kpis', 'kpis~spark']);
   });
 
@@ -376,7 +376,7 @@ describe('execution', () => {
 
     const res = await app.request(`/share/${token}`);
     expect(res.status).toBe(200);
-    const view = (await res.json()) as ShareView;
+    const view = SharePayloadSchema.parse(await res.json());
     expect(view.results.goal).toMatchObject({ rows: [{ [conversions]: 1 }] });
     const before = res.headers.get('etag') as string;
 
@@ -390,7 +390,7 @@ describe('execution', () => {
     );
     const after = await app.request(`/share/${token}`, { headers: { 'if-none-match': before } });
     expect(after.status).toBe(200);
-    expect(((await after.json()) as ShareView).results.goal).toMatchObject({ rows: [] });
+    expect(SharePayloadSchema.parse(await after.json()).results.goal).toMatchObject({ rows: [] });
   });
 
   it('runs through the injected executor — the worker pool in production', async () => {

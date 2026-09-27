@@ -1,6 +1,8 @@
 import {
   type AdminDiagnostics,
+  AdminMeSchema,
   AdminPropsResponseSchema,
+  AdminSessionGrantSchema,
   type ExclusionState,
   type SiteInfo,
 } from '@featherstat/shared';
@@ -64,7 +66,7 @@ async function login(password = PASSWORD): Promise<{ cookie: string; csrf: strin
     body: JSON.stringify({ password }),
   });
   expect(res.status).toBe(200);
-  const { csrf } = (await res.json()) as { csrf: string };
+  const { csrf } = AdminSessionGrantSchema.parse(await res.json());
   return { cookie: cookiesOf(res), csrf };
 }
 
@@ -209,7 +211,7 @@ describe('password change', () => {
 
     // The changing session survives; the other one is gone.
     const me = await app.request('/api/admin/me', { headers: { cookie: session.cookie } });
-    expect(((await me.json()) as { authenticated: boolean }).authenticated).toBe(true);
+    expect(AdminMeSchema.parse(await me.json()).authenticated).toBe(true);
     const revoked = await app.request('/api/admin/diagnostics', {
       headers: { cookie: other.cookie },
     });

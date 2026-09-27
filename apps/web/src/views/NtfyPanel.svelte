@@ -12,7 +12,7 @@ import {
   type NtfyErrors,
   settingsBody,
 } from '../lib/ntfy.ts';
-import { edited } from '../lib/settings.ts';
+import { edited } from '../lib/unsaved.ts';
 import LoadState from './settings/LoadState.svelte';
 import PanelError from './settings/PanelError.svelte';
 
