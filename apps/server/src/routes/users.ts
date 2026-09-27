@@ -1,6 +1,9 @@
 import { createHash, randomBytes } from 'node:crypto';
 import {
   DAY_MS,
+  isLinkToken,
+  LINK_TOKEN_BYTES,
+  LINK_TOKEN_PREFIX,
   UserClaimSchema,
   UserCreateSchema,
   type UserInfo,
@@ -51,8 +54,6 @@ import { CLAIM_ACCOUNT, CLAIM_FAILURES, jsonOnly } from './viewers.ts';
  */
 
 const MAGIC_LINK_TTL_MS = 7 * DAY_MS;
-/** `fsu_` + base64url of 32 random bytes — anything else can't be ours. */
-const LINK_TOKEN_SHAPE = /^fsu_[A-Za-z0-9_-]{43}$/;
 /** User bodies are an email, a site list, or a password — far under this. */
 const MAX_USER_BODY_BYTES = 64 * 1024;
 
@@ -87,7 +88,7 @@ export function createUserRoutes(
 
   /** Mints inside an open transaction; the caller wraps. */
   const mintInvite = (user: UserRow): UserInviteMinted => {
-    const raw = `fsu_${randomBytes(32).toString('base64url')}`;
+    const raw = `${LINK_TOKEN_PREFIX.user}${randomBytes(LINK_TOKEN_BYTES).toString('base64url')}`;
     const expiresAt = auth.now() + MAGIC_LINK_TTL_MS;
     insertMagicLink(db, {
       token_hash: sha256(raw),
@@ -188,7 +189,7 @@ export function createUserRoutes(
     const raw = c.req.param('token');
     // Malformed, unknown, used, expired and disabled all answer identically —
     // a probe learns nothing, and the tokens are unguessable anyway.
-    if (!LINK_TOKEN_SHAPE.test(raw)) return dead();
+    if (!isLinkToken('user', raw)) return dead();
     const body = await parseBody(c, UserClaimSchema);
     if (body.ok === false) return body.response;
     // Hashing is async and the write transaction is not: derive first, spend

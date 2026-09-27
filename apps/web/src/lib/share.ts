@@ -10,7 +10,7 @@
  * a navigation, JSON for a fetch), `/share/<token>` renders the page too.
  */
 
-import type { Dashboard, QueryResponse } from '@featherstat/shared';
+import { type Dashboard, linkTokenPattern, type QueryResponse } from '@featherstat/shared';
 import type { RangePreset } from './state.ts';
 
 /** `GET /share/:token` body (the server's `ShareView`): the layout and its batch, one response. */
@@ -20,9 +20,7 @@ export interface SharePayload {
   meta: QueryResponse['meta'];
 }
 
-/** base64url of the server's 32 random bytes — routes/share.ts TOKEN_SHAPE, verbatim. */
-const TOKEN = '[A-Za-z0-9_-]{43}';
-const SHARE_PATH = new RegExp(`^/(?:s|share)/(${TOKEN})/?$`);
+const SHARE_PATH = new RegExp(`^/(?:s|share)/(${linkTokenPattern('share')})/?$`);
 
 /** The token this URL asks for, or undefined for every other path in the app. */
 export function shareTokenFromPath(pathname: string): string | undefined {

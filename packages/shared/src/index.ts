@@ -805,6 +805,32 @@ export const AdminDataSettingsSchema = z.object({
 export type AdminDataSettings = z.infer<typeof AdminDataSettingsSchema>;
 
 // ---------------------------------------------------------------------------
+// Link tokens (docs/04 § 5) — the secrets the public links carry
+// ---------------------------------------------------------------------------
+
+/** Random bytes behind every link token — base64url, unpadded, on the wire. */
+export const LINK_TOKEN_BYTES = 32;
+const LINK_SECRET = `[A-Za-z0-9_-]{${Math.ceil((LINK_TOKEN_BYTES * 4) / 3)}}`;
+
+/**
+ * What precedes the secret in each kind of link token: a share link's is the
+ * bare secret; a user invite (`/welcome/…`) and a viewer's magic link
+ * (`/invite/…`) say which they are, so neither can be spent as the other.
+ */
+export const LINK_TOKEN_PREFIX = { share: '', user: 'fsu_', viewer: 'fsv_' } as const;
+export type LinkTokenKind = keyof typeof LINK_TOKEN_PREFIX;
+
+/** A link token of this kind, unanchored — for embedding in a path pattern. */
+export function linkTokenPattern(kind: LinkTokenKind): string {
+  return `${LINK_TOKEN_PREFIX[kind]}${LINK_SECRET}`;
+}
+
+/** Whether `raw` has the form of this kind of link token — anything else can't be ours. */
+export function isLinkToken(kind: LinkTokenKind, raw: string): boolean {
+  return new RegExp(`^${linkTokenPattern(kind)}$`).test(raw);
+}
+
+// ---------------------------------------------------------------------------
 // Props governance (docs/03 § Props, docs/04 § 5) — the admin surface's contract
 // ---------------------------------------------------------------------------
 

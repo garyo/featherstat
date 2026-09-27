@@ -1,3 +1,5 @@
+import { linkTokenPattern } from '@featherstat/shared';
+
 /**
  * Claim links (docs/04 § 5). Both are ordinary navigation paths the SPA
  * fallback serves, so opening one — or a chat app unfurling it — spends
@@ -14,9 +16,8 @@ export interface ClaimLink {
   token: string;
 }
 
-/** `fsu_`/`fsv_` + base64url of 32 random bytes — the server's LINK_TOKEN_SHAPEs, verbatim. */
-const WELCOME_PATH = /^\/welcome\/(fsu_[A-Za-z0-9_-]{43})\/?$/;
-const INVITE_PATH = /^\/invite\/(fsv_[A-Za-z0-9_-]{43})\/?$/;
+const WELCOME_PATH = new RegExp(`^/welcome/(${linkTokenPattern('user')})/?$`);
+const INVITE_PATH = new RegExp(`^/invite/(${linkTokenPattern('viewer')})/?$`);
 
 /** The claim link this URL is, or undefined for every other path. */
 export function claimLinkFromPath(pathname: string): ClaimLink | undefined {

@@ -7,7 +7,11 @@ import {
   DashboardSchema,
   EVENT_ONLY_DIMENSIONS,
   HitSchema,
+  isLinkToken,
   isValidTimezone,
+  LINK_TOKEN_BYTES,
+  LINK_TOKEN_PREFIX,
+  linkTokenPattern,
   MAX_QUERIES_PER_BATCH,
   MAX_RANGE_DAYS,
   NtfyUrlSchema,
@@ -308,5 +312,29 @@ describe('variesWithinSession', () => {
     for (const dim of BaseDimensionSchema.options) {
       expect(typeof variesWithinSession(dim), dim).toBe('boolean');
     }
+  });
+});
+
+describe('link tokens', () => {
+  // What `randomBytes(LINK_TOKEN_BYTES).toString('base64url')` produces.
+  const secret = Buffer.alloc(LINK_TOKEN_BYTES, 0xfb).toString('base64url');
+
+  it('recognizes each kind by its prefix, and never one kind as another', () => {
+    expect(isLinkToken('share', secret)).toBe(true);
+    expect(isLinkToken('user', `${LINK_TOKEN_PREFIX.user}${secret}`)).toBe(true);
+    expect(isLinkToken('viewer', `${LINK_TOKEN_PREFIX.viewer}${secret}`)).toBe(true);
+    expect(isLinkToken('share', `${LINK_TOKEN_PREFIX.user}${secret}`)).toBe(false);
+    expect(isLinkToken('viewer', `${LINK_TOKEN_PREFIX.user}${secret}`)).toBe(false);
+  });
+
+  it('refuses a secret of the wrong length or alphabet', () => {
+    expect(isLinkToken('share', secret.slice(1))).toBe(false);
+    expect(isLinkToken('share', `${secret}A`)).toBe(false);
+    expect(isLinkToken('share', `${secret.slice(1)}=`)).toBe(false);
+  });
+
+  it('embeds unanchored in a path pattern', () => {
+    const path = new RegExp(`^/invite/(${linkTokenPattern('viewer')})$`);
+    expect(path.exec(`/invite/fsv_${secret}`)?.[1]).toBe(`fsv_${secret}`);
   });
 });
