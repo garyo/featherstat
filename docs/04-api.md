@@ -684,7 +684,9 @@ buckets rather than the top groups; the schema refuses that combination with a
     retention horizon refuses the whole query honestly.
 - **Click-to-filter falls out for free**: clicking a row in any breakdown adds
   a `filters` entry and re-issues the same batch.
-- **Caching**: response ETag = hash(max event rowid, schema version, the
+- **Caching**: response ETag = hash(`dataVersion` — `data_epoch`·2⁴⁰ + max
+  event rowid, so appends move it and every in-place history rewrite bumps the
+  epoch (CLAUDE.md invariant 10) — schema version, the
   engagement threshold (a code constant bounce depends on), canonicalized
   request body, resolved per-site windows *including their
   timezones and any rolling instants* — so a preset like `today` expires at
