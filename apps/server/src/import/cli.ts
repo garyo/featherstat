@@ -233,6 +233,7 @@ function printMatomoReport(report: ImportReport): void {
   console.log(`  sites     ${report.sites}${skippedSites}`);
   console.log(`  sessions  ${report.sessions}`);
   console.log(`  events    ${report.events}${skippedRows}`);
+  if (!report.dryRun) console.log(`  rollups   ${report.rollupDays} site-days rebuilt`);
   if (report.dryRun) {
     console.log('  per-site/day totals:');
     for (const day of report.days) {

@@ -591,9 +591,10 @@ Pre-aggregated tables maintained **in the same write transaction as the ingest
 flush** (`rollup/apply.ts`, called by the batcher inside `withWriteTransaction`
 — invariant 2 untouched), so within any committed snapshot they can never lag
 the raw rows, and a failed flush rolls both back together. Because they are
-maintained from the first flush (and the importer rebuilds them per day),
-rollups cover ALL history by construction — the read path never needs a
-coverage check, only the routing rules below.
+maintained from the first flush (and both importers, which insert raw rows
+only, finish by rebuilding every site they wrote to), rollups cover ALL
+history by construction — the read path never needs a coverage check, only
+the routing rules below.
 
 The tables (see `db/migrations/100-v2-init.ts`, the authoritative DDL):
 

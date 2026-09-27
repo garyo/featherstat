@@ -94,6 +94,14 @@ Import details:
   upsert to their final state instead of staying frozen mid-visit.
 - `--until YYYY-MM-DD` (exclusive) fences a top-up off from the tee period —
   see the cutover sequence below.
+- **Rollups and the epoch.** Rows go in raw, so the run ends by rebuilding
+  the rollups of every site it wrote to (per-site `rebuildAllRollups`; the
+  planner answers headline KPIs and day buckets from rollups and assumes they
+  cover all history) and then bumping `data_epoch` — a `--since` re-read
+  rewrites sessions in place, which moves no rowid (invariant 10). "Wrote to"
+  is a durable `import:matomo:dirty:<site>` flag set with the rows, so a run
+  that died before its rebuild is settled by the next one, even one that
+  imports nothing.
 - Validation gate: for three spot-check months, per-site daily
   visits/pageviews from `/api/query` must match Matomo's API within rounding.
   Known definitional deltas (bot filtering, ping handling) get documented

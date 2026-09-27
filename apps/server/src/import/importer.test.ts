@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { createSite, type Db, getSetting, openDb, withWriteTransaction } from '../db/index.ts';
+import {
+  createSite,
+  type Db,
+  dataVersion,
+  getSetting,
+  openDb,
+  setSetting,
+  withWriteTransaction,
+} from '../db/index.ts';
+import { executeQueryRequest } from '../query/executor.ts';
+import { verifyRollupDay } from '../rollup/verify.ts';
 import { importMatomo, parseSiteMap, type SourceQuery } from './importer.ts';
 import type { MatomoActionRow, MatomoSiteRow, MatomoVisitRow } from './mappers.ts';
 
@@ -445,6 +455,78 @@ describe('importMatomo', () => {
     expect(db.prepare('SELECT name FROM sites WHERE id = 1').pluck().get()).toBe('Local name');
     expect(count(db, 'sessions')).toBe(2);
     db.close();
+  });
+
+  describe('rollups', () => {
+    /** Rollup-routed: additive metrics by day bucket, no dimension (docs/03 § Rollups). */
+    function dailyPageviews(db: Db, site: number): unknown {
+      const response = executeQueryRequest(db, {
+        site,
+        range: { from: '2026-07-01', to: '2026-07-03' },
+        queries: [{ id: 'q', metrics: ['pageviews', 'events'], bucket: 'day' }],
+      });
+      const result = response.results.q;
+      return result !== undefined && 'rows' in result ? result.rows : result;
+    }
+
+    it('rebuilds every imported day, so rollup-routed queries see the history', async () => {
+      const db = openDb(':memory:');
+      const report = await importMatomo(db, fakeSource(fixtures()).source);
+
+      expect(report.rollupDays).toBe(2); // site 1 on Jul 1, site 2 on Jul 2
+      expect(verifyRollupDay(db, 1, '2026-07-01')).toEqual([]);
+      expect(verifyRollupDay(db, 2, '2026-07-02')).toEqual([]);
+      expect(dailyPageviews(db, 1)).toEqual([{ bucket: '2026-07-01', pageviews: 1, events: 1 }]);
+      db.close();
+    });
+
+    it('bumps the data epoch whenever it wrote, and only then', async () => {
+      const db = openDb(':memory:');
+      const data = fixtures();
+      const before = dataVersion(db);
+      await importMatomo(db, fakeSource(data).source);
+      const imported = dataVersion(db);
+      expect(Math.floor(imported / 2 ** 40)).toBe(Math.floor(before / 2 ** 40) + 1);
+
+      // A --since re-read that rewrites a session in place moves no rowid: only
+      // the epoch can expire the answers cached from its old state.
+      const visit = data.visits.find((v) => v.idvisit === 501);
+      if (visit === undefined) throw new Error('fixture visit missing');
+      visit.visit_total_time = 900;
+      await importMatomo(db, fakeSource(data).source, { since: '2026-07-01' });
+      expect(dataVersion(db)).toBeGreaterThan(imported);
+
+      const settled = dataVersion(db);
+      const nothing = await importMatomo(db, fakeSource(data).source);
+      expect(nothing.rollupDays).toBe(0);
+      expect(dataVersion(db)).toBe(settled);
+      db.close();
+    });
+
+    it('settles what a crashed run owed, even when the re-run imports nothing', async () => {
+      const db = openDb(':memory:');
+      const data = fixtures();
+      await importMatomo(db, fakeSource(data).source);
+      // As if the previous run died between its last rows and its rebuild.
+      withWriteTransaction(db, () => {
+        db.prepare('DELETE FROM rollup_dim_day').run();
+        setSetting(db, 'import:matomo:dirty:1', '1');
+      });
+      const rerun = await importMatomo(db, fakeSource(data).source);
+      expect(rerun.events).toBe(0);
+      expect(rerun.rollupDays).toBe(1);
+      expect(verifyRollupDay(db, 1, '2026-07-01')).toEqual([]);
+      expect(getSetting(db, 'import:matomo:dirty:1')).toBeUndefined();
+      db.close();
+    });
+
+    it('--dry-run rebuilds nothing', async () => {
+      const db = openDb(':memory:');
+      const report = await importMatomo(db, fakeSource(fixtures()).source, { dryRun: true });
+      expect(report.rollupDays).toBe(0);
+      expect(count(db, 'rollup_dim_day')).toBe(0);
+      db.close();
+    });
   });
 
   describe('site id collisions', () => {

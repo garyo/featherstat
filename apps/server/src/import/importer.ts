@@ -1,6 +1,8 @@
 import {
+  bumpDataEpoch,
   createSite,
   type Db,
+  deleteSetting,
   type EventRow,
   getSetting,
   insertEvents,
@@ -8,10 +10,12 @@ import {
   type NewSite,
   type SessionRow,
   setSetting,
+  settingKeysWithPrefix,
   stmt,
   upsertSessions,
   withWriteTransaction,
 } from '../db/index.ts';
+import { rebuildAllRollups } from '../rollup/rebuild.ts';
 import {
   type MatomoActionRow,
   type MatomoSiteRow,
@@ -38,6 +42,12 @@ import {
  * writes anything, and refuses one whose id is taken by a local site sharing
  * none of its domains — unless the operator maps it (`siteMap`), which is then
  * remembered in `settings` so a later top-up cannot land it somewhere else.
+ *
+ * The rows go in raw, so the run ends by rebuilding the rollups of every site
+ * it wrote to — the planner assumes they cover all history (docs/03 § Rollups)
+ * — and bumping the data epoch: a `--since` re-read rewrites sessions in place,
+ * and the rebuild rewrites the rollup rows cached answers were computed from
+ * (CLAUDE.md invariant 10).
  */
 
 export type SourceQuery = (
@@ -90,10 +100,20 @@ export interface ImportReport {
   skipped: number;
   /** Per-site/day visit + pageview totals for everything scanned this run. */
   days: DayTotal[];
+  /** Site-days whose rollups were rebuilt from the imported rows. */
+  rollupDays: number;
 }
 
 const DEFAULT_BATCH_SIZE = 1000;
 const WATERMARK_PREFIX = 'import:matomo:';
+/**
+ * `import:matomo:dirty:<local site id>` — set in the same transaction as the
+ * site's first imported rows, cleared only once its rollups are rebuilt and the
+ * epoch bumped. Durable rather than this run's tally, so a run that crashed
+ * after writing rows still owes, and a re-run that imports nothing still pays.
+ */
+const DIRTY_PREFIX = 'import:matomo:dirty:';
+
 /** Stored in the `--site-map` syntax, so one parser validates both. */
 const SITE_MAP_SETTING = 'import:matomo:site-map';
 
@@ -175,6 +195,7 @@ export async function importMatomo(
     events: 0,
     skipped: 0,
     days: [],
+    rollupDays: 0,
   };
   const days = new Map<string, DayTotal>();
   const targets = await importSites(db, source, options, batchSize, report);
@@ -214,6 +235,7 @@ export async function importMatomo(
     if (!dryRun) {
       withWriteTransaction(db, () => {
         upsertSessions(db, sessions);
+        markDirty(db, sessions);
         setWatermark(db, 'log_visit', batch.last);
       });
     }
@@ -248,6 +270,7 @@ export async function importMatomo(
     if (!dryRun) {
       withWriteTransaction(db, () => {
         insertEvents(db, events);
+        markDirty(db, events);
         setWatermark(db, 'log_link_visit_action', batch.last);
       });
       pruneSeqMap(seqByVisit); // safe now: this batch's rows are committed, MAX(seq) re-seeds
@@ -255,6 +278,10 @@ export async function importMatomo(
     options.log?.(`actions: ${report.events} events so far`);
   }
 
+  if (!dryRun) {
+    report.rollupDays = await rebuildDirtyRollups(db);
+    options.log?.(`rollups: ${report.rollupDays} site-days rebuilt`);
+  }
   report.days = [...days.values()].sort(
     (a, b) => a.site_id - b.site_id || a.local_date.localeCompare(b.local_date),
   );
@@ -385,6 +412,33 @@ async function importSites(
   }
   options.log?.(`sites: ${report.sites} imported, ${report.sitesSkipped} already present`);
   return targets;
+}
+
+// ---------------------------------------------------------------------------
+// Rollups
+// ---------------------------------------------------------------------------
+
+function markDirty(db: Db, rows: ReadonlyArray<{ site_id: number }>): void {
+  for (const siteId of new Set(rows.map((row) => row.site_id))) {
+    setSetting(db, DIRTY_PREFIX + siteId, '1');
+  }
+}
+
+/** Per-site rebuild of every site owed one, then the epoch bump that settles them. */
+async function rebuildDirtyRollups(db: Db): Promise<number> {
+  const owed = settingKeysWithPrefix(db, DIRTY_PREFIX);
+  let days = 0;
+  for (const key of owed) {
+    const siteId = Number(key.slice(DIRTY_PREFIX.length));
+    days += (await rebuildAllRollups(db, { siteId })).days;
+  }
+  if (owed.length > 0) {
+    withWriteTransaction(db, () => {
+      bumpDataEpoch(db);
+      for (const key of owed) deleteSetting(db, key);
+    });
+  }
+  return days;
 }
 
 // ---------------------------------------------------------------------------
