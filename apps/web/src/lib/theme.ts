@@ -6,7 +6,7 @@
 
 export type Theme = 'light' | 'dark';
 
-/** Also read by the inline pre-paint script in index.html — keep the two in sync. */
+/** Also read by the pre-paint script in public/theme.js — keep the two in sync. */
 const STORAGE_KEY = 'theme';
 
 /** What the reader is actually seeing: the override if there is one, else the OS preference. */
