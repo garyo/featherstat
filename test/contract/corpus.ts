@@ -12,6 +12,7 @@ import {
   type RangePreset,
   type WidgetSpec,
 } from '@featherstat/shared';
+import { afterAll, beforeAll } from 'vitest';
 import type { Db } from '../../apps/server/src/db/index.ts';
 import { executeQueryRequest } from '../../apps/server/src/query/executor.ts';
 import { generateCorpus } from '../../apps/server/test/replay/generate.ts';
@@ -72,6 +73,19 @@ export function contractDb(): Db {
 export function closeContractDb(): void {
   cached?.close();
   cached = undefined;
+}
+
+/**
+ * Ingesting the corpus takes ~2 s on a dev machine and well past vitest's 5 s
+ * per-test default on a loaded CI runner, so it happens in a hook with its own
+ * budget rather than inside whichever test first asks for an answer.
+ */
+const CORPUS_BUILD_MS = 60_000;
+
+/** Builds the corpus database before a file's tests and closes it after them. */
+export function useContractDb(): void {
+  beforeAll(contractDb, CORPUS_BUILD_MS);
+  afterAll(closeContractDb);
 }
 
 export interface Answered {

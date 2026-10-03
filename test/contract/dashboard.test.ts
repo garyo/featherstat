@@ -12,7 +12,7 @@ import {
   upgradeDashboard,
 } from '@featherstat/shared';
 import { DETAIL_TEMPLATES } from '@featherstat/shared/detail-templates';
-import { afterAll, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { resultAxes, sharedKeys } from '../../apps/web/src/widgets/axis.ts';
 import { barRows } from '../../apps/web/src/widgets/bar-rows.ts';
 import { dwellBars, dwellRows } from '../../apps/web/src/widgets/dwell.ts';
@@ -24,12 +24,12 @@ import {
   allSitesAnswer,
   answer,
   CONTRACT_SITE,
-  closeContractDb,
   corpus,
   metricQueryOf,
   NOW,
   siteAnswer,
   sliceOf,
+  useContractDb,
   widgetOf,
 } from './corpus.ts';
 
@@ -50,7 +50,7 @@ import {
  * test", because there is no "beside" for a seam.
  */
 
-afterAll(closeContractDb);
+useContractDb();
 
 const site = siteAnswer();
 

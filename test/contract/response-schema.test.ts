@@ -5,8 +5,8 @@ import {
   type RangePreset,
 } from '@featherstat/shared';
 import { DETAIL_TEMPLATES } from '@featherstat/shared/detail-templates';
-import { afterAll, describe, expect, it } from 'vitest';
-import { answer, CONTRACT_SITE, closeContractDb, corpus } from './corpus.ts';
+import { describe, expect, it } from 'vitest';
+import { answer, CONTRACT_SITE, corpus, useContractDb } from './corpus.ts';
 
 /**
  * The web checks every `/api/query` body against `QueryResponseSchema` before a
@@ -19,7 +19,7 @@ import { answer, CONTRACT_SITE, closeContractDb, corpus } from './corpus.ts';
  * hourly axis, a long range whole days.
  */
 
-afterAll(closeContractDb);
+useContractDb();
 
 const RANGES: readonly RangePreset[] = ['24h', 'today', '90d'];
 const siteIds = corpus.sites.map((site) => site.id);

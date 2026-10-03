@@ -1,6 +1,6 @@
 import type { RangePreset } from '@featherstat/shared';
-import { afterAll, describe, expect, it } from 'vitest';
-import { type Answered, allSitesAnswer, closeContractDb, siteAnswer } from './corpus.ts';
+import { describe, expect, it } from 'vitest';
+import { type Answered, allSitesAnswer, siteAnswer, useContractDb } from './corpus.ts';
 import {
   BATCH_MAX_AXIS_KEYS,
   BATCH_MAX_BYTES,
@@ -19,7 +19,7 @@ import {
 
 const PRESETS: readonly RangePreset[] = ['today', '24h', '7d', '30d', '90d'];
 
-afterAll(closeContractDb);
+useContractDb();
 
 const batches: Array<{ name: string; answered: Answered }> = PRESETS.flatMap((range) => [
   { name: `site dashboard @ ${range}`, answered: siteAnswer(undefined, range) },
