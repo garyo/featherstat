@@ -257,7 +257,7 @@ describe('tileModels', () => {
     ];
     const [tile] = models(['bounce_rate'], TOTALS, undefined, series);
     expect(tile?.spark).toEqual([1, undefined, 0]);
-    // The axis spans what was measured; the gap neither raises nor lowers it.
+    // The gap neither raises the peak nor stands for a zero.
     expect(tile?.scale).toEqual({ peak: '100%', floor: '0%' });
   });
 
@@ -271,9 +271,9 @@ describe('tileModels', () => {
   });
 
   /**
-   * The line is min-anchored and fills its box at any amplitude, so the numbers
-   * beside it are the only thing separating a bump of two from a bump of two
-   * thousand. They are written in the measure's own unit, like the tile's value.
+   * The line is zero-anchored, so its bottom edge says zero and only the peak
+   * beside it separates a bump of two from a bump of two thousand. Both are
+   * written in the measure's own unit, like the tile's value.
    */
   it('states the sparkline range in the metric’s unit', () => {
     const series = [
@@ -281,14 +281,19 @@ describe('tileModels', () => {
       day('2026-07-02', { visitors: 9, bounce_rate: 0.1, visits: 2 }),
     ];
     const [visitors, bounce] = models(['visitors', 'bounce_rate'], TOTALS, undefined, series);
-    expect(visitors?.scale).toEqual({ peak: '9', floor: '2' });
-    expect(bounce?.scale).toEqual({ peak: '50%', floor: '10%' });
+    expect(visitors?.scale).toEqual({ peak: '9', floor: '0' });
+    expect(bounce?.scale).toEqual({ peak: '50%', floor: '0%' });
   });
 
-  it('states a flat line as one number, and an absent line as none', () => {
+  it('labels a flat line from zero, an all-zero line as one number, and none as none', () => {
     const flat = [day('2026-07-01', { visitors: 4 }), day('2026-07-02', { visitors: 4 })];
     expect(models(['visitors'], TOTALS, undefined, flat)[0]?.scale).toEqual({
       peak: '4',
+      floor: '0',
+    });
+    const zero = [day('2026-07-01', { visitors: 0 }), day('2026-07-02', { visitors: 0 })];
+    expect(models(['visitors'], TOTALS, undefined, zero)[0]?.scale).toEqual({
+      peak: '0',
       floor: undefined,
     });
     // No companion, so no line — and nothing to put an axis on.

@@ -1,10 +1,8 @@
 <script lang="ts">
 /**
- * The mockup's sparkline, all three variants: plain (line in the de-emphasis
- * hue, accent end dot — KPI tiles), accent (series-1 line over a 10% area
- * wash — site cards), and micro (hairline, no dot — the per-page trend inside
- * a site card). `stretch` scales it to the container like the mockup's
- * `.site-card svg { width: 100% }`.
+ * The mockup's sparkline, both variants: plain (line in the de-emphasis hue,
+ * accent end dot — KPI tiles) and micro (hairline, no dot — the per-page trend
+ * inside a site card). A chart worth reading closely is a `LineChart`.
  *
  * A point may be `undefined`: the period it covers had nothing to measure. A
  * bounce rate over an hour with no visits is unknown, not zero, and hourly
@@ -17,19 +15,12 @@ interface Props {
   data: readonly (number | undefined)[];
   width: number;
   height: number;
-  accent?: boolean;
   micro?: boolean;
-  stretch?: boolean;
 }
 
-let { data, width, height, accent = false, micro = false, stretch = false }: Props = $props();
+let { data, width, height, micro = false }: Props = $props();
 
 const PAD = 3;
-
-interface Segment {
-  line: string;
-  area: string;
-}
 
 const geometry = $derived.by(() => {
   const measured = data.filter((value): value is number => value !== undefined);
@@ -39,53 +30,39 @@ const geometry = $derived.by(() => {
   const max = Math.max(0, ...measured);
   const min = Math.min(0, ...measured);
   const span = max - min || 1;
-  const floor = height - PAD;
   const xOf = (i: number): number => PAD + (i * (width - 2 * PAD)) / (points.length - 1);
-  const yOf = (value: number): number => floor - ((value - min) / span) * (height - 2 * PAD);
+  const yOf = (value: number): number => height - PAD - ((value - min) / span) * (height - 2 * PAD);
 
-  const segments: Segment[] = [];
+  const segments: string[] = [];
   let run: string[] = [];
-  let first = 0;
   let end: readonly [number, number] | undefined;
-  const close = (last: number): void => {
+  const close = (): void => {
     if (run.length === 0) return;
     // A lone measured point between two gaps is a zero-length segment, which a
     // round cap renders as a dot — visible, where a one-point polyline is not.
-    const line = run.length === 1 ? `${run[0]} ${run[0]}` : run.join(' ');
-    segments.push({
-      line,
-      area: `${xOf(first).toFixed(1)},${floor} ${line} ${xOf(last).toFixed(1)},${floor}`,
-    });
+    segments.push(run.length === 1 ? `${run[0]} ${run[0]}` : run.join(' '));
     run = [];
   };
   points.forEach((value, i) => {
     if (value === undefined) {
-      close(i - 1);
+      close();
       return;
     }
-    if (run.length === 0) first = i;
     const x = xOf(i);
     const y = yOf(value);
     run.push(`${x.toFixed(1)},${y.toFixed(1)}`);
     end = [x, y];
   });
-  close(points.length - 1);
+  close();
   if (end === undefined) return undefined;
   return { segments, end };
 });
 </script>
 
 {#if geometry !== undefined}
-  <svg
-    {width}
-    {height}
-    viewBox="0 0 {width} {height}"
-    aria-hidden="true"
-    style={stretch ? 'width: 100%; height: auto;' : undefined}
-  >
+  <svg {width} {height} viewBox="0 0 {width} {height}" aria-hidden="true">
     {#each geometry.segments as segment, i (i)}
-      {#if accent}<polygon points={segment.area} class="wash" />{/if}
-      <polyline points={segment.line} class="line" class:accent class:micro />
+      <polyline points={segment} class="line" class:micro />
     {/each}
     {#if !micro}
       <circle cx={geometry.end[0].toFixed(1)} cy={geometry.end[1].toFixed(1)} r="3.5" class="dot" />
@@ -98,11 +75,6 @@ const geometry = $derived.by(() => {
     display: block;
   }
 
-  .wash {
-    fill: var(--s1);
-    opacity: 0.1;
-  }
-
   .line {
     fill: none;
     /* --muted, not the mockup's --axis: non-text graphics need >= 3:1 on
@@ -111,10 +83,6 @@ const geometry = $derived.by(() => {
     stroke-width: 2;
     stroke-linejoin: round;
     stroke-linecap: round;
-  }
-
-  .line.accent {
-    stroke: var(--s1);
   }
 
   .line.micro {

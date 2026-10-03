@@ -6,6 +6,9 @@
     <title>featherstat</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <!-- Blocking, before the stylesheet paints: a remembered theme override must
+         beat the OS preference on the very first frame (src/lib/theme.ts owns
+         the key; docs/05 R12). A file, not inline: the CSP is script-src 'self'. -->
     <script src="/theme.js"></script>
   </head>
   <body>

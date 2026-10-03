@@ -40,10 +40,10 @@ export interface TileModel {
   /** A period the measure could not reduce is a gap, never a zero (Sparkline). */
   spark: (number | undefined)[];
   /**
-   * The sparkline's own y-axis, in the metric's unit. The line is min-anchored
-   * and fills its box whatever the amplitude, so without these numbers a bump
-   * of two visitors and a bump of two thousand draw the same picture.
-   * `floor` is omitted for a flat line, where `peak` alone is the value.
+   * The sparkline's own y-axis, in the metric's unit: `peak` at the top edge,
+   * `floor` (zero — the line is zero-anchored) at the bottom. Without them a
+   * bump of two visitors and a bump of two thousand draw the same picture.
+   * `floor` is omitted for an all-zero line, where `peak` alone is the value.
    */
   scale: { peak: string; floor: string | undefined } | undefined;
   /**
@@ -183,10 +183,10 @@ function model(
 }
 
 /**
- * A sparkline and the axis labels saying what it is worth. The axis spans what
- * was actually measured, so a gap neither drags the floor to zero nor claims a
- * range nothing supports. Two measured points are the fewest that draw a line,
- * and anything shorter carries no scale either.
+ * A sparkline and the axis labels saying what it is worth: zero up to the
+ * largest value actually measured, so a gap never raises the peak. Two
+ * measured points are the fewest that draw a line, and anything shorter
+ * carries no scale either.
  */
 function withScale(
   spark: (number | undefined)[],
@@ -199,12 +199,11 @@ function withScale(
   if (measured.length === 0) return { spark: [], scale: undefined };
   if (measured.length < 2) return { spark, scale: undefined };
   const peak = Math.max(...measured);
-  const floor = Math.min(...measured);
   return {
     spark,
     scale: {
       peak: formatMeasure(measure.unit, peak),
-      floor: floor === peak ? undefined : formatMeasure(measure.unit, floor),
+      floor: peak === 0 ? undefined : formatMeasure(measure.unit, 0),
     },
   };
 }

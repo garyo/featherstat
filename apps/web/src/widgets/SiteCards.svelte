@@ -2,12 +2,15 @@
 import ApproxMark from './ApproxMark.svelte';
 import { resultAxes } from './axis.ts';
 import { exactNumber } from './format.ts';
+import LineChart from './LineChart.svelte';
 import Sparkline from './Sparkline.svelte';
 import { siteSortOf, siteStats } from './site-stats.ts';
 import { topPages } from './top-pages.ts';
 import { sliceOf, type WidgetProps } from './types.ts';
 
 let { spec, env }: WidgetProps = $props();
+
+const TREND_HEIGHT = 120;
 
 const slice = $derived(sliceOf(env.data, 'main'));
 // The headline number is the server's range count, not a sum of the buckets
@@ -94,8 +97,15 @@ function onKeydown(event: KeyboardEvent, site: number): void {
                waiting for its first hit, or a mis-installed snippet. -->
           <p class="widget-note">Waiting for the first hit — check the snippet in Settings.</p>
         {:else}
-          <div class="spark">
-            <Sparkline data={stat.spark} width={280} height={40} accent stretch />
+          <div class="trend">
+            <LineChart
+              points={stat.buckets.map((bucket, i) => ({ bucket, values: { visitors: stat.spark[i] ?? 0 } }))}
+              metrics={['visitors']}
+              label="Visitors"
+              height={TREND_HEIGHT}
+              divisions={2}
+              nested
+            />
           </div>
         {/if}
         {#if pages.length > 0}

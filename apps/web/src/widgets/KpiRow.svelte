@@ -67,8 +67,8 @@ const tiles = $derived.by(() => {
           <div class="delta {tile.delta.tone}">{tile.delta.text}</div>
         </div>
         <!-- A one-point series draws nothing, so the box collapses rather than
-             leaving a hole. The line is min-anchored and always fills its box,
-             so the scale beside it is what gives the shape a magnitude. -->
+             leaving a hole. The scale beside the line is what gives its shape
+             a magnitude. -->
         {#if tile.spark.length > 1}
           <div class="spark">
             <Sparkline data={tile.spark} width={150} height={34} />

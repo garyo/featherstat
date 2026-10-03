@@ -133,6 +133,12 @@ export const RENDERINGS: readonly Rendering[] = [
     owners: ['widgets/DataTable.svelte'],
     instead: 'render <DataTable> with the rows the chart draws',
   },
+  {
+    what: "a time series' plot, crosshair and tooltip",
+    marks: [classMark('xhair')],
+    owners: ['widgets/LineChart.svelte'],
+    instead: 'render <LineChart> with the points; `nested` inside another control',
+  },
 ];
 
 /** The guard is worth exactly what it reads; below this the walk broke. */

@@ -11,7 +11,7 @@ is the visual reference for everything below (both views, light and dark).
 
 | View | Contents |
 | --- | --- |
-| **All sites** (home) | One card per site: name, active-now, today's visitors + delta ("today" = the SITE's local today, per its timezone), 14-day sparkline, the site's **top 3 pages with per-page trend** (micro-sparkline + delta vs previous period — how each blog article is doing, at a glance, R20), and goal/event pills (e.g. "3 signups today" — **M2**, alongside goals themselves). A site with no traffic yet gets a "waiting for the first hit" card, not a blank. Sorted by traffic. The whole view is one `/api/query` batch + the SSE stream. |
+| **All sites** (home) | One card per site: name, active-now, today's visitors + delta ("today" = the SITE's local today, per its timezone), a compact line chart of visitors over the range (zero-based, labeled y-axis, date labels and the hover tooltip — it is the page's main content, so it is a chart, not a sparkline), the site's **top 3 pages with per-page trend** (micro-sparkline + delta vs previous period — how each blog article is doing, at a glance, R20), and goal/event pills (e.g. "3 signups today" — **M2**, alongside goals themselves). A site with no traffic yet gets a "waiting for the first hit" card, not a blank. Sorted by traffic. The whole view is one `/api/query` batch + the SSE stream. |
 | **Site** | The workhorse. Filter row (date presets — Today · Last 24 hours · 7 / 30 / 90 days · Month to date, the second of which is the rolling window whose comparison is like-for-like, 04 § 3 — active dimension filters as removable chips; plus an explicit date range and the compare control — see § Custom ranges & compare) → KPI row → main time series → breakdown grid (pages, referrers, geo, devices, events, outbound links, time on page, hours heatmap) → top journeys. Every breakdown row is click-to-filter; a filter on an event-level dimension renders the session-only KPI tiles (engagement, bounce) as "—" rather than erroring the row. |
 | **Journeys** (per site) | R21. A sankey of the first N steps from the entry page (pages and events as nodes, edge weight = sessions) over a top-journeys table: sequence · sessions · avg time · exit rate. Clicking a sankey edge filters the table; the view honors the global filter row, so "journeys of visitors from HN" is one click. **A step is a move, not a hit**: a page repeated back to back — reloaded, or announced twice by an SPA router — is one step, so no edge loops a node back to itself and no journey reads `/app → /app` (03 § Journeys, 06). A session that never left its entry page is a one-step journey with no edges, and shows up in the table rather than the sankey. |
 | **Realtime** | Active-now hero number, a per-visitor tally of the last 30 minutes (alias · hits · engaged time · place · site — the time is the server's, since only it sees the heartbeat pings), live feed, country tally of the same window. Pure SSE, no queries. The world map with fading dots (city centroids) moved to **M2**: it needs the map-outline data that arrives with the sankey work, so M1 ships hero + feed + country list and the map joins when that asset lands. |
@@ -103,9 +103,9 @@ A dashboard is JSON: a grid of widget cards.
 ```
 
 - **Viz types (v1)**: `kpi-row` (stat tiles: value, signed delta vs compare
-  period, 12-point sparkline labelled with its own peak and floor — the line is
-  min-anchored and fills its box at any amplitude, so the numbers beside it are
-  what separate a bump of two from a bump of two thousand. An intraday range
+  period, 12-point sparkline labelled with its peak and zero — the line is
+  zero-anchored, and the peak beside it is what separates a bump of two from a
+  bump of two thousand. An intraday range
   takes the companion hourly, every metric included, since sessions carry
   `local_hour` from schema 104. Day buckets are not the fallback: across `24h`'s
   local midnight they draw two points spanning `24 − h` and `h` hours, which
@@ -451,7 +451,7 @@ color never carries the sign alone.
 - **What has no total at all** is `distinct`. The all-sites cards used to sum
   per-day visitor counts into a headline while the same site's KPI tile counted
   the range once — two screens, two numbers, one label. The cards now read a
-  per-site range total from the batch; the day buckets are the sparkline's shape
+  per-site range total from the batch; the day buckets are the chart's points
   and nothing else. Anything else asking for a total of a distinct measure gets
   `undefined` and has to say so.
 

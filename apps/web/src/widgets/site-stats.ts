@@ -11,7 +11,7 @@ import { num } from './series.ts';
  * Summing the day rows — which this did — counts a reader who came back on
  * Tuesday twice, so the same "visitors" label read one number on a card and a
  * smaller one on that site's KPI tile (defect 13). The server counts the range
- * once; the buckets are the sparkline's shape and nothing else.
+ * once; the buckets are the chart's points and nothing else.
  *
  * Each card's window is that site's OWN, taken from the per-site axis the server
  * enumerated — the shared batch spans timezones, and reading every site at the
@@ -45,7 +45,7 @@ export interface SiteStatsInput {
   totals: readonly ResultRow[];
   /** The same, over the previous period. */
   compare: readonly ResultRow[] | undefined;
-  /** Per-site × bucket rows — the sparkline's shape only. */
+  /** Per-site × bucket rows — the chart's points only. */
   buckets: readonly ResultRow[];
   /** The bucketed result's per-site axes, already trimmed to the reader's clock. */
   axes: readonly ViewAxis[];

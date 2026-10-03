@@ -6,6 +6,9 @@ export interface SeriesPoint {
   values: Record<string, number>;
 }
 
+/** Categorical slots in fixed order, assigned by position, never cycled. */
+export const SERIES_COLORS = ['var(--s1)', 'var(--s2)'];
+
 /** Result cells are `string | number | null`; charts need a number. */
 export function num(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
