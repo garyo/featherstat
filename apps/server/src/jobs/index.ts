@@ -206,7 +206,9 @@ export function startJobs(db: Db, options: JobsOptions = {}): Scheduler {
     run: async () => {
       const { completed, moved, visits } = await runMissingBackfill(db, { now: options.now });
       if (completed && moved > 0) {
-        console.log(`missing-backfill: moved ${moved} not-found page view(s), ${visits} visit(s) removed`);
+        console.log(
+          `missing-backfill: moved ${moved} not-found page view(s), ${visits} visit(s) removed`,
+        );
       }
     },
   });
