@@ -55,6 +55,7 @@ import {
   type PreparedGoal,
   prepareGoals,
 } from './goals.ts';
+import { type CompiledMissing, compileMissingQuery } from './missing.ts';
 import { planMetricRoute } from './planner.ts';
 import { bucketAxis, compareWindow, resolveWindow } from './ranges.ts';
 import { compileRollupMetricQuery } from './rollup-compiler.ts';
@@ -184,7 +185,7 @@ export function executeQueryRequest(
         // per-page dwell) comparison has no defined shape (docs/04), so
         // `compare` is never fabricated.
         const filters = filtersFor(query);
-        // Every kind walks raw session/event rows; below the retention horizon
+        // Every kind walks raw rows; below the retention horizon
         // that walk would return partial numbers, so it refuses instead.
         const pruned = rawHorizonRefusal(windows, horizonTs);
         if (pruned !== undefined) {
@@ -198,7 +199,9 @@ export function executeQueryRequest(
               ? compileDistributionQuery(query, filters, windows)
               : query.kind === 'adjacency'
                 ? compileAdjacencyQuery(query, filters, windows)
-                : compileSequenceQuery(query, filters, windows);
+                : query.kind === 'missing'
+                  ? compileMissingQuery(query, filters, windows)
+                  : compileSequenceQuery(query, filters, windows);
         if (isQueryError(compiled)) {
           results[query.id] = compiled;
           continue;
@@ -527,7 +530,7 @@ function resolveSites(
 /** One session-scoped statement (journeys, dwell, adjacency): one SQL text, one window scope. */
 function runScoped(
   db: Db,
-  compiled: CompiledSequence | CompiledLegs | CompiledAdjacency,
+  compiled: CompiledSequence | CompiledLegs | CompiledAdjacency | CompiledMissing,
   windows: readonly SiteWindow[],
 ): ResultRow[] {
   if (windows.length === 0) return [];

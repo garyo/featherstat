@@ -74,6 +74,7 @@ function bumps(source: string): boolean {
 const REWRITERS = [
   'campaign-backfill.ts',
   'referrer-backfill.ts',
+  'missing-backfill.ts',
   'prop-scrub.ts',
   'site-purge.ts',
   'reconcile.ts',

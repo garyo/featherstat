@@ -192,6 +192,8 @@ export function buildWidget(draft: WidgetDraft, id: string): WidgetSpec {
     case 'changes':
       // The changes kind's defaults (visits, all four dims) are the widget.
       return parseSpec({ ...base, viz: draft.viz, w: 12, query: { id, kind: 'changes' } });
+    case 'broken-links':
+      return parseSpec({ ...base, viz: draft.viz, w: 6, query: { id, kind: 'missing' } });
     default:
       // bar-list and the not-yet-implemented vizzes (placeholder cards).
       return parseSpec({

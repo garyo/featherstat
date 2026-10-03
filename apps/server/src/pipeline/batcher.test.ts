@@ -1,6 +1,6 @@
 import { BATCH_INTERVAL_MS } from '@featherstat/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { event, session } from '../../test/rows.ts';
+import { event, missing, session } from '../../test/rows.ts';
 import {
   createSite,
   type Db,
@@ -128,7 +128,9 @@ describe('WriteBatcher', () => {
     batcher.addSession(session({ site_id: 1 }));
     batcher.addBotDrop(1, '2023-11-14');
     batcher.addExcludedDrop(1, '2023-11-14');
+    batcher.addMissing(missing({ site_id: 1 }));
     batcher.addEvent(event({ site_id: 2 }));
+    batcher.addMissing(missing({ site_id: 2 }));
     batcher.addSession(session({ id: new Uint8Array(8).fill(9), site_id: 2 }));
     withWriteTransaction(db, () => tombstoneSite(db, 1, 0));
 
@@ -139,10 +141,19 @@ describe('WriteBatcher', () => {
       sessions: 1,
       botDrops: 0,
       excludedDrops: 0,
+      missing: 1,
       siteIds: [2],
     });
     expect(batcher.pending).toBe(0);
-    for (const table of ['events', 'sessions', 'bot_drops', 'excluded_drops', 'rollup_dim_day']) {
+    for (const table of [
+      'events',
+      'sessions',
+      'missing_hits',
+      'missing_daily',
+      'bot_drops',
+      'excluded_drops',
+      'rollup_dim_day',
+    ]) {
       const rows = db.prepare(`SELECT COUNT(*) FROM ${table} WHERE site_id = 1`).pluck().get();
       expect(rows, table).toBe(0);
     }

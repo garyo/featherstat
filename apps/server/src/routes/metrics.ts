@@ -31,6 +31,7 @@ export class Metrics {
   private hits = 0;
   private botDrops = 0;
   private excludedDrops = 0;
+  private missing = 0;
   private sseClients = 0;
   private rollupRepairs = 0;
   readonly flush = new DurationSummary();
@@ -41,6 +42,7 @@ export class Metrics {
     this.hits += summary.events;
     this.botDrops += summary.botDrops;
     this.excludedDrops += summary.excludedDrops;
+    this.missing += summary.missing;
   }
 
   /** Feed from the nightly reconcile job: nonzero means a delta-logic bug fired. */
@@ -69,6 +71,11 @@ export class Metrics {
         'analytics_ingest_excluded_drops_total',
         'Hits dropped by an exclusion rule since process start.',
         this.excludedDrops,
+      ),
+      ...counter(
+        'analytics_ingest_missing_total',
+        'Not-found hits recorded apart from traffic since process start.',
+        this.missing,
       ),
       ...summary('analytics_flush_duration_ms', 'Write-batch flush transaction time.', this.flush),
       ...summary('analytics_query_duration_ms', 'POST /api/query handling time.', this.query),

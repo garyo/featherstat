@@ -644,13 +644,24 @@ buckets rather than the top groups; the schema refuses that combination with a
   deciles `0–9` (100 % belongs to 9). Rows are sparse — empty buckets are
   omitted — and scroll counts only measured legs: an unmeasured leg is in no
   bucket, never in bucket 0.
+- **Broken links** read the not-found hits (docs/03 § Not-found hits), which
+  are no visit's and in no metric: `{ "id": "b", "kind": "missing", "limit": 10 }`
+  → rows of `{ path, hits, referred, ref_domain, ref_path, last_seen }` — the
+  path asked for, its hits and how many came with a referrer, its commonest
+  referring page, and the site-local date of its latest hit. Ranked by
+  `referred`, then `hits`: a link on someone's page is a fixable broken link,
+  a direct hit a typo or a scanner's guess. Like the session kinds it answers
+  the primary window only.
 - **Filters ride at two levels, and both reach the same envelope.** The
   request's `filters` apply to every query; a query's OWN `filters` — the
   per-widget filters of docs/05 — are AND-ed with them for that query alone.
   This holds for **every** shape, metric and kind alike: a `distribution`,
   `dwell`, `adjacency`, `transitions`/`flows` or `changes` query carrying its
   own filters narrows its session envelope exactly as a request filter would
-  (and refuses a hit-scoped event-level leaf exactly as one would). Dropping
+  (and refuses a hit-scoped event-level leaf exactly as one would). `missing`
+  has no visit to scope: it applies a leaf on what the hit itself carries —
+  `path` (the path asked for), `ref_type`, `ref_domain`, `device_type`,
+  `country` — and refuses every other leaf, and every session-scoped one. Dropping
   them would be the worst failure this API can have — the wider answer under
   the narrower label — so each kind has a test that its filtered rows differ
   from its unfiltered ones.
@@ -772,7 +783,7 @@ buckets rather than the top groups; the schema refuses that combination with a
     denominator) follows sorted.
     Sequence kinds use their natural columns — `flows` joins its signature
     with `" > "` into a `steps` column beside its counts; `transitions` is
-    `step`, `from`, `to`, `sessions`; `dwell`/`adjacency`/`distribution`
+    `step`, `from`, `to`, `sessions`; `dwell`/`adjacency`/`distribution`/`missing`
     exactly as their JSON rows read.
   - **Dialect**: pure RFC 4180 — fields containing a comma, quote, CR or LF
     are quoted with `""` doubling (dimension values are visitor-controlled
@@ -985,7 +996,7 @@ rate-limited (per-IP plus a global budget; 304 revalidations are free; a
 saturated pool answers 429 like the limiter) and every `/share` response
 carries `X-Robots-Tag: noindex`. Operations: `/healthz` (liveness + last-flush age) and
 Prometheus `/metrics` (ingest rate, batch flush time, query p95, SSE clients,
-bot drops, DB size) for the existing Grafana stack (R15).
+bot drops, not-found hits, DB size) for the existing Grafana stack (R15).
 
 **API tokens cross origins; cookies never do.** A Bearer token (`fs_…`, minted
 under `/api/admin/tokens`) is the data-out credential, and third-party callers

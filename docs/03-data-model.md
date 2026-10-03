@@ -665,6 +665,54 @@ Exclusion applies to hits as they arrive. History already recorded stays — a
 retroactive removal is a purge, and per invariant 10 would owe a `data_epoch`
 bump like every other history rewrite.
 
+## Not-found hits
+
+A request for a page that does not exist is not traffic. Ingest never sees an
+HTTP status — the tracker is JavaScript on a page already served — so a site's
+404 page reports itself instead (docs/10 § 3): a native page view whose
+reserved `missing` prop (`MISSING_PROP`) is set, carrying the path that was
+asked for. On the reference deployment those were ~30 % of one site's
+visitors in a week — almost all headless scanners requesting invented paths —
+and every one was a single-page visit: visitors, visits and bounce rate all
+inflated, and `/404` ranked among the top pages.
+
+So a not-found hit never reaches the sessionizer. Once the exclusion and bot
+checks pass it (an excluded or crawler hit is refused like any other), it is
+stored in `missing_hits` in the same flush transaction as everything else
+(invariant 2), and nothing that counts traffic reads that table:
+
+- **No visit, no visitor.** No `visitor_id`, no `session_id`, no rollup, no
+  realtime feed, no ntfy. The row keeps what finds the broken link and nothing
+  that identifies anyone: the path asked for, the hit's OWN referrer (domain,
+  type, and the referring page's path with its query dropped — where the
+  broken link is), device type and country.
+- **Bounded.** `missing_daily` counts every not-found hit per site and local
+  day; past `MISSING_HITS_PER_SITE_DAY` (500) a scanner's sweep is counted,
+  not stored.
+- **Nothing after it is sent.** The native tracker marks a view reported with
+  `missing` and sends nothing more from it — no heartbeat, read milestone,
+  exit ping or link click — until the next page view. Those used to land as a
+  ghost visit's engagement on a page that does not exist.
+- **Native only.** The Matomo shim carries no props, so a shim site's
+  `setCustomUrl('/404')` stays an ordinary `/404` page view.
+- **Read through the `missing` query kind** (docs/04 § 3), drawn by the
+  `broken-links` widget on the Content dashboard. `dataVersion` is the
+  epoch-strided SUM of `MAX(events.id)` and `MAX(missing_hits.id)`, so a new
+  not-found hit expires a cached broken-links answer as a new event would.
+- **History** recorded before this split moves once (`jobs/missing-backfill.ts`,
+  enqueued by migration 106): each not-found page view — the prop set, or older
+  rows reported as `/404` without it — becomes a `missing_hits` row, the rows
+  recorded on that page go with it, a visit left with no page view is deleted,
+  and one with real pages left is recounted by the sessionizer's own rules (its
+  start stays where it was: the visitor did arrive then). Mid-visit, the page
+  before it is the referrer; as a visit's first hit, the visit's stored
+  attribution is, domain only. A rewrite of history, so it rebuilds the rollups
+  and bumps `data_epoch` (invariant 10); a visit still live when it runs is
+  left for the next daily run rather than raced with the sessionizer.
+
+Retention ages `missing_hits` by the same whole-day rule as events, the
+timezone backfill re-dates it, and a site purge removes it with the rest.
+
 ## Rollups
 
 Pre-aggregated tables maintained **in the same write transaction as the ingest

@@ -1,4 +1,9 @@
-import { type HitType, isValidTimezone, SiteDomainsSchema } from '@featherstat/shared';
+import {
+  type HitType,
+  isValidTimezone,
+  MISSING_HITS_PER_SITE_DAY,
+  SiteDomainsSchema,
+} from '@featherstat/shared';
 import BetterSqlite3 from 'better-sqlite3';
 import { type Db, migrate } from './migrate.ts';
 
@@ -516,19 +521,22 @@ export function upsertSessions(db: Db, rows: readonly SessionRow[]): void {
   for (const row of rows) upsert.run({ ...SESSION_NULLS, ...row });
 }
 
-const SQL_DATA_VERSION = 'SELECT COALESCE(MAX(id), 0) FROM events';
+const SQL_DATA_VERSION = `SELECT COALESCE((SELECT MAX(id) FROM events), 0)
+  + COALESCE((SELECT MAX(id) FROM missing_hits), 0)`;
 
 /**
- * Insert-only history moves MAX(events.id); in-place rewrites (alias backfill,
- * prop scrub, site purge, rollup rebuild) do not, so each of those bumps the
- * epoch instead — otherwise every ETag computed before the rewrite would keep
- * answering 304 forever. 2^40 rowids per epoch keeps the combined value well
- * inside Number.MAX_SAFE_INTEGER for any plausible bump count.
+ * Insert-only history moves MAX(events.id), and a not-found hit moves
+ * MAX(missing_hits.id) — the sum grows whenever either table does. In-place
+ * rewrites (alias backfill, prop scrub, site purge, rollup rebuild) do not, so
+ * each of those bumps the epoch instead — otherwise every ETag computed before
+ * the rewrite would keep answering 304 forever. 2^40 rowids per epoch keeps the
+ * combined value well inside Number.MAX_SAFE_INTEGER for any plausible bump
+ * count.
  */
 const EPOCH_SETTING = 'data_epoch';
 const EPOCH_STRIDE = 2 ** 40;
 
-/** Epoch-stridden MAX(events.id): the data version for ETags (docs/03). */
+/** Epoch-stridden sum of the two tables' MAX(id): the data version for ETags (docs/03). */
 export function dataVersion(db: Db): number {
   const maxId = stmt(db, SQL_DATA_VERSION).pluck().get() as number;
   const epoch = Number(getSetting(db, EPOCH_SETTING) ?? 0);
@@ -646,6 +654,50 @@ export const listBotDrops = botDropCounters.list;
 export const incrementExcludedDrops = excludedDropCounters.increment;
 export const getExcludedDrops = excludedDropCounters.get;
 export const listExcludedDrops = excludedDropCounters.list;
+
+// ---------------------------------------------------------------------------
+// Not-found hits (docs/03 § Not-found hits)
+// ---------------------------------------------------------------------------
+
+/** One not-found hit: what finds the broken link, and nothing that identifies a visitor. */
+export interface MissingRow {
+  site_id: number;
+  ts: number;
+  local_date: string;
+  local_hour: number;
+  /** The path asked for; null when the page did not say. */
+  path: string | null;
+  ref_type: 'direct' | 'search' | 'social' | 'referral' | 'internal';
+  ref_domain: string | null;
+  /** The referring page's pathname, query dropped. */
+  ref_path: string | null;
+  device_type: string | null;
+  country: string | null;
+}
+
+const SQL_COUNT_MISSING = `INSERT INTO missing_daily (site_id, local_date, count) VALUES (?, ?, 1)
+ON CONFLICT (site_id, local_date) DO UPDATE SET count = count + 1
+RETURNING count`;
+const SQL_INSERT_MISSING = `INSERT INTO missing_hits
+  (site_id, ts, local_date, local_hour, path, ref_type, ref_domain, ref_path, device_type, country)
+VALUES
+  (@site_id, @ts, @local_date, @local_hour, @path, @ref_type, @ref_domain, @ref_path,
+   @device_type, @country)`;
+
+/**
+ * Counts every row and stores those under the per-site daily cap: a scanner
+ * sweeping hundreds of paths is a number, not hundreds of rows.
+ */
+export function insertMissingHits(db: Db, rows: readonly MissingRow[]): void {
+  assertWritable(db);
+  const count = stmt(db, SQL_COUNT_MISSING).pluck();
+  const insert = stmt(db, SQL_INSERT_MISSING);
+  for (const row of rows) {
+    if ((count.get(row.site_id, row.local_date) as number) <= MISSING_HITS_PER_SITE_DAY) {
+      insert.run(row);
+    }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Props governance (docs/03 § Props) — admin reads + the delete the scrub rides.

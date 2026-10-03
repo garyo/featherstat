@@ -24,6 +24,8 @@ const SQL_DELETE_EVENTS = `DELETE FROM events WHERE id IN (
   SELECT id FROM events WHERE site_id = ? AND local_date < ? LIMIT ?)`;
 const SQL_DELETE_SESSIONS = `DELETE FROM sessions WHERE rowid IN (
   SELECT rowid FROM sessions WHERE site_id = ? AND local_date < ? LIMIT ?)`;
+const SQL_DELETE_MISSING = `DELETE FROM missing_hits WHERE id IN (
+  SELECT id FROM missing_hits WHERE site_id = ? AND local_date < ? LIMIT ?)`;
 
 // Prop-registry ageing (docs/03 § Props): a key not seen since the horizon has
 // no rows left to describe once the events above are gone. Values go first —
@@ -45,6 +47,8 @@ export interface RetentionResult {
   days: number | undefined;
   events: number;
   sessions: number;
+  /** Not-found hits, aged by the same whole-day rule as the events beside them. */
+  missing: number;
   /** Prop keys (with their values) whose `last_seen` fell past the horizon. */
   propKeys: number;
   /** Old `prop_drops` diagnostic counters removed. */
@@ -76,7 +80,7 @@ export async function runRetention(
 ): Promise<RetentionResult> {
   const days = retentionDays(db);
   if (days === undefined) {
-    return { days, events: 0, sessions: 0, propKeys: 0, propDrops: 0, more: false };
+    return { days, events: 0, sessions: 0, missing: 0, propKeys: 0, propDrops: 0, more: false };
   }
 
   const cutoff = (options.now?.() ?? Date.now()) - days * DAY_MS;
@@ -86,6 +90,7 @@ export async function runRetention(
     days,
     events: 0,
     sessions: 0,
+    missing: 0,
     propKeys: 0,
     propDrops: 0,
     more: false,
@@ -124,10 +129,12 @@ export async function runRetention(
       const deleted = withWriteTransaction(db, () => ({
         events: stmt(db, SQL_DELETE_EVENTS).run(site.id, keepFrom, batchSize).changes,
         sessions: stmt(db, SQL_DELETE_SESSIONS).run(site.id, keepFrom, batchSize).changes,
+        missing: stmt(db, SQL_DELETE_MISSING).run(site.id, keepFrom, batchSize).changes,
       }));
       result.events += deleted.events;
       result.sessions += deleted.sessions;
-      if (deleted.events < batchSize && deleted.sessions < batchSize) break;
+      result.missing += deleted.missing;
+      if (Math.max(deleted.events, deleted.sessions, deleted.missing) < batchSize) break;
     }
   }
   return result;

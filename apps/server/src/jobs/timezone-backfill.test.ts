@@ -226,7 +226,12 @@ describe('forgetTimezoneBackfill', () => {
     )
       .pluck()
       .all();
-    expect(keys).toEqual(['tz_backfill:2:events', 'tz_backfill:2:sessions', 'tz_backfill_dirty:2']);
+    expect(keys).toEqual([
+      'tz_backfill:2:events',
+      'tz_backfill:2:missing_hits',
+      'tz_backfill:2:sessions',
+      'tz_backfill_dirty:2',
+    ]);
     db.close();
   });
 });

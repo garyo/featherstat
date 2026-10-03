@@ -23,7 +23,8 @@ import { buildWidget, limitProblem } from './model.ts';
 interface Props {
   /** Grants the new widget its id — unique across the draft's widget AND query ids. */
   id: string;
-  /** The dashboard's scope: site-cards is an all-sites grid and only offered there. */
+  /** The dashboard's scope: site-cards is an all-sites grid and only offered there;
+   * a broken link names a path without its site, so only a site dashboard offers one. */
   site: 'all' | number;
   onadd: (spec: WidgetSpec) => void;
   onclose: () => void;
@@ -32,7 +33,9 @@ interface Props {
 let { id, site, onadd, onclose }: Props = $props();
 
 const vizOptions = $derived(
-  VizTypeSchema.options.filter((type) => type !== 'site-cards' || site === 'all'),
+  VizTypeSchema.options.filter((type) =>
+    type === 'site-cards' ? site === 'all' : type !== 'broken-links' || site !== 'all',
+  ),
 );
 
 let viz = $state<VizType>('bar-list');
@@ -53,6 +56,7 @@ const METRICLESS = new Set<VizType>([
   'site-cards',
   'dwell',
   'changes',
+  'broken-links',
   'feed',
   'active-now',
   'visitor-tally',

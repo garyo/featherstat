@@ -3,16 +3,17 @@ import { event, openTestDb } from '../../test/rows.ts';
 import { insertEvents, withWriteTransaction } from '../db/index.ts';
 import { createMetricsRoutes, METRICS_CONTENT_TYPE, Metrics } from './metrics.ts';
 
-const flush = { events: 3, sessions: 1, botDrops: 2, excludedDrops: 0, siteIds: [1] };
+const flush = { events: 3, sessions: 1, botDrops: 2, excludedDrops: 0, missing: 0, siteIds: [1] };
 
 describe('Metrics registry', () => {
   it('accumulates ingest counters from flush summaries', () => {
     const metrics = new Metrics();
     metrics.recordFlush(flush);
-    metrics.recordFlush({ ...flush, events: 1, botDrops: 0 });
+    metrics.recordFlush({ ...flush, events: 1, botDrops: 0, missing: 5 });
     const text = metrics.render(undefined);
     expect(text).toContain('analytics_ingest_hits_total 4');
     expect(text).toContain('analytics_ingest_bot_drops_total 2');
+    expect(text).toContain('analytics_ingest_missing_total 5');
   });
 
   it('tracks duration summaries as sum/count/max', () => {

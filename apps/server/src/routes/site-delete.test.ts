@@ -1,6 +1,15 @@
 import type { SiteInfo } from '@featherstat/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { binId, DESKTOP_UA, event, openTestDb, session, syncRollups, T0 } from '../../test/rows.ts';
+import {
+  binId,
+  DESKTOP_UA,
+  event,
+  missing,
+  openTestDb,
+  session,
+  syncRollups,
+  T0,
+} from '../../test/rows.ts';
 import { createSecuredApp, type SecuredApp } from '../auth/app.ts';
 import {
   createDashboard,
@@ -8,6 +17,7 @@ import {
   getSetting,
   insertApiToken,
   insertEvents,
+  insertMissingHits,
   insertViewer,
   listApiTokens,
   setSetting,
@@ -167,6 +177,7 @@ function seedEverything(): void {
       const id = binId(siteId);
       insertEvents(db, [{ ...event({ site_id: siteId }), session_id: id, visitor_id: id }]);
       upsertSessions(db, [session({ id, site_id: siteId, visitor_id: id })]);
+      insertMissingHits(db, [missing({ site_id: siteId })]);
       for (const sql of [
         'INSERT INTO bot_drops (site_id, local_date, count) VALUES (?, ?, 1)',
         'INSERT INTO excluded_drops (site_id, local_date, count) VALUES (?, ?, 1)',

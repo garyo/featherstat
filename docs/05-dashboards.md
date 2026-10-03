@@ -120,7 +120,10 @@ A dashboard is JSON: a grid of widget cards.
   the same batch), `dwell` ("Time on page": the `dwell` kind's pages ranked by
   average measured dwell, each behind a wash bar, with the longest view and the
   count of *measured* views alongside — the card states what its average rests
-  on, and says plainly when nothing could be timed),
+  on, and says plainly when nothing could be timed), `broken-links` (the
+  `missing` kind's paths asked for that do not exist, linked-to ones first,
+  each with the page that most often links there — a site dashboard's card
+  only, since a path means nothing without its site),
   `map` (world choropleth + city dots — **M2**, with the
   map-outline data that arrives alongside the sankey work), `feed` (realtime
   events). M2's journeys (sankey over transitions + top-journeys flows table)

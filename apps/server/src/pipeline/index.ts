@@ -6,6 +6,7 @@ import { isBotUserAgent, parseUserAgent, preferredLanguage } from './enrich.ts';
 import { ExclusionMatcher, readExclusionRules } from './exclusions.ts';
 import { type GeoProvider, NullProvider } from './geo.ts';
 import { Identity } from './identity.ts';
+import { isMissingHit, missingRow } from './missing.ts';
 import { PropRegistry } from './props.ts';
 import { loadOpenSessions, priorSessionLookup, Sessionizer } from './sessionizer.ts';
 import { SiteCache } from './site-cache.ts';
@@ -42,10 +43,12 @@ export interface Pipeline {
 
 /**
  * validate → exclusions → bot filter → UA parse → GeoIP → sessionize → batch
- * (docs/02). The raw IP is consumed by the exclusion check, the visitor hash and
- * the geo lookup, then discarded — never persisted, never logged (CLAUDE.md
- * invariant 3). The exclusion rules are the operator's own addresses, which is
- * configuration; no visitor address is stored by any of it.
+ * (docs/02). A not-found hit leaves before the sessionizer: it is stored apart
+ * and is nobody's traffic (docs/03 § Not-found hits). The raw IP is consumed by
+ * the exclusion check, the visitor hash and the geo lookup, then discarded —
+ * never persisted, never logged (CLAUDE.md invariant 3). The exclusion rules
+ * are the operator's own addresses, which is configuration; no visitor address
+ * is stored by any of it.
  */
 export function createPipeline(db: Db, options: PipelineOptions = {}): Pipeline {
   const geo = options.geo ?? new NullProvider();
@@ -93,6 +96,11 @@ export function createPipeline(db: Db, options: PipelineOptions = {}): Pipeline 
       if (device === null) {
         if (excluded) batcher.addExcludedDrop(site.id, local.date);
         else batcher.addBotDrop(site.id, local.date);
+        continue;
+      }
+      if (isMissingHit(hit)) {
+        const now = ctx.receivedAt;
+        batcher.addMissing(missingRow({ site, hit, now, local, device, geo: geoResult }));
         continue;
       }
       // Bag admission runs only when a bag exists — the hot path pays nothing

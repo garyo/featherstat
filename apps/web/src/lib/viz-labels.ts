@@ -17,4 +17,5 @@ export const VIZ_LABELS: Record<VizType, string> = {
   'visitor-tally': 'Visitor tally',
   'realtime-countries': 'Live countries',
   'site-cards': 'Site cards',
+  'broken-links': 'Broken links',
 };

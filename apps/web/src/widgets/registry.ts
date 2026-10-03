@@ -2,6 +2,7 @@ import type { VizType } from '@featherstat/shared';
 import type { Component } from 'svelte';
 import ActiveNow from './ActiveNow.svelte';
 import BarList from './BarList.svelte';
+import BrokenLinks from './BrokenLinks.svelte';
 import Changes from './Changes.svelte';
 import Devices from './Devices.svelte';
 import Dwell from './Dwell.svelte';
@@ -58,6 +59,7 @@ const REGISTERED: Record<Exclude<VizType, (typeof PLANNED)[number]>, RegistryEnt
   histogram: { component: Histogram, frame: 'card' },
   changes: { component: Changes, frame: 'card' },
   'site-cards': { component: SiteCards, frame: 'wide' },
+  'broken-links': { component: BrokenLinks, frame: 'card' },
 };
 
 /** Looked up by any `VizType`: a planned one reads as unregistered. */

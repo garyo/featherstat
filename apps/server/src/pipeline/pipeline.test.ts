@@ -3,6 +3,7 @@ import {
   DAY_MS,
   type Hit,
   type HitContext,
+  MISSING_HITS_PER_SITE_DAY,
   PING_CLAMP_MS,
   SESSION_REVIVAL_MS,
 } from '@featherstat/shared';
@@ -11,6 +12,7 @@ import { DESKTOP_UA, GOOGLEBOT_UA, resultOf, T0 } from '../../test/rows.ts';
 import {
   createSite,
   type Db,
+  dataVersion,
   getBotDrops,
   getExcludedDrops,
   openDb,
@@ -326,5 +328,95 @@ describe('a reader who comes back to an open tab', () => {
     expect(db.prepare('SELECT COUNT(*) FROM sessions').pluck().get()).toBe(1);
     expect(db.prepare('SELECT COUNT(*) FROM sessions WHERE pageviews = 0').pluck().get()).toBe(0);
     expect(db.prepare('SELECT COUNT(*) FROM events').pluck().get()).toBe(5); // 1 + 4 beats
+  });
+});
+
+describe('not-found hits (docs/03 § Not-found hits)', () => {
+  const notFound = (overrides: Partial<Hit> = {}): Hit =>
+    hit({
+      url: 'https://example.com/404',
+      referrer: 'https://blog.test/links/sailing?ref=nav',
+      props: { missing: '/articles/small-volumes' },
+      ...overrides,
+    });
+  const count = (table: string): unknown =>
+    db.prepare(`SELECT COUNT(*) FROM ${table}`).pluck().get();
+
+  it('are stored apart, and open no visit', () => {
+    pipeline.sink([notFound()], ctx());
+    pipeline.flush();
+
+    expect(count('events')).toBe(0);
+    expect(count('sessions')).toBe(0);
+    expect(db.prepare('SELECT * FROM missing_hits').get()).toEqual({
+      id: 1,
+      site_id: 1,
+      ts: T0,
+      local_date: '2026-07-27',
+      local_hour: 10,
+      path: '/articles/small-volumes',
+      ref_type: 'referral',
+      ref_domain: 'blog.test',
+      ref_path: '/links/sailing',
+      device_type: 'desktop',
+      country: 'US',
+    });
+  });
+
+  it('stay out of every traffic count, and out of the prop registry', () => {
+    pipeline.sink([hit(), notFound()], ctx());
+    pipeline.flush();
+
+    const response = executeQueryRequest(db, {
+      site: 1,
+      range: { from: '2026-07-27', to: '2026-07-27' },
+      queries: [{ id: 'kpi', metrics: ['pageviews', 'visitors', 'visits'] }],
+    });
+    expect(resultOf(response, 'kpi').rows).toEqual([{ pageviews: 1, visitors: 1, visits: 1 }]);
+    expect(count('prop_keys')).toBe(0);
+  });
+
+  it('are refused at the door like any other bot hit', () => {
+    pipeline.sink([notFound()], ctx({ userAgent: GOOGLEBOT_UA }));
+    pipeline.flush();
+
+    expect(count('missing_hits')).toBe(0);
+    expect(getBotDrops(db, 1, '2026-07-27')).toBe(1);
+  });
+
+  it('are counted past the daily cap, never stored', () => {
+    const sweep = Array.from({ length: MISSING_HITS_PER_SITE_DAY + 3 }, (_, i) =>
+      notFound({ props: { missing: `/probe/${i}` } }),
+    );
+    pipeline.sink(sweep, ctx());
+    pipeline.flush();
+
+    expect(count('missing_hits')).toBe(MISSING_HITS_PER_SITE_DAY);
+    expect(db.prepare('SELECT count FROM missing_daily').pluck().get()).toBe(sweep.length);
+  });
+
+  it('move the data version, so a cached broken-links answer expires', () => {
+    pipeline.sink([hit()], ctx());
+    pipeline.flush();
+    const before = dataVersion(db);
+
+    pipeline.sink([notFound()], ctx());
+    pipeline.flush();
+
+    expect(dataVersion(db)).toBeGreaterThan(before);
+  });
+
+  it('are only page views whose missing prop is set', () => {
+    pipeline.sink(
+      [
+        hit({ props: { missing: false } }),
+        hit({ type: 'event', event: { category: 'x', action: 'y' }, props: { missing: '/a' } }),
+      ],
+      ctx(),
+    );
+    pipeline.flush();
+
+    expect(count('missing_hits')).toBe(0);
+    expect(count('events')).toBe(2);
   });
 });

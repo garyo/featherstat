@@ -3,6 +3,7 @@ import {
   createSite,
   type Db,
   type EventRow,
+  type MissingRow,
   openDb,
   type SessionRow,
   withWriteTransaction,
@@ -84,6 +85,23 @@ export function event(overrides: Partial<EventRow> = {}): EventRow {
     visitor_id: VISITOR,
     session_id: SESSION,
     seq: 1,
+    ...overrides,
+  };
+}
+
+/** A not-found hit: a direct request for a page that does not exist. */
+export function missing(overrides: Partial<MissingRow> = {}): MissingRow {
+  return {
+    site_id: 1,
+    ts: TS,
+    local_date: '2023-11-14',
+    local_hour: 17,
+    path: '/no-such-page',
+    ref_type: 'direct',
+    ref_domain: null,
+    ref_path: null,
+    device_type: 'desktop',
+    country: null,
     ...overrides,
   };
 }

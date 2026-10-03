@@ -68,7 +68,7 @@ legal-page locations — `/privacy-policy`, `/terms`, `/gdpr`, `/cookie-policy`,
 visit**, all with measured dwell, which then dominated that site's "Time on
 page" card for the day.
 
-Mark the 404 page, and report it as one canonical path:
+Mark the 404 page, and report the path that was asked for:
 
 ```html
 <!-- on the 404 template ONLY -->
@@ -85,19 +85,21 @@ const view = () =>
 view()
 ```
 
-Missing pages then collapse to a single `/404` row, and the URL that was asked
-for survives as a prop — so broken inbound links stay findable (group by
-`prop:missing`) without scattering across the page reports. Prop values cap at
-500 distinct per key, past which new ones store as `"(other)"` (docs/03
-§ Props); for this key that is the right failure — you keep the common broken
-links and lose the long tail of noise.
+A page view carrying `missing` is then not traffic at all (docs/03 § Not-found
+hits): it opens no visit, counts toward no visitor, page view or bounce, and the
+tracker sends nothing more from that page. It is recorded apart — the path asked
+for, and the page that linked to it — and the **Broken links** card on the
+Content dashboard ranks those paths, linked-to ones first, so a dead inbound
+link is one row with the page to go and fix. A scanner sweeping hundreds of
+paths is counted past 500 a day rather than stored.
 
 A meta tag rather than a build-time flag because it is stack-agnostic: any
 templating system can emit one tag on one template, and the snippet stays
 identical everywhere.
 
-**On the Matomo shim**, collapse the URL the same way — but the requested path
-is lost, because the shim carries no props:
+**On the Matomo shim** there is no way to say so — the shim carries no props —
+so the best it can do is collapse the URL. The hit stays an ordinary `/404`
+page view, counted as traffic:
 
 ```js
 if (document.querySelector('meta[name="featherstat:missing"]')) {

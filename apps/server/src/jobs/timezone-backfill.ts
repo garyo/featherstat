@@ -15,10 +15,11 @@ import { inChunks, markRewriteDirty, oneRunAtATime, settleRewrite } from './rewr
 
 /**
  * Timezone backfill (docs/03 § Timezones): a site whose timezone changed has
- * its stored `local_date`/`local_hour` re-derived in the new zone — events from
- * `ts`, sessions from `started_at` — then its rollups rebuilt and the data epoch
- * bumped. Until then its history is keyed in the old zone while every window
- * resolves in the new one: day buckets off by the offset, heatmap hours shifted.
+ * its stored `local_date`/`local_hour` re-derived in the new zone — events and
+ * not-found hits from `ts`, sessions from `started_at` — then its rollups
+ * rebuilt and the data epoch bumped. Until then its history is keyed in the old
+ * zone while every window resolves in the new one: day buckets off by the
+ * offset, heatmap hours shifted.
  *
  * The plumbing is jobs/rewrite.ts's, shared with the other backfills: a
  * settings watermark per (site, table) so a crash resumes, short chunked write
@@ -36,13 +37,14 @@ import { inChunks, markRewriteDirty, oneRunAtATime, settleRewrite } from './rewr
  *   started on; its events move.
  * - Rollup days whose raw rows retention has pruned: nothing is left to
  *   recompute them from, so they stay bucketed in the old zone.
- * - The per-day drop counters (bot, excluded, prop): they store no instant.
+ * - The per-day counters (bot, excluded and prop drops, not-found hits): they
+ *   store no instant.
  */
 
 const WATERMARK_PREFIX = 'tz_backfill:';
 /** Per site: the durable debt `settleRewrite` pays. */
 const DIRTY_PREFIX = 'tz_backfill_dirty:';
-const TABLES = ['events', 'sessions'] as const;
+const TABLES = ['events', 'sessions', 'missing_hits'] as const;
 type BackfillTable = (typeof TABLES)[number];
 
 /** Rows per transaction — the other backfills' budget, for the same shared-lock reason. */
@@ -61,11 +63,14 @@ const SELECT_CHUNK: Record<BackfillTable, string> = {
 FROM events WHERE +site_id = ? AND rowid > ? ORDER BY rowid LIMIT ?`,
   sessions: `SELECT rowid AS rid, started_at AS at, local_date, local_hour, last_seen_at
 FROM sessions WHERE +site_id = ? AND rowid > ? ORDER BY rowid LIMIT ?`,
+  missing_hits: `SELECT rowid AS rid, ts AS at, local_date, local_hour, NULL AS last_seen_at
+FROM missing_hits WHERE +site_id = ? AND rowid > ? ORDER BY rowid LIMIT ?`,
 };
 
 const UPDATE_ROW: Record<BackfillTable, string> = {
   events: 'UPDATE events SET local_date = ?, local_hour = ? WHERE rowid = ?',
   sessions: 'UPDATE sessions SET local_date = ?, local_hour = ? WHERE rowid = ?',
+  missing_hits: 'UPDATE missing_hits SET local_date = ?, local_hour = ? WHERE rowid = ?',
 };
 
 /** Rollup days of the site that no raw row keys any more — the old zone's leftovers. */

@@ -309,6 +309,36 @@ describe('engagement pings', () => {
   });
 });
 
+describe('a page that does not exist (docs/10 § 3)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  const notFound = (): void => {
+    start({ autoPageviews: false });
+    page(`${location.origin}/404`, 'Not found', { missing: '/old-post' });
+  };
+
+  it('sends its page view, and nothing that happens on it', () => {
+    notFound();
+    vi.advanceTimersByTime(60_000);
+    track('copy-link');
+    window.dispatchEvent(new Event('pagehide'));
+
+    expect(sent()).toEqual([
+      expect.objectContaining({ type: 'pageview', props: { missing: '/old-post' } }),
+    ]);
+  });
+
+  it('lets the next page view through, and everything after it', () => {
+    notFound();
+    page(`${location.origin}/`);
+    vi.advanceTimersByTime(15_000);
+
+    expect(sent().map((hit) => hit.type)).toEqual(['pageview', 'pageview', 'ping']);
+  });
+});
+
 describe('exit ping', () => {
   beforeEach(() => {
     vi.useFakeTimers();

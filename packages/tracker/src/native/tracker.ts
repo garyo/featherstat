@@ -64,6 +64,12 @@ interface Runtime {
   read: boolean;
   /** Heartbeats this page view has held the reader through; reset by `page()`. */
   beats: number;
+  /**
+   * The `missing` prop this page view was reported with — `MISSING_PROP` in
+   * `packages/shared` (docs/10 § 3). Set, the page does not exist and nothing
+   * on it is traffic, so nothing after its page view is sent (`emit`).
+   */
+  missing?: TrackProps[string];
   /** Restart the heartbeat, so a page view's first beat is a whole interval after it. */
   rearm: () => void;
   stop: () => void;
@@ -300,6 +306,7 @@ export function page(
   runtime.maxScroll = 0;
   runtime.read = false;
   runtime.beats = 0;
+  runtime.missing = undefined;
   // An SPA route announced just before a tick would otherwise earn its "beat"
   // a second after it began.
   runtime.rearm();
@@ -312,6 +319,8 @@ export function page(
     lang: navigator.language,
     props,
   });
+  // Only now: the not-found page view itself is the one hit it still sends.
+  runtime.missing = props?.missing;
 }
 
 /** Record a custom event: `track('copy-link', { category: 'share' })`. */
@@ -332,7 +341,7 @@ export function track(action: string, props: EventProps = {}): void {
  * queue would trade lost hits on unload for savings this payload doesn't need.
  */
 function emit(hit: NativeHit): void {
-  if (!runtime) return;
+  if (!runtime || runtime.missing) return;
   runtime.lastHitAt = Date.now();
   send(runtime.endpoint, JSON.stringify({ site: runtime.site, hits: [hit] }));
 }

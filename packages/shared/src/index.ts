@@ -138,6 +138,20 @@ export const PropsSchema = z.record(
 );
 export type Props = z.infer<typeof PropsSchema>;
 
+// ---------------------------------------------------------------------------
+// Not-found hits (docs/03 § Not-found hits) — a page view of a page that does
+// not exist is recorded apart from traffic, never as a page view.
+// ---------------------------------------------------------------------------
+
+/**
+ * The reserved prop a site's 404 page reports the requested path under
+ * (docs/10 § 3): a native page view carrying it is a not-found hit. The tracker
+ * keeps its own copy of the name — it ships no runtime code from this package.
+ */
+export const MISSING_PROP = 'missing';
+/** Not-found hits stored per site per local day; past it a scanner is only counted. */
+export const MISSING_HITS_PER_SITE_DAY = 500;
+
 export const EventPayloadSchema = z.object({
   category: z.string().min(1).max(200),
   action: z.string().min(1).max(200),
@@ -440,6 +454,23 @@ export const ChangesQuerySchema = z.object({
 export type ChangesQuery = z.infer<typeof ChangesQuerySchema>;
 
 /**
+ * Broken links (docs/03 § Not-found hits, docs/04 § 3): requested paths that do
+ * not exist, ranked by the hits that arrived with a referrer — a link someone
+ * can fix — then by all hits. Rows are `{ path, hits, referred, ref_domain,
+ * ref_path, last_seen }`: the referrer columns name each path's most common
+ * referring page, `last_seen` the site-local date of its latest hit. Not-found
+ * hits belong to no visit, so only the dimensions the hit itself carries can
+ * filter it.
+ */
+export const MissingQuerySchema = z.object({
+  id: z.string().min(1).max(64),
+  kind: z.literal('missing'),
+  filters: FiltersSchema.optional(),
+  limit: z.number().int().min(1).max(100).default(10),
+});
+export type MissingQuery = z.infer<typeof MissingQuerySchema>;
+
+/**
  * Every shape a batch can carry. All of them — metric and kind alike — take an
  * optional `filters` of their own, AND-ed with the request's, so one widget can
  * ask a narrower question than the view around it (docs/04 § 3). A kind that
@@ -451,6 +482,7 @@ export const QuerySchema = z.union([
   AdjacencyQuerySchema,
   DistributionQuerySchema,
   ChangesQuerySchema,
+  MissingQuerySchema,
   MetricQuerySchema,
 ]);
 export type Query = z.infer<typeof QuerySchema>;
@@ -1211,6 +1243,7 @@ export const VizTypeSchema = z.enum([
   'visitor-tally',
   'realtime-countries',
   'site-cards',
+  'broken-links',
 ]);
 export type VizType = z.infer<typeof VizTypeSchema>;
 

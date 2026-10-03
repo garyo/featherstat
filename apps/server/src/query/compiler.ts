@@ -434,7 +434,7 @@ const ROLLING_BOUNDS = [...DATE_BOUNDS, 'from_ts', 'to_ts'] as const;
 const TS_COLUMN: Record<Table, string> = { events: 'ts', sessions: 'started_at' };
 
 /** Every window in a request resolves from one range, so one of them answers for all. */
-function isRolling(windows: readonly SiteWindow[]): boolean {
+export function isRolling(windows: readonly SiteWindow[]): boolean {
   return windows[0]?.fromTs !== undefined;
 }
 

@@ -28,6 +28,7 @@ export const NEEDS: Record<VizType, readonly Capability[]> = {
   changes: ['data'],
   map: ['data'],
   'site-cards': ['data'],
+  'broken-links': ['data'],
   feed: ['realtime'],
   'active-now': ['realtime'],
   'visitor-tally': ['realtime'],

@@ -5,6 +5,8 @@ import {
   incrementBotDrops,
   incrementExcludedDrops,
   insertEvents,
+  insertMissingHits,
+  type MissingRow,
   type SessionRow,
   stmt,
   tombstonedSiteIds,
@@ -25,6 +27,8 @@ export interface FlushSummary {
   botDrops: number;
   /** Hits refused because the client address matched an exclusion rule (docs/03 § Exclusions). */
   excludedDrops: number;
+  /** Not-found hits, counted and stored up to the daily cap (docs/03 § Not-found hits). */
+  missing: number;
   /** Sites whose event data changed — feeds the SSE per-site version ticks (docs/02). */
   siteIds: number[];
 }
@@ -52,6 +56,7 @@ function totalDrops(drops: readonly DropEntry[]): number {
 interface Batch {
   events: EventRow[];
   sessions: SessionRow[];
+  missing: MissingRow[];
   botDrops: DropEntry[];
   excludedDrops: DropEntry[];
 }
@@ -67,6 +72,7 @@ function withoutTombstoned(db: Db, batch: Batch): Batch {
   return {
     events: batch.events.filter((row) => !dead.has(row.site_id)),
     sessions: batch.sessions.filter((row) => !dead.has(row.site_id)),
+    missing: batch.missing.filter((row) => !dead.has(row.site_id)),
     botDrops: batch.botDrops.filter((drop) => !dead.has(drop.siteId)),
     excludedDrops: batch.excludedDrops.filter((drop) => !dead.has(drop.siteId)),
   };
@@ -75,10 +81,12 @@ function withoutTombstoned(db: Db, batch: Batch): Batch {
 /**
  * The single writer (docs/02): everything the pipeline produces queues here and
  * lands in ONE transaction per interval — events insert + sessions upsert +
- * the drop counters. A hard crash loses at most one interval of hits.
+ * not-found hits + the drop counters. A hard crash loses at most one interval
+ * of hits.
  */
 export class WriteBatcher {
   private events: EventRow[] = [];
+  private missing: MissingRow[] = [];
   /**
    * Deduped by row identity: the sessionizer mutates one live row per open
    * session, so whatever state that row holds at flush time is what lands.
@@ -148,6 +156,10 @@ export class WriteBatcher {
     this.committed.set(row, snapshotSession(row));
   }
 
+  addMissing(row: MissingRow): void {
+    this.missing.push(row);
+  }
+
   addBotDrop(siteId: number, localDate: string): void {
     countDrop(this.botDrops, siteId, localDate);
   }
@@ -164,6 +176,7 @@ export class WriteBatcher {
     return (
       this.events.length +
       this.sessions.size +
+      this.missing.length +
       this.botDrops.size +
       this.excludedDrops.size +
       // A prop drop can queue with no event beside it (an orphan heartbeat's
@@ -177,6 +190,7 @@ export class WriteBatcher {
     const queued: Batch = {
       events: this.events,
       sessions: [...this.sessions],
+      missing: this.missing,
       botDrops: [...this.botDrops.values()],
       excludedDrops: [...this.excludedDrops.values()],
     };
@@ -193,6 +207,7 @@ export class WriteBatcher {
           .get() as number;
         insertEvents(this.db, batch.events);
         upsertSessions(this.db, batch.sessions);
+        insertMissingHits(this.db, batch.missing);
         for (const drop of batch.botDrops) {
           incrementBotDrops(this.db, drop.siteId, drop.localDate, drop.count);
         }
@@ -222,6 +237,7 @@ export class WriteBatcher {
     for (const row of landed.sessions) this.committed.set(row, snapshotSession(row));
     this.props?.committed();
     this.events = [];
+    this.missing = [];
     this.sessions.clear();
     this.botDrops.clear();
     this.excludedDrops.clear();
@@ -229,11 +245,13 @@ export class WriteBatcher {
     const siteIds = new Set<number>();
     for (const event of landed.events) siteIds.add(event.site_id);
     for (const session of landed.sessions) siteIds.add(session.site_id);
+    for (const row of landed.missing) siteIds.add(row.site_id);
     const summary: FlushSummary = {
       events: landed.events.length,
       sessions: landed.sessions.length,
       botDrops: totalDrops(landed.botDrops),
       excludedDrops: totalDrops(landed.excludedDrops),
+      missing: landed.missing.length,
       siteIds: [...siteIds],
     };
     for (const hook of this.hooks) hook(summary);

@@ -131,7 +131,14 @@ describe('RealtimeHub feed', () => {
     const unsubscribe = hub.subscribe((message) => seen.push(message));
 
     hub.record(event({ ts: T0 }));
-    hub.recordFlush({ events: 1, sessions: 1, botDrops: 0, excludedDrops: 0, siteIds: [1] });
+    hub.recordFlush({
+      events: 1,
+      sessions: 1,
+      botDrops: 0,
+      excludedDrops: 0,
+      missing: 0,
+      siteIds: [1],
+    });
     unsubscribe();
     hub.record(event({ ts: T0 + 1 }));
 
@@ -148,8 +155,22 @@ describe('RealtimeHub feed', () => {
       if (message.kind === 'version') ticks.push(message);
     });
 
-    hub.recordFlush({ events: 2, sessions: 2, botDrops: 0, excludedDrops: 0, siteIds: [1, 2] });
-    hub.recordFlush({ events: 1, sessions: 1, botDrops: 0, excludedDrops: 0, siteIds: [2] });
+    hub.recordFlush({
+      events: 2,
+      sessions: 2,
+      botDrops: 0,
+      excludedDrops: 0,
+      missing: 0,
+      siteIds: [1, 2],
+    });
+    hub.recordFlush({
+      events: 1,
+      sessions: 1,
+      botDrops: 0,
+      excludedDrops: 0,
+      missing: 0,
+      siteIds: [2],
+    });
 
     expect(ticks.map((tick) => tick.kind === 'version' && tick.tick)).toEqual([
       { siteId: 1, version: 1 },

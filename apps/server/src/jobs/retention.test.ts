@@ -1,11 +1,12 @@
 import { DAY_MS, localClock } from '@featherstat/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { binId, event, openTestDb, session } from '../../test/rows.ts';
+import { binId, event, missing, openTestDb, session } from '../../test/rows.ts';
 import {
   createSite,
   type Db,
   DEFAULT_TIMEZONE,
   insertEvents,
+  insertMissingHits,
   setSetting,
   upsertSessions,
   withWriteTransaction,
@@ -70,6 +71,7 @@ describe('runRetention', () => {
       days: undefined,
       events: 0,
       sessions: 0,
+      missing: 0,
       propKeys: 0,
       propDrops: 0,
       more: false,
@@ -87,12 +89,33 @@ describe('runRetention', () => {
       days: 30,
       events: 2,
       sessions: 2,
+      missing: 0,
       propKeys: 0,
       propDrops: 0,
       more: false,
     });
     expect(counts()).toEqual({ events: 2, sessions: 2 });
     expect(db.prepare('SELECT MIN(ts) FROM events').pluck().get()).toBe(NOW - 10 * DAY_MS);
+  });
+
+  it('ages not-found hits by the same whole-day rule as the events beside them', async () => {
+    const dates = [1, 10, 40, 100].map((daysAgo) => storeDay(daysAgo));
+    withWriteTransaction(db, () => {
+      insertMissingHits(
+        db,
+        dates.map((local_date, i) => missing({ local_date, ts: NOW - i * DAY_MS })),
+      );
+    });
+    setRetention('30');
+
+    const result = await runRetention(db, { now: () => NOW });
+
+    expect(result).toMatchObject({ events: 2, missing: 2 });
+    const left = db
+      .prepare('SELECT local_date FROM missing_hits ORDER BY local_date')
+      .pluck()
+      .all();
+    expect(left).toEqual(dates.slice(0, 2).sort());
   });
 
   it("prunes whole site-local days, each in its own site's timezone", async () => {
@@ -172,6 +195,7 @@ describe('runRetention', () => {
       days: 30,
       events: 6,
       sessions: 6,
+      missing: 0,
       propKeys: 0,
       propDrops: 0,
       more: true,
@@ -183,6 +207,7 @@ describe('runRetention', () => {
       days: 30,
       events: 4,
       sessions: 4,
+      missing: 0,
       propKeys: 0,
       propDrops: 0,
       more: false,

@@ -5,6 +5,7 @@ import { migration102 } from './102-excluded-drops.ts';
 import { migration103 } from './103-users.ts';
 import { migration104 } from './104-session-local-hour.ts';
 import { migration105 } from './105-rollup-total-index.ts';
+import { migration106 } from './106-missing-hits.ts';
 
 /**
  * Applied in order at boot. Append only — never edit or renumber a shipped
@@ -19,4 +20,5 @@ export const MIGRATIONS: readonly Migration[] = [
   migration103,
   migration104,
   migration105,
+  migration106,
 ];

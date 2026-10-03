@@ -5,7 +5,8 @@ import type { DashboardTemplate } from './index.ts';
  * How the writing is doing: rankings by page, where sessions begin and end
  * (`entry_path`/`exit_path` are session dimensions, so those lists rank session
  * metrics), and how deeply pages are read — dwell per page plus the dwell and
- * scroll histograms over the same measured legs (docs/04 § 3 `distribution`).
+ * scroll histograms over the same measured legs (docs/04 § 3 `distribution`) —
+ * and the paths asked for that do not exist, with the pages linking to them.
  */
 export const contentTemplate: DashboardTemplate = {
   id: 'content',
@@ -81,6 +82,14 @@ export const contentTemplate: DashboardTemplate = {
           w: 6,
           h: 2,
           query: { id: 'scrollhist', kind: 'distribution', of: 'scroll' },
+        },
+        {
+          id: 'broken',
+          viz: 'broken-links',
+          title: 'Broken links',
+          w: 6,
+          h: 2,
+          query: { id: 'broken', kind: 'missing', limit: 8 },
         },
       ],
     }),

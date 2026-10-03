@@ -10,6 +10,7 @@ import {
   geoipInstalledAt,
   refreshGeoipDatabase,
 } from './geoip-refresh.ts';
+import { runMissingBackfill } from './missing-backfill.ts';
 import { runPropScrubs } from './prop-scrub.ts';
 import { runReconcile } from './reconcile.ts';
 import { runReferrerBackfill } from './referrer-backfill.ts';
@@ -41,6 +42,7 @@ export {
 } from './campaign-backfill.ts';
 export { DIGEST_LAST_RUN_KEY, type DigestResult, digestLastRunAt, runDigest } from './digest.ts';
 export { DEFAULT_MMDB_PATH, type Fetcher, refreshGeoipDatabase } from './geoip-refresh.ts';
+export { type MissingBackfillResult, runMissingBackfill } from './missing-backfill.ts';
 export { type PropScrubResult, requestPropScrub, runPropScrubs } from './prop-scrub.ts';
 export { type ReconcileResult, runReconcile } from './reconcile.ts';
 export {
@@ -191,6 +193,20 @@ export function startJobs(db: Db, options: JobsOptions = {}): Scheduler {
       const { completed, rows } = await runReferrerBackfill(db);
       if (completed && rows > 0) {
         console.log(`referrer-backfill: canonicalized ref_domain on ${rows} row(s)`);
+      }
+    },
+  });
+
+  // Enqueued by migration 106: moving the not-found page views already recorded
+  // as traffic is a one-time upgrade. Daily, because a visit still live when it
+  // first ran is left for the next run (missing-backfill.ts).
+  jobs.push({
+    name: 'missing-backfill',
+    everyMs: DAY_MS,
+    run: async () => {
+      const { completed, moved, visits } = await runMissingBackfill(db, { now: options.now });
+      if (completed && moved > 0) {
+        console.log(`missing-backfill: moved ${moved} not-found page view(s), ${visits} visit(s) removed`);
       }
     },
   });

@@ -96,6 +96,8 @@ function knownColumns(query: Query): readonly string[] {
       return ['bucket', 'legs'];
     case 'changes':
       return ['dim', 'value', 'current', 'previous', 'delta', 'share'];
+    case 'missing':
+      return ['path', 'hits', 'referred', 'ref_domain', 'ref_path', 'last_seen'];
   }
 }
 

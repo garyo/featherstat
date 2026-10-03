@@ -38,7 +38,7 @@ The server runs WAL mode with a single writer. Two rules follow:
 
 ## The supported surface
 
-Three data tables plus the version bookkeeping. Column semantics one line
+Four data tables plus the version bookkeeping. Column semantics one line
 each here; docs/03 is the depth.
 
 ### `sites`
@@ -90,6 +90,22 @@ Attribution and device columns are the visit's first event, denormalized.
 | `engaged_ms` | accrued engaged time; 0 on a single-hit visit means *unmeasured*, not zero seconds |
 | `ref_*` · `utm_*` (+ `_raw`) · `browser` · `os` · `device_type` · `country` · `region` · `city` | as on `events`, from the first event |
 
+### `missing_hits`
+
+One row per request for a page that does not exist — a site's 404 page
+reporting itself (docs/03 § Not-found hits). Not traffic: no visit, no
+visitor, and in no count the events table feeds. Stored up to 500 per site
+per local day; past that a sweep is only counted.
+
+| column | meaning |
+| --- | --- |
+| `id` | rowid, monotonic; with `events.id`, the low bits of the ETag data-version |
+| `site_id` · `ts` · `local_date` · `local_hour` | as on `events` |
+| `path` | the path asked for; NULL when the page did not say |
+| `ref_type` · `ref_domain` | this hit's own referrer, classified as on `events` (never `campaign`) |
+| `ref_path` | the referring page's path, query dropped — where the broken link is |
+| `device_type` · `country` | as on `events` |
+
 ### Versioning
 
 `schema_migrations` (`version`, `name`, `applied_at`) lists every applied
@@ -114,8 +130,9 @@ implementation:
   time; their shape serves the planner, not you. Query raw rows instead.
 - **Props governance** (`prop_keys`, `prop_values`, `prop_drops`) and the
   campaign registry/alias tables — ingest bookkeeping.
-- **`bot_drops`** and **`excluded_drops`** — diagnostics counters (hits refused
-  as crawler traffic, and hits refused by an exclusion rule).
+- **`bot_drops`**, **`excluded_drops`** and **`missing_daily`** — diagnostics
+  counters (hits refused as crawler traffic, hits refused by an exclusion rule,
+  and every not-found hit, stored or past the daily cap).
 
 ## The change promise
 
