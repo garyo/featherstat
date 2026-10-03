@@ -702,7 +702,9 @@ stored in `missing_hits` in the same flush transaction as everything else
 - **History** recorded before this split moves once (`jobs/missing-backfill.ts`,
   enqueued by migration 106): each not-found page view — the prop set, or older
   rows reported as `/404` without it — becomes a `missing_hits` row, the rows
-  recorded on that page go with it, a visit left with no page view is deleted,
+  recorded on that page go with it (wherever they landed: a heartbeat or read
+  milestone sent after its visit had gone revived another visit, or made one
+  of nothing but itself), a visit left with no page view is deleted,
   and one with real pages left is recounted by the sessionizer's own rules (its
   start stays where it was: the visitor did arrive then). Mid-visit, the page
   before it is the referrer; as a visit's first hit, the visit's stored

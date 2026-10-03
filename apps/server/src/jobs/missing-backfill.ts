@@ -25,8 +25,10 @@ import { inChunks, markRewriteDirty, oneRunAtATime, settleRewrite } from './rewr
  * A not-found page view is one carrying the `missing` prop, or — older history,
  * from before the 404 snippet carried it — one reported as `/404`. It goes,
  * and so does everything recorded ON that page: its heartbeats, its read
- * milestone, any click out of it. A visit left with no page view was never a
- * visit and goes whole; a visit with real pages left is recomputed from its
+ * milestone, any click out of it — wherever it landed. The tracker addressed
+ * those rows to `/404` too, and one that arrived after its own visit had gone
+ * made a visit of nothing but itself. A visit left with no page view was never
+ * a visit and goes whole; a visit with real pages left is recomputed from its
  * remaining rows by the sessionizer's own rules. Its start stays where it was —
  * the visitor did arrive then, on a page that did not exist.
  *
@@ -41,14 +43,14 @@ import { inChunks, markRewriteDirty, oneRunAtATime, settleRewrite } from './rewr
  */
 
 const WATERMARK = 'missing_backfill:events';
-/** The durable debt `settleRewrite` pays: set with the first row moved. */
+/** The durable debt `settleRewrite` pays: set with the first visit changed. */
 const DIRTY_SETTING = 'missing_backfill:dirty';
-/** Not-found page views per transaction, each pulling its whole visit along. */
+/** Candidate rows per transaction, each pulling its whole visit along. */
 const DEFAULT_BATCH_SIZE = 500;
 
 const SQL_CANDIDATES = `SELECT id, session_id FROM events
-WHERE id > ? AND type = 'pageview'
-  AND (json_extract(props, '$.${MISSING_PROP}') IS NOT NULL OR path = '/404')
+WHERE id > ? AND (path = '/404'
+  OR (type = 'pageview' AND json_extract(props, '$.${MISSING_PROP}') IS NOT NULL))
 ORDER BY id LIMIT ?`;
 const SQL_SESSION = 'SELECT last_seen_at FROM sessions WHERE id = ?';
 const SQL_SESSION_ROWS = `SELECT id, site_id, ts, local_date, local_hour, type, hostname, path, props,
@@ -128,7 +130,7 @@ async function drain(db: Db, batchSize: number, now: number): Promise<MissingBac
         const outcome = rewriteVisit(db, session_id);
         result.moved += outcome.moved;
         if (outcome.deleted) result.visits += 1;
-        if (outcome.moved > 0) markRewriteDirty(db, DIRTY_SETTING);
+        if (outcome.changed) markRewriteDirty(db, DIRTY_SETTING);
       }
       setSetting(db, WATERMARK, String(rows[rows.length - 1]?.id ?? since));
       return false;
@@ -140,7 +142,10 @@ async function drain(db: Db, batchSize: number, now: number): Promise<MissingBac
 }
 
 /** One visit: its not-found page views moved, what was recorded on them dropped, the rest recounted. */
-function rewriteVisit(db: Db, sessionId: Uint8Array): { moved: number; deleted: boolean } {
+function rewriteVisit(
+  db: Db,
+  sessionId: Uint8Array,
+): { moved: number; deleted: boolean; changed: boolean } {
   const rows = stmt<StoredRow>(db, SQL_SESSION_ROWS).all(sessionId);
   const kept: StoredRow[] = [];
   const moved: MissingRow[] = [];
@@ -157,10 +162,10 @@ function rewriteVisit(db: Db, sessionId: Uint8Array): { moved: number; deleted: 
       }
       previousPage = row;
     }
-    if (onMissing) dropped.push(row.id);
+    if (onMissing || row.path === '/404') dropped.push(row.id);
     else kept.push(row);
   }
-  if (moved.length === 0) return { moved: 0, deleted: false };
+  if (dropped.length === 0) return { moved: 0, deleted: false, changed: false };
 
   insertMissingHits(db, moved);
   const pages = kept.filter((row) => row.type === 'pageview');
@@ -168,7 +173,7 @@ function rewriteVisit(db: Db, sessionId: Uint8Array): { moved: number; deleted: 
   if (pages.length === 0) {
     for (const row of rows) deleteEvent.run(row.id);
     stmt(db, SQL_DELETE_SESSION).run(sessionId);
-    return { moved: moved.length, deleted: true };
+    return { moved: moved.length, deleted: true, changed: true };
   }
   for (const id of dropped) deleteEvent.run(id);
   stmt(db, SQL_UPDATE_SESSION).run(
@@ -180,7 +185,7 @@ function rewriteVisit(db: Db, sessionId: Uint8Array): { moved: number; deleted: 
     kept[kept.length - 1]?.ts ?? 0,
     sessionId,
   );
-  return { moved: moved.length, deleted: false };
+  return { moved: moved.length, deleted: false, changed: true };
 }
 
 /** The ingest rule (`isMissingHit`), plus the older `/404` page views that never set the prop. */

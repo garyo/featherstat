@@ -127,6 +127,22 @@ describe('runMissingBackfill', () => {
     ]);
   });
 
+  it('takes what a not-found page sent after its visit had gone, wherever it landed', async () => {
+    // A read milestone that made a visit of its own, and a heartbeat that
+    // revived the visitor's earlier, real visit.
+    visit(1, [milestone(T)], { pageviews: 0 });
+    visit(2, [{ ts: T, path: '/a' }, ping(T + 15_000, '/404')]);
+
+    const result = await runMissingBackfill(db, { now: () => LATER });
+
+    expect(result).toEqual({ completed: true, moved: 0, visits: 1 });
+    expect(all('SELECT path, type FROM events')).toEqual([{ path: '/a', type: 'pageview' }]);
+    expect(db.prepare('SELECT engaged_ms, last_seen_at FROM sessions').get()).toEqual({
+      engaged_ms: 0,
+      last_seen_at: T,
+    });
+  });
+
   it('takes the older /404 page views that never carried the prop', async () => {
     visit(1, [{ ts: T, path: '/404' }]);
 
