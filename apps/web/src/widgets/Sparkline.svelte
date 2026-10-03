@@ -35,8 +35,9 @@ const geometry = $derived.by(() => {
   const measured = data.filter((value): value is number => value !== undefined);
   if (measured.length === 0) return undefined;
   const points = data.length === 1 ? [measured[0], measured[0]] : [...data];
-  const max = Math.max(...measured);
-  const min = Math.min(...measured);
+  // An unlabeled axis must start at zero, or the smallest value reads as nothing.
+  const max = Math.max(0, ...measured);
+  const min = Math.min(0, ...measured);
   const span = max - min || 1;
   const floor = height - PAD;
   const xOf = (i: number): number => PAD + (i * (width - 2 * PAD)) / (points.length - 1);
