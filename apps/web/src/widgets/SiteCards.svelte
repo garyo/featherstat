@@ -118,13 +118,6 @@ function onKeydown(event: KeyboardEvent, site: number): void {
                 <span class="micro">
                   <Sparkline data={page.spark} width={52} height={16} micro />
                 </span>
-                {#if page.deltaPct === undefined}
-                  <span class="d delta muted">—</span>
-                {:else}
-                  <span class="d delta {page.deltaPct >= 0 ? 'up' : 'down'}">
-                    {page.deltaPct >= 0 ? '▴ +' : '▾ −'}{Math.abs(page.deltaPct)}%
-                  </span>
-                {/if}
               </div>
             {/each}
           </div>

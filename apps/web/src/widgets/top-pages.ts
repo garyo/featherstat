@@ -5,9 +5,10 @@ import { num } from './series.ts';
 /**
  * R20: each all-sites card shows its site's top pages with a per-page trend.
  * Shaped from one `pageviews × path × day` result per site (the queries ride
- * the same all-sites batch — CLAUDE.md invariant 1): rank by the trend
- * selected range's total, sparkline over its buckets, delta = the back half
- * vs its front half — "how is this article doing lately", not vs last year.
+ * the same all-sites batch — CLAUDE.md invariant 1): rank by the selected
+ * range's total, sparkline over its buckets. No delta: the card's headline
+ * delta is visitors vs the previous period, and a second percentage beside it
+ * meaning something else read as a contradiction.
  *
  * Ranking means totalling a metric over buckets, which is only legal for some of
  * them, so the total goes through the result's own `measures` header rather than
@@ -23,8 +24,6 @@ export interface PageTrend {
   total: number;
   /** Pageviews per bucket of the card's window, zero-filled, oldest first. */
   spark: number[];
-  /** Signed integer percent, recent half vs previous half; undefined without a baseline. */
-  deltaPct: number | undefined;
 }
 
 const METRIC = 'pageviews';
@@ -55,21 +54,16 @@ export function topPages(
   const trends: PageTrend[] = [];
   for (const [path, days] of byPath) {
     const spark = buckets.map((bucket) => days.get(bucket) ?? 0);
-    const cells = spark.map((value) => ({ [METRIC]: value }));
-    const half = Math.floor(cells.length / 2);
-    const total = measureTotal(METRIC, measure, cells);
-    const recent = measureTotal(METRIC, measure, cells.slice(half));
-    const previous = measureTotal(METRIC, measure, cells.slice(0, half));
-    // A measure with no total across buckets cannot be ranked or trended at all;
-    // the card shows no page list rather than a number nothing supports.
-    if (total === undefined || recent === undefined || previous === undefined) return [];
+    const total = measureTotal(
+      METRIC,
+      measure,
+      spark.map((value) => ({ [METRIC]: value })),
+    );
+    // A measure with no total across buckets cannot be ranked at all; the card
+    // shows no page list rather than a ranking nothing supports.
+    if (total === undefined) return [];
     if (total === 0) continue;
-    trends.push({
-      path,
-      total,
-      spark,
-      deltaPct: previous > 0 ? Math.round(((recent - previous) / previous) * 100) : undefined,
-    });
+    trends.push({ path, total, spark });
   }
   trends.sort((a, b) => b.total - a.total || (a.path < b.path ? -1 : 1));
   return trends.slice(0, TOP_PAGES);

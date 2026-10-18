@@ -119,7 +119,7 @@ its own, simpler multi-user model later: R23.)
 - **R15** Prometheus `/metrics` + `/healthz` (the home stack already runs
   Prometheus + Grafana).
 - **R20** All-sites cards surface each site's **top 3 pages with trends**
-  (delta vs previous period) — per-article blog tracking at a glance.
+  (a micro-sparkline each) — per-article blog tracking at a glance.
 - **R21** **Journeys**: per-site common event sequences — entry page → steps
   → exit, with session counts, time spent, and events along the way.
 - **R22** **Live by default**: every dashboard view updates itself as hits

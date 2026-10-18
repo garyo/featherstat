@@ -25,7 +25,6 @@ describe('collectBatch', () => {
     expect(queries.map((query) => query.id)).toEqual([
       'kpis',
       'kpis~spark',
-      'changes',
       'series',
       'pages',
       'refs',
@@ -35,6 +34,7 @@ describe('collectBatch', () => {
       'events',
       'outlinks',
       'dwell',
+      'changes',
       'heatmap',
     ]);
     expect(queries.length).toBeLessThanOrEqual(MAX_QUERIES_PER_BATCH);

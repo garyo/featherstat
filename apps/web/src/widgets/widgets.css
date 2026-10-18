@@ -633,7 +633,7 @@
   margin-top: 10px;
 }
 
-/* R20: the card's top pages with per-page trend (mockup .pages grammar). */
+/* R20: the card's top pages with a per-page sparkline (mockup .pages grammar). */
 .site-card .pages {
   margin-top: 10px;
   padding-top: 8px;
@@ -662,12 +662,6 @@
 .page-row .micro {
   flex-shrink: 0;
   display: flex;
-}
-
-.page-row .d {
-  font-size: 12px;
-  min-width: 46px;
-  text-align: right;
 }
 
 .pulse {

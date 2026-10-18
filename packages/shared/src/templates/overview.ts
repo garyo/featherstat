@@ -2,10 +2,11 @@ import { buildDashboard } from './build.ts';
 import type { DashboardTemplate } from './index.ts';
 
 /**
- * The shipped default site dashboard — the mockup's arrangement: KPIs → what
- * changed → main series → pages/referrers → countries/devices/events →
- * outbound links/time on page → hours heatmap. The changes card compares, so
- * it reads from the view's compare control and refuses honestly at `cmp=off`.
+ * The shipped default site dashboard: KPIs → main series → pages/referrers →
+ * countries/devices/events → outbound links/time on page → what changed →
+ * hours heatmap. The changes card compares, so it reads from the view's compare
+ * control and refuses honestly at `cmp=off`; it sits below the range's own
+ * numbers because its counts are movers, not the data itself.
  */
 export const overviewTemplate: DashboardTemplate = {
   id: 'overview',
@@ -34,14 +35,6 @@ export const overviewTemplate: DashboardTemplate = {
             ],
           },
           options: { tiles: ['visitors', 'pageviews', 'avg_engagement', 'bounce_rate'] },
-        },
-        {
-          id: 'changes',
-          viz: 'changes',
-          title: 'What changed',
-          w: 12,
-          h: 2,
-          query: { id: 'changes', kind: 'changes' },
         },
         {
           id: 'series',
@@ -123,6 +116,14 @@ export const overviewTemplate: DashboardTemplate = {
           w: 6,
           h: 2,
           query: { id: 'dwell', kind: 'dwell', limit: 10 },
+        },
+        {
+          id: 'changes',
+          viz: 'changes',
+          title: 'What changed',
+          w: 12,
+          h: 2,
+          query: { id: 'changes', kind: 'changes' },
         },
         {
           id: 'heatmap',

@@ -45,15 +45,7 @@ describe('topPages', () => {
     expect(spark?.slice(1, -1).every((value) => value === 0)).toBe(true);
   });
 
-  it('computes the delta as recent half vs previous half', () => {
-    const rows: ResultRow[] = [
-      ...Array.from({ length: 7 }, (_, i) => row('/a', i, 20)), // recent 7 days: 140
-      ...Array.from({ length: 7 }, (_, i) => row('/a', i + 7, 10)), // previous 7: 70
-    ];
-    expect(topPages(rows, BUCKETS, ADDITIVE)[0]?.deltaPct).toBe(100);
-  });
-
-  it('reports no delta without a baseline, and merges campaign variants of a page', () => {
+  it('merges campaign variants of a page', () => {
     const rows: ResultRow[] = [
       row('/launch', 0, 8),
       { ...row('/launch', 0, 4), path: '/launch?utm_source=hn' },
@@ -64,7 +56,6 @@ describe('topPages', () => {
         path: '/launch',
         total: 12,
         spark: [...Array.from({ length: WINDOW_DAYS - 1 }, () => 0), 12],
-        deltaPct: undefined,
       },
     ]);
   });
