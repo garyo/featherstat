@@ -405,6 +405,9 @@ v1 importer) and keeps everything else, survivors in their original order:
 A query emptied by stripping collapses to the plain pathname (no trailing
 `?`). The raw URL still feeds campaign extraction *before* stripping, so
 nothing here loses attribution signal — it moves it where it belongs.
+Dashboards show `path` as stored: `/?tab=globe` ranks as its own page, and no
+client merges query variants back onto the bare path (that is this list's job,
+done once at ingest).
 
 ## Attribution (referrer classification at ingest)
 

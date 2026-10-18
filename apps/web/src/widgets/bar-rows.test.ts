@@ -18,21 +18,21 @@ describe('barRows', () => {
     ]);
   });
 
-  it('collapses query-string variants of a path into one display row', () => {
+  it('keeps the query string of a path: it is page identity, not a variant', () => {
     const rows = barRows(
       [
         { path: '/', pageviews: 361 },
-        { path: '/?pk_source=sponsor&pk_medium=banner', pageviews: 9 },
-        { path: '/?utm_source=newsletter', pageviews: 8 },
+        { path: '/?tab=globe', pageviews: 9 },
         { path: '/post', pageviews: 20 },
       ],
       'pageviews',
       'path',
       '(none)',
     );
-    expect(rows.map((row) => [row.name, row.value, row.filterValue])).toEqual([
-      ['/', 378, '/'],
-      ['/post', 20, '/post'],
+    expect(rows.map((row) => [row.name, row.value, row.filterValue, row.full])).toEqual([
+      ['/', 361, '/', undefined],
+      ['/post', 20, '/post', undefined],
+      ['/?tab=globe', 9, '/?tab=globe', undefined],
     ]);
   });
 
@@ -118,12 +118,6 @@ describe('barRows', () => {
       ['plain.test/x', 'http://plain.test/x', 'http://plain.test/x'],
       ['(none)', null, undefined],
     ]);
-  });
-
-  it('leaves untrimmed dimensions without a raw-value tooltip', () => {
-    const rows = barRows([{ path: '/a?utm=x', pageviews: 3 }], 'pageviews', 'path', '(none)');
-    // A path row MERGES variants, so no single raw value describes it.
-    expect(rows[0]?.full).toBeUndefined();
   });
 
   it('handles empty input and non-numeric cells', () => {

@@ -10,7 +10,7 @@ export const VIZ_LABELS: Record<VizType, string> = {
   devices: 'Devices',
   dwell: 'Time on page',
   histogram: 'Histogram',
-  changes: 'What changed',
+  changes: 'Biggest changes',
   map: 'Map',
   feed: 'Live feed',
   'active-now': 'Active now',

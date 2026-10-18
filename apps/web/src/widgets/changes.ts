@@ -4,9 +4,14 @@ import { dimLabel, nullLabelFor } from '../lib/filters.ts';
 /** One mover of a `changes` section, ready to draw. */
 interface ChangeRow {
   name: string;
+  previous: number;
   current: number;
   delta: number;
-  /** |delta| as a share of the section's largest, 0–100 — the bar width. */
+  /**
+   * The bar's width as a percent of the whole track, 0–50: the track is centered
+   * on zero, a rise grows right of it and a fall left, scaled so the section's
+   * largest move reaches an end.
+   */
   pct: string;
   /** This row's slice of the dimension's net change, written, or ''. */
   share: string;
@@ -34,6 +39,7 @@ export function changeSections(rows: readonly ResultRow[]): ChangeSection[] {
     const list = byDim.get(dim) ?? [];
     list.push({
       name: row.value === null ? nullLabelFor(dim as BaseDimension) : String(row.value),
+      previous: current - delta,
       current,
       delta,
       pct: '0',
@@ -45,7 +51,7 @@ export function changeSections(rows: readonly ResultRow[]): ChangeSection[] {
     const kept = list.filter((row) => row.delta !== 0);
     if (kept.length === 0) return [];
     const max = Math.max(1, ...kept.map((row) => Math.abs(row.delta)));
-    for (const row of kept) row.pct = ((Math.abs(row.delta) / max) * 100).toFixed(1);
+    for (const row of kept) row.pct = ((Math.abs(row.delta) / max) * 50).toFixed(1);
     return [{ dim, label: dimLabel(dim as BaseDimension), rows: kept }];
   });
 }

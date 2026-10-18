@@ -1,5 +1,4 @@
 import { type Measures, measureTotal, type ResultRow } from '@featherstat/shared';
-import { displayPath } from './bar-rows.ts';
 import { num } from './series.ts';
 
 /**
@@ -42,11 +41,10 @@ export function topPages(
     const path = row.path;
     const bucket = row.bucket;
     if (typeof path !== 'string' || typeof bucket !== 'string') continue;
-    const display = displayPath(path);
-    let days = byPath.get(display);
+    let days = byPath.get(path);
     if (days === undefined) {
       days = new Map();
-      byPath.set(display, days);
+      byPath.set(path, days);
     }
     days.set(bucket, (days.get(bucket) ?? 0) + num(row[METRIC]));
   }

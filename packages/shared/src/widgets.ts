@@ -25,16 +25,9 @@ export function sitePagesSlot(siteId: number): string {
   return `pages~${siteId}`;
 }
 
-/**
- * Path rankings merge campaign variants (`/x?utm=…` → `/x`) client-side, so a
- * server LIMIT equal to the display count starves the list after the merge.
- * Over-fetch by this factor; BarList trims back to the spec's limit.
- */
-export const PATH_MERGE_HEADROOM = 3;
-
 export function widgetQueries(spec: WidgetSpec): Record<string, Query> {
   if (spec.query === undefined) return {};
-  const queries: Record<string, Query> = { main: withMergeHeadroom(spec.query) };
+  const queries: Record<string, Query> = { main: spec.query };
   if ('kind' in spec.query) return queries;
   // KPI tiles carry a 12-point sparkline: a bucketed companion of the same metrics.
   if (spec.viz === 'kpi-row') {
@@ -69,11 +62,6 @@ export function widgetQueries(spec: WidgetSpec): Record<string, Query> {
     }
   }
   return queries;
-}
-
-function withMergeHeadroom(query: Query): Query {
-  if ('kind' in query || query.dim !== 'path' || query.limit === undefined) return query;
-  return { ...query, limit: Math.min(1000, query.limit * PATH_MERGE_HEADROOM) };
 }
 
 /**

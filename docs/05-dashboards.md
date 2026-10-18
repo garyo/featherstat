@@ -296,12 +296,16 @@ a shared URL; only the expressions that need it go opaque.
   grouping dims — so a page-scoped widget loses its bounce column while the
   card beside it keeps every metric.
 
-### What changed & annotations
+### Biggest changes & annotations
 
-- The `changes` viz renders the server's `changes` kind (docs/04 § 3): per
-  scanned dimension, the top movers by |delta| between the compare windows,
-  as a compact signed-bar list (current count, delta bar, share of the net
-  change in the tooltip; rise/fall in the status colors WITH a sign glyph).
+- The `changes` viz ("Biggest changes") renders the server's `changes` kind
+  (docs/04 § 3, "what changed"): per scanned dimension, the top movers by
+  |delta| between the compare windows. Each row writes both windows' counts
+  (`3 → 0`, never the current count alone, which read as the range's total
+  beside a bar that was not), then the signed move as a bar on a track
+  centered on zero — a fall grows left, a rise right, scaled to the section's
+  largest move — and the signed delta; the share of the net change is in the
+  tooltip. Rise/fall wear the status colors WITH a sign glyph.
   It ships on the overview template just above the hours heatmap, below the
   widgets that show the range's own numbers — its counts are movers between
   two windows, and at the top they read as the data itself. It requires `compare`:

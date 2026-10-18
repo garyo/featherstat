@@ -3,7 +3,7 @@ import type { DashboardTemplate } from './index.ts';
 
 /**
  * The shipped default site dashboard: KPIs → main series → pages/referrers →
- * countries/devices/events → outbound links/time on page → what changed →
+ * countries/devices/events → outbound links/time on page → biggest changes →
  * hours heatmap. The changes card compares, so it reads from the view's compare
  * control and refuses honestly at `cmp=off`; it sits below the range's own
  * numbers because its counts are movers, not the data itself.
@@ -120,7 +120,7 @@ export const overviewTemplate: DashboardTemplate = {
         {
           id: 'changes',
           viz: 'changes',
-          title: 'What changed',
+          title: 'Biggest changes',
           w: 12,
           h: 2,
           query: { id: 'changes', kind: 'changes' },

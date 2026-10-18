@@ -48,17 +48,13 @@ export interface BarRowOptions {
 /**
  * Result rows → ranked display rows, merged by displayed name; rows whose
  * primary metric is 0 are dropped (a breakdown can return groups that exist
- * only through another hit type — noise in a ranking).
+ * only through another hit type — noise in a ranking). Merging makes names
+ * unique by construction, so a null-group label colliding with a real
+ * dimension value can never produce duplicate render keys.
  *
- * The merge earns two things at once. `path` keeps its query string in the data
- * model (the query is page identity, docs/03), but a bar-list is a ranking, so
- * campaign variants of one page (`/x?utm_source=…`) collapse onto `/x` for
- * display — approximate when the server's limit already truncated the list,
- * exact otherwise; a drill-in (M2) will show the variants. And because names
- * end up unique by construction, a null-group label colliding with a real
- * dimension value can never produce duplicate render keys. Click-to-filter on a
- * merged path row filters `eq` the displayed path, so variants stay out — the
- * price of ranking by page rather than by URL.
+ * A `path` row is shown whole, query string included: the query is page
+ * identity (docs/03 § Page identity), and ingest has already stripped the
+ * tracking params that would otherwise fragment one page into many.
  */
 export function barRows(
   rows: readonly ResultRow[],
@@ -76,11 +72,9 @@ export function barRows(
     const stored = raw === null || raw === undefined ? undefined : String(raw);
     const primary = stored === undefined ? nullLabel : displayName(stored, dim);
     const name = options.dim2 === undefined ? primary : composite(primary, row[options.dim2]);
-    const filterValue = stored === undefined ? null : dim === 'path' ? primary : stored;
+    const filterValue = stored ?? null;
     // Trimmed-for-display rows keep their stored value reachable in the tooltip.
-    // Paths are excluded on purpose: their display MERGES variants, so no single
-    // stored value describes the row (see the merge note above).
-    const full = stored !== undefined && stored !== primary && dim !== 'path' ? stored : undefined;
+    const full = stored !== undefined && stored !== primary ? stored : undefined;
     const entry = byName.get(name) ?? { value: 0, extra: 0, filterValue, full };
     entry.value += num(row[metric]);
     if (options.extraMetric !== undefined) entry.extra += num(row[options.extraMetric]);
@@ -98,12 +92,6 @@ function composite(primary: string, second: unknown): string {
   return second === null || second === undefined ? primary : `${primary} · ${String(second)}`;
 }
 
-/** The page-merge rule: campaign variants (`/x?utm_source=…`) collapse onto `/x`. */
-export function displayPath(value: string): string {
-  const cut = value.indexOf('?');
-  return cut === -1 ? value : cut === 0 ? '/' : value.slice(0, cut);
-}
-
 /**
  * Outbound targets are full URLs and eat the row: the scheme carries no
  * information a reader of a ranking wants, so it goes. Nothing else is dropped —
@@ -115,6 +103,5 @@ function displayTarget(value: string): string {
 }
 
 function displayName(value: string, dim: string): string {
-  if (dim === 'path') return displayPath(value);
   return dim === 'target_url' ? displayTarget(value) : value;
 }

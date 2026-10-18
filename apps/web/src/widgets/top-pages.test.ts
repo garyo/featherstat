@@ -45,17 +45,23 @@ describe('topPages', () => {
     expect(spark?.slice(1, -1).every((value) => value === 0)).toBe(true);
   });
 
-  it('merges campaign variants of a page', () => {
+  it('keeps query-string pages apart and sums a page across its buckets', () => {
     const rows: ResultRow[] = [
       row('/launch', 0, 8),
-      { ...row('/launch', 0, 4), path: '/launch?utm_source=hn' },
+      row('/launch', 1, 4),
+      { ...row('/launch', 0, 5), path: '/launch?tab=demo' },
     ];
     const pages = topPages(rows, BUCKETS, ADDITIVE);
     expect(pages).toEqual([
       {
         path: '/launch',
         total: 12,
-        spark: [...Array.from({ length: WINDOW_DAYS - 1 }, () => 0), 12],
+        spark: [...Array.from({ length: WINDOW_DAYS - 2 }, () => 0), 4, 8],
+      },
+      {
+        path: '/launch?tab=demo',
+        total: 5,
+        spark: [...Array.from({ length: WINDOW_DAYS - 1 }, () => 0), 5],
       },
     ]);
   });
