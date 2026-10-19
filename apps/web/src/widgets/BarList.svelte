@@ -40,22 +40,18 @@ const rows = $derived.by(() => {
   if (slice.kind !== 'ready') return [];
   if (adjacency) return barRows(slice.result.rows, 'sessions', 'label', '(none)');
   if (metric === undefined || dim === undefined) return [];
-  const merged = barRows(slice.result.rows, metric, dim, nullLabel, {
-    dim2: query?.dim2,
-    extraMetric,
-  });
-  // Path queries over-fetch for the variant merge (queries.ts) — trim back to
-  // the widget's intended count so Top pages shows 8 rows, like Referrers.
-  return query?.limit === undefined ? merged : merged.slice(0, query.limit);
+  return barRows(slice.result.rows, metric, dim, nullLabel, { dim2: query?.dim2, extraMetric });
 });
 </script>
 
-<!-- Untitled + pivotable is a PIVOTED spec (applyPivots stripped the title):
-     the picker is the whole heading, so no stale title contradicts the rows. -->
+<!-- Untitled + pivotable is a PIVOTED spec (applyPivots stripped the title,
+     which described the saved breakdown): the heading says what is counted
+     instead, so "Outbound links by Page" never reads as a plain page list. -->
 <h2 class="pivot-head">
   {#if pivotable && query !== undefined}
     {#if spec.title !== undefined}{spec.title}
       ·
+    {:else if metric !== undefined}{metricLabel(metric)} by
     {/if}
     <select
       aria-label="Breakdown"

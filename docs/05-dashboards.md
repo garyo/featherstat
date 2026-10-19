@@ -274,8 +274,11 @@ a shared URL; only the expressions that need it go opaque.
   (web `lib/pivots.ts`) to derive the document BEFORE `collectBatch`, so the
   one-fetch rule holds trivially and derived companions recompute. The card
   title becomes a `<select>` of the base dimensions valid for the widget's
-  metrics (a dim that would block every metric is not offered; a partial
-  block is trimmed like any chip). Pivots are dropped on a scope or library
+  metrics — unpivoted it follows the saved title ("Top pages · Page ▾"); pivoted,
+  the saved title described the old breakdown, so the heading names what the
+  card counts instead ("Outbound links by Page ▾" — outbound clicks per page,
+  not a page list). A dim that would block every metric is not offered; a
+  partial block is trimmed like any chip. Pivots are dropped on a scope or library
   change (they name widgets of that document) and **ignored by share links**
   — the share route assembles its batch from the stored row. Keeping a pivot
   is saving it: the editor opens on the pivoted document, so "Customize/Edit

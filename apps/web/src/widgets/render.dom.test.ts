@@ -359,7 +359,7 @@ describe('a bar list draws one row per ranked group', () => {
   });
 });
 
-describe('the pivot picker becomes the whole heading once a pivot is active', () => {
+describe('the pivot heading says what a pivoted card counts', () => {
   const PIVOT_PAGE: ViewEnv = { ...APP_PAGE, onpivot: () => undefined };
   const spec = (over: Record<string, unknown>): Record<string, unknown> => ({
     id: 'pages',
@@ -387,14 +387,15 @@ describe('the pivot picker becomes the whole heading once a pivot is active', ()
     expect(heading(root)).toBe('Top pages ·');
   });
 
-  it('shows the picker alone for a pivoted spec — no stale title beside it', () => {
+  it('names the metric, not the stale title, once pivoted', () => {
     // What `applyPivots` hands the widget: the new dim, the title stripped —
-    // "Top pages" must not sit over browser rows.
+    // "Top pages" must not sit over browser rows, and the picker alone ("Page")
+    // read as a page list when the rows were outbound clicks per page.
     const root = render(
-      [spec({ query: { id: 'pages', metrics: ['pageviews'], dim: 'browser', limit: 8 } })],
+      [spec({ query: { id: 'pages', metrics: ['outlinks'], dim: 'path', limit: 8 } })],
       { results: { pages: { rows: [] } }, env: PIVOT_PAGE },
     );
-    expect(heading(root)).toBe('');
+    expect(heading(root)).toBe('Outbound links by');
   });
 });
 
