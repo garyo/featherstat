@@ -138,6 +138,32 @@ describe('createPipeline', () => {
     });
   });
 
+  // docs/03 § Attribution: a site on another site's subdomain is its own site.
+  it("books a visit from a subdomain site as a referral, not the parent's own traffic", () => {
+    withWriteTransaction(db, () => {
+      createSite(db, { id: 2, name: 'Globe', domains: ['globe.example.com'] });
+    });
+    pipeline.sink(
+      [
+        hit({ referrer: 'https://globe.example.com/viz' }),
+        hit({ referrer: 'https://www.example.com/', url: 'https://example.com/b' }),
+      ],
+      ctx(),
+    );
+    pipeline.sink(
+      [hit({ referrer: 'https://www.example.com/', url: 'https://example.com/c' })],
+      ctx({ ip: '203.0.113.6' }),
+    );
+    pipeline.flush();
+    const kinds = db
+      .prepare('SELECT ref_domain_raw, ref_type FROM sessions ORDER BY started_at, rowid')
+      .all();
+    expect(kinds).toEqual([
+      { ref_domain_raw: 'globe.example.com', ref_type: 'referral' },
+      { ref_domain_raw: 'www.example.com', ref_type: 'internal' },
+    ]);
+  });
+
   // docs/04 § 2: a snippet may name its site by any domain the site lists.
   it('records a native beacon that names its site by domain, and counts one naming none', async () => {
     const app = createTrackRoutes(pipeline.sink, pipeline.resolveSite);

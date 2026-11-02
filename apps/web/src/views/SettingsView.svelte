@@ -300,9 +300,10 @@ const nameOf = (id: number): string => sites?.find((s) => s.id === id)?.name ?? 
             </label>
             <label class="field">
               Domains (comma-separated; the first is canonical)
-              <input bind:value={draft.domains} placeholder="blog.example.com, www.example.com" />
+              <input bind:value={draft.domains} placeholder="example.com, example.org" />
             </label>
             <p class="widget-note">
+              Each covers its www. form and subdomains, unless another site registers that subdomain.
               A tracking snippet may name its site by any of these, so removing one stops a snippet
               that names it: keep the old domain listed until the snippet changes. Each domain belongs
               to one site.

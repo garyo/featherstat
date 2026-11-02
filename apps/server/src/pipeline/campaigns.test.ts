@@ -4,6 +4,7 @@ import { openTestDb, T0, VISITOR } from '../../test/rows.ts';
 import { replaceCampaignAliases, type Site, withWriteTransaction } from '../db/index.ts';
 import { AliasCache, plainNormalizer } from './campaigns.ts';
 import type { DeviceInfo } from './enrich.ts';
+import { DomainOwners } from './referrers.ts';
 import { Sessionizer } from './sessionizer.ts';
 
 const SITE: Site = {
@@ -80,6 +81,7 @@ describe('sessionizer normalization (docs/03 § Campaigns)', () => {
     const hit: Hit = { siteId: 1, type: 'pageview', url };
     const stored = sessionizer.process({
       site: SITE,
+      owners: () => new DomainOwners([SITE]),
       hit,
       visitorId: VISITOR,
       now: T0,

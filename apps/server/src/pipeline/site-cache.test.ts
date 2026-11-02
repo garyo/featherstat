@@ -119,6 +119,16 @@ describe('SiteCache.resolve (docs/04 § 2)', () => {
     expect(cache.resolve('pcons.dev')).toBeUndefined();
   });
 
+  it('re-reads who owns which host once a domain moves', () => {
+    const cache = seeded();
+    expect(cache.owners().ownerOf('docs.pcons.org')).toBe(SITE.id);
+    withWriteTransaction(db, () =>
+      createSite(db, { id: 4, name: 'docs', domains: ['docs.pcons.org'], timezone: 'UTC' }),
+    );
+    expect(cache.owners().ownerOf('docs.pcons.org')).toBe(4);
+    expect(cache.owners().ownerOf('www.pcons.org')).toBe(SITE.id);
+  });
+
   it('gives a domain two sites list (an import predating the rule) to the older one', () => {
     const cache = seeded();
     withWriteTransaction(db, () => createSite(db, { ...SITE, id: 2, name: 'older' }));

@@ -66,6 +66,7 @@ export function createPipeline(db: Db, options: PipelineOptions = {}): Pipeline 
   const identity = new Identity(db);
   const sites = new SiteCache(db);
   const unknownSites = new UnknownSiteTally();
+  const ownersOf = () => sites.owners();
   const props = new PropRegistry(db);
   const batcher = new WriteBatcher(db, options.batchIntervalMs, props);
   // Every session row read back from the store is COMMITTED state: seed the
@@ -115,7 +116,8 @@ export function createPipeline(db: Db, options: PipelineOptions = {}): Pipeline 
       }
       if (isMissingHit(hit)) {
         const now = ctx.receivedAt;
-        batcher.addMissing(missingRow({ site, hit, now, local, device, geo: geoResult }));
+        const owners = sites.owners();
+        batcher.addMissing(missingRow({ site, owners, hit, now, local, device, geo: geoResult }));
         continue;
       }
       // Bag admission runs only when a bag exists — the hot path pays nothing
@@ -126,6 +128,7 @@ export function createPipeline(db: Db, options: PipelineOptions = {}): Pipeline 
           : props.admit(site.id, hit.props, local.date, hit.type, ctx.receivedAt);
       const sessionized = sessionizer.process({
         site,
+        owners: ownersOf,
         hit,
         visitorId: identity.visitorId(hit, ctx, site.timezone, local.date),
         now: ctx.receivedAt,

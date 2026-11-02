@@ -22,10 +22,13 @@ import { plainNormalizer, type UtmNormalizer } from './campaigns.ts';
 import type { DeviceInfo } from './enrich.ts';
 import type { GeoResult } from './geo.ts';
 import { CAMPAIGN_PARAMS, cleanPageUrl, clickIdSource, synthesizedCampaign } from './page-url.ts';
-import { type ReferrerAttribution, referrerAttribution } from './referrers.ts';
+import { type DomainOwners, type ReferrerAttribution, referrerAttribution } from './referrers.ts';
 
 export interface SessionizerInput {
   site: Site;
+  /** Whose each referring host is, across every site (docs/03 § Attribution).
+   * A thunk: only a session's first hit classifies its referrer. */
+  owners: () => DomainOwners;
   hit: Hit;
   visitorId: Uint8Array;
   /** Server receive time, UTC ms — the tracker's clock is never trusted (docs/04). */
@@ -307,7 +310,7 @@ function startSession(
   local: LocalClock,
   normalizeUtm: UtmNormalizer,
 ): RestoredSession {
-  const { site, hit, now } = input;
+  const { site, now } = input;
   const row: SessionRow = {
     id: randomBytes(8),
     site_id: site.id,
@@ -321,7 +324,7 @@ function startSession(
     pageviews: 0,
     events: 0,
     engaged_ms: 0,
-    ...classify(hit, page, site, normalizeUtm),
+    ...classify(input, page, normalizeUtm),
     browser: input.device.browser,
     os: input.device.os,
     device_type: input.device.device_type,
@@ -384,8 +387,16 @@ const NO_CAMPAIGN = {
   utm_campaign_raw: null,
 };
 
-function classify(hit: Hit, page: PageParts, site: Site, normalizeUtm: UtmNormalizer): Attribution {
-  const ref = referrerAttribution(hit.referrer, site.domains, page.hostname);
+function classify(
+  { hit, site, owners }: SessionizerInput,
+  page: PageParts,
+  normalizeUtm: UtmNormalizer,
+): Attribution {
+  const ref = referrerAttribution(
+    hit.referrer,
+    { siteId: site.id, owners: owners() },
+    page.hostname,
+  );
   const campaign = campaignParams(page.url, site.id, normalizeUtm);
   if (campaign !== null) return { ...refDomain(ref), ref_type: 'campaign', ...campaign };
   // No campaign params, but a click id names its platform: synthesize

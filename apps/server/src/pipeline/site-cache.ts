@@ -7,6 +7,7 @@ import {
   type Site,
   siteGeneration,
 } from '../db/index.ts';
+import { DomainOwners } from './referrers.ts';
 
 /**
  * The ingest pipeline's copy of `sites`, so a hit costs no table read, JSON
@@ -22,12 +23,16 @@ import {
  * is what keeps a flood of made-up `idsite` values from growing this without
  * bound. Domains are the exception: a domain lookup needs every site's list,
  * so the first one after a change reads the whole (small) table and an unknown
- * domain then costs a map miss.
+ * domain then costs a map miss. The same read feeds `owners`, which judges
+ * whose a referring host is (docs/03 § Attribution).
  */
 export class SiteCache {
   private readonly sites = new Map<number, Site>();
-  /** Lowercased domain → site id; built on the first domain lookup after a change. */
+  /** Every live site, read on the first lookup that needs them all after a change. */
+  private listed: Site[] | undefined;
+  /** Lowercased domain → site id, as a snippet names its site. */
   private domains: Map<string, number> | undefined;
+  private hostOwners: DomainOwners | undefined;
   private generation = -1;
   private version = -1;
 
@@ -52,12 +57,21 @@ export class SiteCache {
     return id === undefined ? undefined : this.get(id);
   }
 
+  /** Whose each referring host is — the most specific registered domain wins. */
+  owners(): DomainOwners {
+    this.revalidate();
+    if (this.hostOwners !== undefined) return this.hostOwners;
+    const owners = new DomainOwners(this.all());
+    if (!this.db.inTransaction) this.hostOwners = owners;
+    return owners;
+  }
+
   private domainMap(): Map<string, number> {
     if (this.domains !== undefined) return this.domains;
     const domains = new Map<string, number>();
     // Listed by id, so were two sites ever to share a domain (the routes refuse
     // it; an import could predate the rule) the older site keeps it.
-    for (const site of listSites(this.db)) {
+    for (const site of this.all()) {
       for (const domain of site.domains) {
         const key = domain.toLowerCase();
         if (!domains.has(key)) domains.set(key, site.id);
@@ -67,12 +81,21 @@ export class SiteCache {
     return domains;
   }
 
+  private all(): Site[] {
+    if (this.listed !== undefined) return this.listed;
+    const sites = listSites(this.db);
+    if (!this.db.inTransaction) this.listed = sites;
+    return sites;
+  }
+
   private revalidate(): void {
     const generation = siteGeneration(this.db);
     const version = connectionDataVersion(this.db);
     if (generation === this.generation && version === this.version) return;
     this.sites.clear();
+    this.listed = undefined;
     this.domains = undefined;
+    this.hostOwners = undefined;
     this.generation = generation;
     this.version = version;
   }

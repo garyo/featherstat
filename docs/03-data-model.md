@@ -434,11 +434,16 @@ Priority order, evaluated once per session on its first hit:
    aliases apply; `utm_campaign` is never invented and the `utm_*_raw`
    columns stay NULL (nothing was normalized away). Real campaign params
    always win over a click id.
-3. Referrer hostname ∈ site's own domains, or equal to the landing page's
+3. Referrer hostname owned by this site, or equal to the landing page's
    own hostname (Matomo's rule, and what keeps a site with no domains
-   configured from referring itself) → `internal` (not a referral). A domain
-   entry's port (`localhost:4321`) is ignored: a referrer's hostname has
-   none.
+   configured from referring itself) → `internal` (not a referral). A host
+   belongs to the site whose registered domain covers it **most
+   specifically**, across all sites: a domain covers its `www.` form and
+   every subdomain, unless another site registered that subdomain itself —
+   so with `oberbrunner.com` on one site and `globe-viz.oberbrunner.com` on
+   another, a click from globe-viz to oberbrunner.com is a referral from
+   globe-viz (`DomainOwners`, pipeline/referrers.ts). A domain entry's port
+   (`localhost:4321`) is ignored: a referrer's hostname has none.
 4. Referrer matches a small built-in search/social table (~50 entries — the
    long tail is not worth a database) → `search` / `social`. Google, Bing,
    Yahoo and Yandex match by the registrable domain's own label instead

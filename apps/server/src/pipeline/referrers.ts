@@ -120,13 +120,53 @@ const NO_REFERRER: ReferrerAttribution = {
 };
 
 /**
+ * Which site a host belongs to (docs/03 § Attribution): the one whose
+ * registered domain covers it most specifically. A domain covers its `www.`
+ * form and every subdomain — unless another site registered that subdomain
+ * itself, so `globe-viz.oberbrunner.com` stays its own site under someone
+ * else's `oberbrunner.com`. A configured port is ignored: a referrer's
+ * hostname has none. Were two sites to list one domain (the sites routes
+ * refuse it), the first given keeps it.
+ */
+export class DomainOwners {
+  private readonly owners = new Map<string, number>();
+
+  constructor(sites: Iterable<{ id: number; domains: readonly string[] }>) {
+    for (const site of sites) {
+      for (const entry of site.domains) {
+        const domain = bareHost(entry.replace(/:\d+$/, ''));
+        if (!this.owners.has(domain)) this.owners.set(domain, site.id);
+      }
+    }
+  }
+
+  /** `host` lowercased, as `referrerHost` returns it. Longest registered suffix wins. */
+  ownerOf(host: string): number | undefined {
+    let suffix = host;
+    for (;;) {
+      const owner = this.owners.get(suffix);
+      if (owner !== undefined) return owner;
+      const dot = suffix.indexOf('.');
+      if (dot === -1) return undefined;
+      suffix = suffix.slice(dot + 1);
+    }
+  }
+}
+
+/** The site a referrer is judged against, and who owns which hosts. */
+export interface SiteHosts {
+  siteId: number;
+  owners: DomainOwners;
+}
+
+/**
  * Everything a session's first hit needs from its `Referer` (docs/03).
  * `landingHost` is the hostname of the page the hit landed on: a referrer from
  * that same host is the site itself, whatever its domain list says.
  */
 export function referrerAttribution(
   referrer: string | undefined,
-  domains: readonly string[],
+  site: SiteHosts,
   landingHost?: string | null,
 ): ReferrerAttribution {
   const host = referrerHost(referrer);
@@ -138,7 +178,7 @@ export function referrerAttribution(
   };
   // Own-domain matching stays on the RECEIVED host: a site registered as
   // `docs.example.com` would not match its own eTLD+1.
-  if (host === landingHost || isInternal(host, domains)) {
+  if (host === landingHost || site.owners.ownerOf(host) === site.siteId) {
     return { ...stored, ref_type: 'internal' };
   }
   return { ...stored, ref_type: referrerTypeOf(canonical) };
@@ -161,14 +201,6 @@ function referrerHost(referrer: string | undefined): string | null {
   } catch {
     return null;
   }
-}
-
-/** A configured domain may carry a port (`localhost:4321`); a referrer's hostname never does. */
-function isInternal(host: string, domains: readonly string[]): boolean {
-  return domains.some((entry) => {
-    const domain = bareHost(entry.replace(/:\d+$/, ''));
-    return host === domain || host.endsWith(`.${domain}`);
-  });
 }
 
 /**

@@ -2,7 +2,7 @@ import { type Hit, type LocalClock, MISSING_PROP } from '@featherstat/shared';
 import type { MissingRow, Site } from '../db/index.ts';
 import type { DeviceInfo } from './enrich.ts';
 import type { GeoResult } from './geo.ts';
-import { referrerAttribution } from './referrers.ts';
+import { type DomainOwners, referrerAttribution } from './referrers.ts';
 
 /** A stored path is the received one cut to this — the tracker snippet sends at most 200. */
 const MAX_PATH_CHARS = 200;
@@ -23,6 +23,8 @@ export function requestedPath(value: unknown): string | null {
 
 export interface MissingInput {
   site: Site;
+  /** Whose each referring host is, across every site (docs/03 § Attribution). */
+  owners: DomainOwners;
   hit: Hit;
   now: number;
   local: LocalClock;
@@ -35,8 +37,13 @@ export interface MissingInput {
  * first touch — a not-found hit belongs to no visit — and keeps the referring
  * page's path, which is what says where the broken link is.
  */
-export function missingRow({ site, hit, now, local, device, geo }: MissingInput): MissingRow {
-  const ref = referrerAttribution(hit.referrer, site.domains, hostOf(hit.url));
+export function missingRow(input: MissingInput): MissingRow {
+  const { site, hit, now, local, device, geo } = input;
+  const ref = referrerAttribution(
+    hit.referrer,
+    { siteId: site.id, owners: input.owners },
+    hostOf(hit.url),
+  );
   return {
     site_id: site.id,
     ts: now,

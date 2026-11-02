@@ -11,6 +11,7 @@ import {
 import { RETENTION_DAYS_KEY, runRetention } from '../../src/jobs/retention.ts';
 import { WriteBatcher } from '../../src/pipeline/batcher.ts';
 import type { DeviceInfo } from '../../src/pipeline/enrich.ts';
+import { DomainOwners } from '../../src/pipeline/referrers.ts';
 import { priorSessionLookup, Sessionizer } from '../../src/pipeline/sessionizer.ts';
 import { rebuildAllRollups, rebuildRollupDay } from '../../src/rollup/rebuild.ts';
 import { verifyRollupDay } from '../../src/rollup/verify.ts';
@@ -125,6 +126,7 @@ const DRIFT_SITES = [
   { id: 1, name: 'utc', domains: ['utc.test'], timezone: 'UTC' },
   { id: 2, name: 'tokyo', domains: ['tokyo.test'], timezone: 'Asia/Tokyo' },
 ];
+const DRIFT_OWNERS = new DomainOwners(DRIFT_SITES);
 const PATHS = ['/', '/a', '/b', '/pricing', null];
 const DAY_MS = 86_400_000;
 const ROLLUP_TABLE_NAMES = [
@@ -240,6 +242,7 @@ function driftIngest(db: Db): {
     if (site === undefined) throw new Error('unknown drift site');
     const sessionized = sessionizer.process({
       site: { ...site, created_at: 0, domains: [...site.domains] },
+      owners: () => DRIFT_OWNERS,
       hit: entry.hit,
       visitorId: entry.visitor,
       now: entry.ts,

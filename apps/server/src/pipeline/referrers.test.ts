@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   canonicalReferrerDomain,
+  DomainOwners,
   referrerAttribution,
   referrerTablesFingerprint,
   referrerTypeOf,
+  type SiteHosts,
 } from './referrers.ts';
 
 /**
@@ -80,8 +82,14 @@ describe('canonicalReferrerDomain', () => {
   });
 });
 
+/** Site 1 owning `domains`, with no other site's claims in the way. */
+const ownedBy = (domains: string[]): SiteHosts => ({
+  siteId: 1,
+  owners: new DomainOwners([{ id: 1, domains }]),
+});
+
 describe('referrerAttribution', () => {
-  const OWN = ['example.com'];
+  const OWN = ownedBy(['example.com']);
 
   it('stores the received host only when canonicalization changed it', () => {
     expect(referrerAttribution('https://go.bsky.app/profile/x', OWN)).toEqual({
@@ -144,26 +152,66 @@ describe('referrerAttribution', () => {
     expect(referrerAttribution('https://blog.example.com/p', OWN).ref_type).toBe('internal');
     // The site is registered under a subdomain: its own pages must still be
     // internal even though their eTLD+1 is not the registered domain.
-    const sub = ['docs.example.com'];
+    const sub = ownedBy(['docs.example.com']);
     expect(referrerAttribution('https://docs.example.com/p', sub).ref_type).toBe('internal');
     expect(referrerAttribution('https://docs.example.com/p', sub).ref_domain).toBe('example.com');
   });
 
   it('matches a configured domain that carries a port', () => {
-    const dev = ['localhost:4321', 'staging.example.org:8443'];
+    const dev = ownedBy(['localhost:4321', 'staging.example.org:8443']);
     expect(referrerAttribution('http://localhost:4321/a', dev).ref_type).toBe('internal');
     expect(referrerAttribution('https://staging.example.org:8443/', dev).ref_type).toBe('internal');
   });
 
   // Matomo's rule too: a referrer on the page's own host is the site itself.
   it('treats the landing page host as internal, even with no domains configured', () => {
+    const NONE = ownedBy([]);
     expect(
-      referrerAttribution('https://pelorus-nav.com/charts', [], 'pelorus-nav.com').ref_type,
+      referrerAttribution('https://pelorus-nav.com/charts', NONE, 'pelorus-nav.com').ref_type,
     ).toBe('internal');
-    expect(referrerAttribution('https://pelorus-nav.com/charts', []).ref_type).toBe('referral');
-    expect(referrerAttribution('https://other.org/', [], 'pelorus-nav.com').ref_type).toBe(
+    expect(referrerAttribution('https://pelorus-nav.com/charts', NONE).ref_type).toBe('referral');
+    expect(referrerAttribution('https://other.org/', NONE, 'pelorus-nav.com').ref_type).toBe(
       'referral',
     );
+  });
+
+  // One site under another's domain is its own site (docs/03 § Attribution).
+  it('gives a host to the most specific registered domain, across sites', () => {
+    const owners = new DomainOwners([
+      { id: 2, domains: ['oberbrunner.com', 'blog.oberbrunner.com'] },
+      { id: 3, domains: ['globe-viz.oberbrunner.com'] },
+    ]);
+    const parent = { siteId: 2, owners };
+    const child = { siteId: 3, owners };
+    for (const host of [
+      'oberbrunner.com',
+      'www.oberbrunner.com',
+      'blog.oberbrunner.com',
+      'x.oberbrunner.com',
+    ]) {
+      expect(referrerAttribution(`https://${host}/`, parent).ref_type, host).toBe('internal');
+      expect(referrerAttribution(`https://${host}/`, child).ref_type, host).toBe('referral');
+    }
+    for (const host of ['globe-viz.oberbrunner.com', 'a.globe-viz.oberbrunner.com']) {
+      expect(referrerAttribution(`https://${host}/`, child).ref_type, host).toBe('internal');
+      expect(referrerAttribution(`https://${host}/`, parent).ref_type, host).toBe('referral');
+    }
+    // Its own host still counts on the page itself, whatever is registered.
+    expect(
+      referrerAttribution('https://globe-viz.oberbrunner.com/', parent, 'globe-viz.oberbrunner.com')
+        .ref_type,
+    ).toBe('internal');
+  });
+
+  it('lets a www. entry stand for the bare domain, and an older site keep a shared one', () => {
+    const owners = new DomainOwners([
+      { id: 1, domains: ['www.example.com'] },
+      { id: 2, domains: ['example.com'] },
+    ]);
+    expect(owners.ownerOf('example.com')).toBe(1);
+    expect(owners.ownerOf('www.example.com')).toBe(1);
+    expect(owners.ownerOf('example.org')).toBeUndefined();
+    expect(owners.ownerOf('com')).toBeUndefined();
   });
 
   it('falls back to referral for anything unknown', () => {

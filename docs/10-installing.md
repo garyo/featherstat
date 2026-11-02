@@ -6,13 +6,21 @@ is the part a person follows.
 
 ## 1. Add the site
 
-Settings → Sites → Add. You need a name, the domains it serves from (every
-hostname, including `www.`; the first is canonical, and each domain belongs to
-one site), and the site's IANA timezone — `local_date` and
+Settings → Sites → Add. You need a name, the domains it serves from (the
+first is canonical, and each domain belongs to one site), and the site's IANA
+timezone — `local_date` and
 `local_hour` are computed at ingest from it. Changing it later re-dates the
 site's stored history in the background, but not the days retention has already
 pruned, and unique-visitor counts on re-dated days become approximate (docs/03
 § Timezones) — so get it right at the start.
+
+A domain covers its `www.` form and every subdomain, so `example.com` alone is
+enough for a site served from `example.com` and `www.example.com`. List a
+subdomain only when it is the site's own (`blog.example.com` for a blog that
+lives nowhere else). A subdomain that is a *different* site — `app.example.com`
+beside `example.com` — gets registered on that site instead, and then belongs
+to it: links between the two count as referrals rather than internal
+navigation (docs/03 § Attribution).
 
 ## 2. Paste the snippet
 
@@ -168,11 +176,12 @@ curl -sSL https://example.com/zz-probe-404/nope | grep -o 'tracker\.js\|matomo\.
 
 ## 4. The other things worth checking once
 
-- **Every hostname is registered.** A hit from a host the site does not claim
-  still records — the snippet named the site, not the page's host — but a
-  visitor crossing between it and the site's other hosts reads as a referral
-  rather than internal navigation (docs/03 § Attribution). `www.` is the usual
-  straggler.
+- **Every host the site serves from is covered.** A hit from a host no domain
+  covers still records — the snippet named the site, not the page's host — but
+  a visitor crossing between it and the site's other hosts reads as a referral
+  rather than internal navigation (docs/03 § Attribution). A separate domain
+  (`example.org` beside `example.com`) needs its own entry; `www.` and
+  subdomains do not.
 - **Hits for unknown sites reads 0** in Settings → Diagnostics. Anything else
   is a snippet naming a domain or id no site has, listed right there.
 - **The snippet runs on production only**, or dev sessions land in the

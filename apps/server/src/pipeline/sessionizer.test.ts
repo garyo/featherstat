@@ -17,6 +17,7 @@ import {
   withWriteTransaction,
 } from '../db/index.ts';
 import type { DeviceInfo } from './enrich.ts';
+import { DomainOwners } from './referrers.ts';
 import type { SessionizerInput } from './sessionizer.ts';
 import { loadOpenSessions, priorSessionLookup, Sessionizer } from './sessionizer.ts';
 
@@ -43,6 +44,7 @@ function offer(
 ) {
   return sessionizer.process({
     site: SITE,
+    owners: () => new DomainOwners([SITE]),
     hit: { siteId: 1, type: 'pageview', url: 'https://example.com/a', ...hit },
     visitorId: VISITOR,
     now,
