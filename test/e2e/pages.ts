@@ -25,12 +25,12 @@ export async function openView(page: Page, state: ViewState = {}): Promise<void>
   const params = new URLSearchParams();
   if (state.range !== undefined) params.set('range', state.range);
   if (state.site !== undefined) params.set('site', String(state.site));
-  if (state.view !== undefined) params.set('view', state.view);
   if (state.dash !== undefined) params.set('dash', state.dash);
   if (state.detail !== undefined) params.set('d', state.detail);
   for (const filter of state.filters ?? []) params.append('f', filter);
   const query = params.toString();
-  await page.goto(query === '' ? '/' : `/?${query}`);
+  const path = state.view === undefined || state.view === 'dash' ? '/' : `/${state.view}`;
+  await page.goto(query === '' ? path : `${path}?${query}`);
   await expect(page.locator('header.top')).toBeVisible();
 }
 

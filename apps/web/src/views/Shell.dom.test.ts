@@ -69,7 +69,7 @@ async function open(href: string) {
 }
 
 const heading = (): string | null | undefined => document.querySelector('.card h2')?.textContent;
-const search = (): string => new URL(window.location.href).search;
+const where = (): string => `${window.location.pathname}${window.location.search}`;
 
 function nav(label: string): void {
   const sections = document.querySelector('nav[aria-label="Settings sections"]');
@@ -98,17 +98,24 @@ function typeCampaign(): void {
 
 describe('the Settings section is part of the URL', () => {
   it('opens the section the URL names', async () => {
-    await open('/?view=settings&section=campaigns');
+    await open('/settings/campaigns');
     expect(heading()).toBe('Campaigns');
   });
 
+  it('rewrites a path it does not use without adding a history entry', async () => {
+    const before = window.history.length;
+    await open('/settings/campaigns/extra?site=2');
+    expect(where()).toBe('/settings/campaigns?site=2');
+    expect(window.history.length).toBe(before);
+  });
+
   it('writes a chosen section to the URL, and Back returns to the previous one', async () => {
-    await open('/?view=settings&section=campaigns');
+    await open('/settings/campaigns');
     nav('Sites & tracking');
-    expect(search()).toBe('?view=settings&section=sites');
+    expect(where()).toBe('/settings/sites');
     expect(heading()).toBe('Sites');
 
-    popTo('/?view=settings&section=campaigns');
+    popTo('/settings/campaigns');
     await settle();
     expect(heading()).toBe('Campaigns');
     expect(confirm).not.toHaveBeenCalled();
@@ -117,33 +124,33 @@ describe('the Settings section is part of the URL', () => {
 
 describe('leaving Settings with an unsaved form asks first', () => {
   it('keeps the form when the header move is refused, and leaves when told to', async () => {
-    await open('/?view=settings&section=campaigns');
+    await open('/settings/campaigns');
     typeCampaign();
 
     document.querySelector<HTMLAnchorElement>('a.wordmark')?.click();
     flushSync();
     expect(confirm).toHaveBeenCalledWith('Discard unsaved changes to Settings?');
-    expect(search()).toBe('?view=settings&section=campaigns');
+    expect(where()).toBe('/settings/campaigns');
     expect(heading()).toBe('Campaigns');
 
     confirm.mockReturnValue(true);
     document.querySelector<HTMLAnchorElement>('a.wordmark')?.click();
     flushSync();
-    expect(search()).toBe('');
+    expect(where()).toBe('/');
   });
 
   it('asks before Back takes the section away, and stays when refused', async () => {
-    await open('/?view=settings&section=campaigns');
+    await open('/settings/campaigns');
     typeCampaign();
 
-    popTo('/?view=settings&section=sites');
+    popTo('/settings/sites');
     expect(confirm).toHaveBeenCalledOnce();
     expect(heading()).toBe('Campaigns');
-    expect(search()).toBe('?view=settings&section=campaigns');
+    expect(where()).toBe('/settings/campaigns');
   });
 
   it('asks before Log out, and does not log out when refused', async () => {
-    const { logout } = await open('/?view=settings&section=campaigns');
+    const { logout } = await open('/settings/campaigns');
     typeCampaign();
 
     button(document.body, 'Log out').click();
@@ -152,7 +159,7 @@ describe('leaving Settings with an unsaved form asks first', () => {
   });
 
   it('never asks when nothing was edited', async () => {
-    const { logout } = await open('/?view=settings&section=campaigns');
+    const { logout } = await open('/settings/campaigns');
     button(document.body, 'Log out').click();
     expect(confirm).not.toHaveBeenCalled();
     expect(logout).toHaveBeenCalledOnce();

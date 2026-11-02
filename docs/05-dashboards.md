@@ -26,7 +26,10 @@ coerces the scope to the last-visited site (the picker truthfully wears it),
 and choosing All while on Journeys lands on the overview. Realtime at All
 scope badges every feed/tally row with its site. Every view state (site,
 range, filters, view) lives in the URL so views are linkable and
-back-button-correct; the realtime feed also survives server restarts (the
+back-button-correct: the view is the path — the dashboard at `/`, then
+`/journeys`, `/realtime`, `/settings/<section>`, `/detail` — and the rest
+rides as query params (`/journeys?site=3&range=7d`). An unknown path opens the
+dashboard and is rewritten to `/` in place, without a history entry; the realtime feed also survives server restarts (the
 hub ring boot-seeds from the newest stored events).
 
 ## Settings
@@ -37,7 +40,7 @@ role-filtered: a user (R23) gets the per-site sections (Sites & tracking,
 Access, Query objects, Campaigns — minus the admin-only cards: segments,
 derived metrics, campaign aliases); Users, Notifications and Data are the
 admin's alone, and a viewer gets no ⚙ at all. The open section is view state
-like any other — `?view=settings&section=access` — so a reload stays put and
+like any other — `/settings/access` — so a reload stays put and
 Back returns to the previous section. Any move that would take a panel's
 unsaved edits off screen asks first — another section, Back, a header control,
 Log out, a reload — the same question the dashboard editor asks of its draft.
@@ -179,7 +182,7 @@ call and appears in the library as a virtual entry.
 
 A breakdown row whose dimension has an **entity template** — `path`,
 `ref_domain`, `utm_campaign` (`DETAIL_DIMENSIONS`) — drills on its primary
-click: `?view=detail&d=<dim>:<encoded value>` joins the view state, and the
+click: `/detail?d=<dim>:<encoded value>` joins the view state, and the
 view renders `DashboardGrid` over the template built for that entity
 (`@featherstat/shared/detail-templates`: `pageDetail`, `referrerDetail`,
 `campaignDetail`). Invariants 1 & 7 hold: ordinary widgets, one batch. The

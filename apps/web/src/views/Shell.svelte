@@ -301,7 +301,7 @@ $effect(() => {
 $effect(() => {
   if (typeof site === 'number') siteTab = site;
 });
-// Deep links can still say ?view=journeys&site=all (or a detail view at all) —
+// Deep links can still say /journeys?site=all (or a detail view at all) —
 // snap the scope to the fallback site once, so the picker never wears a scope
 // the page ignores.
 $effect(() => {
@@ -425,7 +425,7 @@ const app: AppEnv = {
   {:else if current === 'realtime'}
     <RealtimeView {app} {site} />
   {:else if current === 'journeys'}
-    <!-- A hand-edited ?view=journeys&site=all falls back to the switcher's site. -->
+    <!-- A hand-edited /journeys?site=all falls back to the switcher's site. -->
     {@const journeysSite = typeof site === 'number' ? site : siteTab}
     <JourneysView
       {client}

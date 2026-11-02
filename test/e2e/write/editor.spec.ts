@@ -117,7 +117,7 @@ test('leaving a changed draft asks first, and "no" keeps the draft and the URL',
 
   // …and "yes" leaves, discarding the draft rather than saving it.
   await answerConfirm(page, 'accept', () => realtime.click());
-  await expect(page).toHaveURL(/view=realtime/);
+  await expect(page).toHaveURL(/\/realtime/);
   await page.goBack();
   await dashboardReady(page);
   await expect(editing).toHaveCount(0);

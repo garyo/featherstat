@@ -18,10 +18,11 @@ import { parseFilters, sameFilters, serializeFilter } from './filters.ts';
  * module is the pure half — parsing and serialization, no DOM; `state.svelte.ts`
  * binds it to `history`.
  *
- * The full docs/05 state: site + range (preset or explicit dates) + compare
- * mode + which dashboard from the library (`dash`) + filter chips (`f` params,
- * see filters.ts) + which top-level view is up (`view=realtime`) + which
- * Settings section is open (`section=access`).
+ * The full docs/05 state: which top-level view is up and, in Settings, which
+ * section — the path, `/realtime` or `/settings/access` — then, as query
+ * params, site + range (preset or explicit dates) + compare mode + which
+ * dashboard from the library (`dash`) + filter chips (`f` params, see
+ * filters.ts). The dashboard is the root.
  */
 
 /** `all` is the overview; a number is one site — the same scope the query API takes. */
@@ -352,9 +353,12 @@ export function failureNote(stale: boolean, range: ViewRange, held: ViewRange): 
 const RELATIVE_BASE = 'http://view.invalid';
 
 export function parseViewState(href: string): ViewState {
-  const params = new URL(href, RELATIVE_BASE).searchParams;
+  const url = new URL(href, RELATIVE_BASE);
+  const params = url.searchParams;
   const detail = parseDetailRef(params.get('d'));
-  const view = parseView(params.get('view'));
+  const [first, second] = url.pathname.split('/').filter((segment) => segment !== '');
+  // An unknown path opens the dashboard, like any other unparseable link.
+  const view = parseView(first);
   return {
     site: parseSite(params.get('site')),
     range: parseRange(params.get('range')),
@@ -363,19 +367,21 @@ export function parseViewState(href: string): ViewState {
     // A detail view without its entity is nothing to show — open the dashboard.
     view: view === 'detail' && detail === undefined ? 'dash' : view,
     detail: view === 'detail' ? detail : undefined,
-    section: view === 'settings' ? parseSection(params.get('section')) : undefined,
+    section: view === 'settings' ? parseSection(second) : undefined,
     filters: parseFilters(params.getAll('f')),
     pivots: parsePivots(params.getAll('pv')),
   };
 }
 
 /**
- * `href` in, href out: unrelated query params and the hash survive, and params at
- * their default are dropped so the canonical dashboard URL stays clean.
+ * `href` in, href out: the path is the state's own, unrelated query params and
+ * the hash survive, and params at their default are dropped so the canonical
+ * dashboard URL stays clean.
  */
 export function applyViewState(state: ViewState, href: string): string {
   const url = new URL(href, RELATIVE_BASE);
   const fallback = DEFAULT_VIEW_STATE;
+  url.pathname = viewPath(state);
   set(url.searchParams, 'site', state.site === fallback.site ? undefined : state.site);
   set(
     url.searchParams,
@@ -388,7 +394,6 @@ export function applyViewState(state: ViewState, href: string): string {
     sameCompare(state.cmp, fallback.cmp) ? undefined : serializeCompare(state.cmp),
   );
   set(url.searchParams, 'dash', state.dash);
-  set(url.searchParams, 'view', state.view === fallback.view ? undefined : state.view);
   set(
     url.searchParams,
     'd',
@@ -396,7 +401,6 @@ export function applyViewState(state: ViewState, href: string): string {
       ? serializeDetailRef(state.detail)
       : undefined,
   );
-  set(url.searchParams, 'section', state.view === 'settings' ? state.section : undefined);
   url.searchParams.delete('f');
   for (const filter of state.filters) url.searchParams.append('f', serializeFilter(filter));
   url.searchParams.delete('pv');
@@ -476,13 +480,19 @@ export function parseDashRef(raw: string | null): DashRef | undefined {
   return Number.isInteger(id) && id > 0 ? id : undefined;
 }
 
-function parseView(raw: string | null): ViewName {
+function viewPath(state: ViewState): string {
+  if (state.view === DEFAULT_VIEW_STATE.view) return '/';
+  const section = state.view === 'settings' ? state.section : undefined;
+  return section === undefined ? `/${state.view}` : `/${state.view}/${section}`;
+}
+
+function parseView(raw: string | undefined): ViewName {
   return raw === 'journeys' || raw === 'realtime' || raw === 'settings' || raw === 'detail'
     ? raw
     : DEFAULT_VIEW_STATE.view;
 }
 
-function parseSection(raw: string | null): SettingsSection | undefined {
+function parseSection(raw: string | undefined): SettingsSection | undefined {
   return SETTINGS_SECTIONS.find((section) => section === raw);
 }
 

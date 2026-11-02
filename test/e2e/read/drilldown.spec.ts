@@ -18,7 +18,7 @@ test('a page row opens its detail view, and Back returns', async ({ page }) => {
   await rows.first().click();
 
   // The URL is the state: the drill must be linkable, not just visible.
-  await expect(page).toHaveURL(/view=detail/);
+  await expect(page).toHaveURL(/\/detail\?/);
   await expect(page.getByRole('heading', { name: /Page detail/ })).toBeVisible();
   // The locked chip names the entity — the view says what it is about.
   await expect(page.locator('.fchip.locked')).toContainText(label);
@@ -26,7 +26,7 @@ test('a page row opens its detail view, and Back returns', async ({ page }) => {
   await dashboardReady(page);
 
   await page.getByRole('button', { name: '← Back' }).click();
-  await expect(page).not.toHaveURL(/view=detail/);
+  await expect(page).not.toHaveURL(/\/detail/);
 });
 
 test('a detail URL loads cold, chunk and all', async ({ page }) => {

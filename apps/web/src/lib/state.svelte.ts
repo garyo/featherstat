@@ -25,6 +25,11 @@ export function createViewState(
   admit: (from: ViewState, to: ViewState) => boolean = () => true,
 ): ViewStateStore {
   let current = $state(parseViewState(win.location.href));
+  // An unknown path or a mangled param: show the URL the state actually has,
+  // without adding a history entry.
+  const here = `${win.location.pathname}${win.location.search}${win.location.hash}`;
+  const canonical = applyViewState(current, win.location.href);
+  if (canonical !== here) win.history.replaceState(null, '', canonical);
 
   const sync = (): void => {
     const next = parseViewState(win.location.href);

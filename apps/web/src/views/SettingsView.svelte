@@ -40,7 +40,7 @@ interface Props {
   role?: AuthRole;
   /** Sites changed server-side — the directory (header, cards) must reload. */
   onsiteschanged: () => void;
-  /** The section the URL names (`?section=`); undefined opens the first. */
+  /** The section the URL names (`/settings/<section>`); undefined opens the first. */
   section?: SettingsSection;
   /** Puts a chosen section in the URL. Without it, the choice stays local to this view. */
   onselectsection?: (section: SettingsSection) => void;

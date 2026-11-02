@@ -48,13 +48,13 @@ describe('view state parsing', () => {
       ...DEFAULT_VIEW_STATE,
       range: 'mtd',
     });
-    expect(parseViewState('/?view=realtime&f=country:eq:US')).toEqual({
+    expect(parseViewState('/realtime?f=country:eq:US')).toEqual({
       ...DEFAULT_VIEW_STATE,
       view: 'realtime',
       filters: [{ dim: 'country', op: 'eq', value: 'US' }],
     });
-    expect(parseViewState('/?view=settings').view).toBe('settings');
-    expect(parseViewState('/?view=journeys').view).toBe('journeys');
+    expect(parseViewState('/settings').view).toBe('settings');
+    expect(parseViewState('/journeys/').view).toBe('journeys');
   });
 
   it('falls back to the default rather than failing on a mangled link', () => {
@@ -62,7 +62,9 @@ describe('view state parsing', () => {
       expect(parseViewState(`/?site=${site}`).site).toBe(DEFAULT_VIEW_STATE.site);
     }
     expect(parseViewState('/?range=fortnight').range).toBe(DEFAULT_VIEW_STATE.range);
-    expect(parseViewState('/?view=globe').view).toBe('dash');
+    expect(parseViewState('/globe').view).toBe('dash');
+    expect(parseViewState('/foobar?site=3')).toEqual(at({ site: 3 }));
+    expect(applyViewState(parseViewState('/foobar?site=3'), '/foobar?site=3')).toBe('/?site=3');
     expect(parseViewState('/?f=broken').filters).toEqual([]);
   });
 
@@ -137,20 +139,20 @@ describe('view state serialization', () => {
   });
 
   it('writes only what differs from the default', () => {
-    expect(
-      applyViewState(DEFAULT_VIEW_STATE, '/dash?site=4&range=7d&view=realtime&cmp=off&dash=3'),
-    ).toBe('/dash');
+    expect(applyViewState(DEFAULT_VIEW_STATE, '/realtime?site=4&range=7d&cmp=off&dash=3')).toBe(
+      '/',
+    );
     expect(applyViewState(at({ site: 4 }), '/')).toBe('/?site=4');
     expect(applyViewState(at({ range: '7d' }), '/')).toBe('/?range=7d');
-    expect(applyViewState(at({ view: 'realtime' }), '/')).toBe('/?view=realtime');
+    expect(applyViewState(at({ view: 'realtime' }), '/')).toBe('/realtime');
     expect(applyViewState(at({ cmp: 'off' }), '/')).toBe('/?cmp=off');
     expect(applyViewState(at({ dash: 't:content' }), '/')).toBe('/?dash=t%3Acontent');
   });
 
-  it('keeps the path, unrelated params and the hash', () => {
-    const href = 'http://localhost:5173/dash?keep=1#pages';
+  it('owns the path, and keeps unrelated params and the hash', () => {
+    const href = 'http://localhost:5173/journeys?keep=1#pages';
     expect(applyViewState(at({ site: 4, range: '7d' }), href)).toBe(
-      '/dash?keep=1&site=4&range=7d#pages',
+      '/?keep=1&site=4&range=7d#pages',
     );
   });
 
@@ -389,11 +391,11 @@ describe('localDayKey', () => {
 });
 
 describe('detail views in the URL (docs/05 § Detail views)', () => {
-  it('reads ?view=detail&d=<dim>:<encoded value>, awkward characters intact', () => {
-    const state = parseViewState('/?site=4&view=detail&d=path:%2Fblog%2Fwhy%3A%20colons');
+  it('reads /detail?d=<dim>:<encoded value>, awkward characters intact', () => {
+    const state = parseViewState('/detail?site=4&d=path:%2Fblog%2Fwhy%3A%20colons');
     expect(state.view).toBe('detail');
     expect(state.detail).toEqual({ dim: 'path', value: '/blog/why: colons' });
-    expect(parseViewState('/?view=detail&d=ref_domain:news.ycombinator.com').detail).toEqual({
+    expect(parseViewState('/detail?d=ref_domain:news.ycombinator.com').detail).toEqual({
       dim: 'ref_domain',
       value: 'news.ycombinator.com',
     });
@@ -401,8 +403,8 @@ describe('detail views in the URL (docs/05 § Detail views)', () => {
 
   it('opens the dashboard, not an error, when the entity ref is junk', () => {
     // No d, an undrillable dim, an empty value, a stray % — all fall back.
-    for (const query of ['view=detail', 'view=detail&d=country:US', 'view=detail&d=path:']) {
-      const state = parseViewState(`/?${query}`);
+    for (const query of ['', 'd=country:US', 'd=path:']) {
+      const state = parseViewState(`/detail?${query}`);
       expect(state.view, query).toBe('dash');
       expect(state.detail, query).toBeUndefined();
     }
@@ -410,7 +412,7 @@ describe('detail views in the URL (docs/05 § Detail views)', () => {
   });
 
   it('ignores a d param on any other view', () => {
-    expect(parseViewState('/?view=realtime&d=path:%2Fx').detail).toBeUndefined();
+    expect(parseViewState('/realtime?d=path:%2Fx').detail).toBeUndefined();
   });
 
   it('round-trips a detail state', () => {
@@ -447,19 +449,21 @@ describe('detail views in the URL (docs/05 § Detail views)', () => {
 describe('the Settings section in the URL (docs/05 § Settings)', () => {
   // A reload used to land on "Sites & tracking" whatever was open, and Back
   // left Settings instead of returning to the previous section.
-  it('reads ?view=settings&section=<id> and round-trips it', () => {
-    const state = parseViewState('/?view=settings&section=campaigns');
+  it('reads /settings/<section> and round-trips it', () => {
+    const state = parseViewState('/settings/campaigns');
     expect(state).toEqual(at({ view: 'settings', section: 'campaigns' }));
-    expect(applyViewState(state, '/')).toBe('/?view=settings&section=campaigns');
+    expect(applyViewState(state, '/')).toBe('/settings/campaigns');
   });
 
   it('opens the first section for an unknown or missing one', () => {
-    expect(parseViewState('/?view=settings&section=secrets').section).toBeUndefined();
-    expect(parseViewState('/?view=settings').section).toBeUndefined();
+    expect(parseViewState('/settings/secrets').section).toBeUndefined();
+    expect(parseViewState('/settings').section).toBeUndefined();
+    expect(applyViewState(at({ view: 'settings' }), '/')).toBe('/settings');
   });
 
   it('means nothing outside Settings, in either direction', () => {
     expect(parseViewState('/?section=access').section).toBeUndefined();
+    expect(parseViewState('/journeys/access').section).toBeUndefined();
     expect(applyViewState(at({ section: 'access' }), '/')).toBe('/');
   });
 
