@@ -32,7 +32,8 @@ snippet can be written before anyone opens Settings, but a hit only records
 once the site exists: until then it is dropped and counted under Settings →
 Diagnostics → *Hits for unknown sites*, which also lists what the beacons
 named. A typo lands there too. Removing a domain from a site stops a snippet
-that names it.
+that names it, so keep the old one listed until the snippet changes — the
+site form asks before saving an edit that takes one away.
 
 That is the whole install. `init` hooks `history` for pageviews, delegates
 outlink and download clicks, and starts focus- and idle-gated engagement pings.

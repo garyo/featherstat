@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest';
 import {
   dataSettingsBody,
   dataSettingsDraft,
+  domainRemovalQuestion,
   dropTotals,
   formatBytes,
   localInputToMs,
   msToLocalInput,
   parseDomains,
+  removedDomains,
   trackingSnippet,
 } from './settings.ts';
 
@@ -39,6 +41,23 @@ describe('trackingSnippet', () => {
   it('never doubles the slash when the origin already ends with one', () => {
     expect(trackingSnippet(BLOG, 'https://a.test/')).toContain("from 'https://a.test/tracker.js'");
     expect(trackingSnippet(BLOG, 'https://a.test/')).not.toContain('a.test//');
+  });
+});
+
+describe('removing a domain asks first (docs/04 § 2)', () => {
+  it('names what an edit takes away, ignoring case and order', () => {
+    const before = ['blog.test', 'www.blog.test', 'old.test'];
+    expect(removedDomains(before, ['WWW.blog.test', 'blog.test', 'new.test'])).toEqual([
+      'old.test',
+    ]);
+    expect(removedDomains(before, [...before].reverse())).toEqual([]);
+    expect(removedDomains([], ['new.test'])).toEqual([]);
+  });
+
+  it('asks only when something is taken away, naming it', () => {
+    expect(domainRemovalQuestion([])).toBeUndefined();
+    expect(domainRemovalQuestion(['old.test'])).toContain('names old.test will stop recording');
+    expect(domainRemovalQuestion(['a.test', 'b.test'])).toContain('Remove them anyway?');
   });
 });
 

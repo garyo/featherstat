@@ -45,6 +45,23 @@ export function parseDomains(input: string): string[] {
     .filter((domain) => domain !== '');
 }
 
+/**
+ * The domains an edit takes away, compared without regard to case as ingest
+ * compares them. A snippet may name its site by any of them (docs/04 § 2), so
+ * each one removed silences that snippet — the question saving asks first.
+ */
+export function removedDomains(before: readonly string[], after: readonly string[]): string[] {
+  const kept = new Set(after.map((domain) => domain.toLowerCase()));
+  return before.filter((domain) => !kept.has(domain.toLowerCase()));
+}
+
+/** The question before such a save; undefined when nothing is taken away. */
+export function domainRemovalQuestion(removed: readonly string[]): string | undefined {
+  if (removed.length === 0) return undefined;
+  const which = removed.join(', ');
+  return `A tracking snippet that names ${which} will stop recording: its hits are dropped (Settings → Diagnostics counts them). Remove ${removed.length === 1 ? 'it' : 'them'} anyway?`;
+}
+
 /** UTC ms → what a `datetime-local` input holds (the browser's zone, minutes). */
 export function msToLocalInput(ms: number): string {
   const date = new Date(ms - new Date(ms).getTimezoneOffset() * 60_000);

@@ -371,7 +371,7 @@ export function unsaved(): boolean {
           <dt>Excluded hits · 7 days</dt>
           <dd>{exactNumber(totalOf(excludedTotals))}</dd>
         </div>
-        <div>
+        <div title="Counted since the server started, {new Date(stats.unknownSites.since).toLocaleString()}">
           <dt>Hits for unknown sites · since restart</dt>
           <dd>{exactNumber(stats.unknownSites.hits)}</dd>
         </div>

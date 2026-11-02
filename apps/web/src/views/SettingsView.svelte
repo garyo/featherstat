@@ -3,7 +3,12 @@ import type { SiteInfo } from '@featherstat/shared';
 import type { AdminClient } from '../lib/admin.ts';
 import { type PanelFailure, panelFailure } from '../lib/admin-failure.ts';
 import type { AuthRole } from '../lib/auth.svelte.ts';
-import { parseDomains, trackingSnippet } from '../lib/settings.ts';
+import {
+  domainRemovalQuestion,
+  parseDomains,
+  removedDomains,
+  trackingSnippet,
+} from '../lib/settings.ts';
 import type { SettingsSection } from '../lib/state.ts';
 import { confirmDiscard, edited } from '../lib/unsaved.ts';
 import AccessPanels from './settings/AccessPanels.svelte';
@@ -150,13 +155,16 @@ function startAdd(): void {
 async function saveDraft(event: SubmitEvent): Promise<void> {
   event.preventDefault();
   if (draft === undefined) return;
-  siteBusy = true;
-  siteError = undefined;
   const body = {
     name: draft.name.trim(),
     domains: parseDomains(draft.domains),
     timezone: draft.timezone,
   };
+  const before = sites?.find((site) => site.id === draft?.id)?.domains ?? [];
+  const question = domainRemovalQuestion(removedDomains(before, body.domains));
+  if (question !== undefined && !window.confirm(question)) return;
+  siteBusy = true;
+  siteError = undefined;
   try {
     if (draft.id === undefined) await admin.createSite(body);
     else await admin.updateSite(draft.id, body);
@@ -294,7 +302,11 @@ const nameOf = (id: number): string => sites?.find((s) => s.id === id)?.name ?? 
               Domains (comma-separated; the first is canonical)
               <input bind:value={draft.domains} placeholder="blog.example.com, www.example.com" />
             </label>
-            <p class="widget-note">A snippet may name its site by any of these.</p>
+            <p class="widget-note">
+              A tracking snippet may name its site by any of these, so removing one stops a snippet
+              that names it: keep the old domain listed until the snippet changes. Each domain belongs
+              to one site.
+            </p>
             <label class="field">
               Timezone
               <input bind:value={draft.timezone} list="timezones" required />
