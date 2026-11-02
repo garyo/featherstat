@@ -92,8 +92,13 @@ export const CHUNK_MAX_GZIP: Readonly<Record<string, number>> = {
    * (docs/03 § Exclusions). Same reasoning, and the headroom is deliberate:
    * the previous number left nine bytes, which buys a byte-shaving argument
    * on every future admin feature rather than a design one.
+   *
+   * Raised 22_528 → 24_576 on 2026-11-02 when snippets began naming sites by
+   * domain: the snippet fills in the domain, the site form explains it, and
+   * Diagnostics lists the ids and domains beacons named that no site has
+   * (~22.7 KB measured). The chunk had 98 bytes left; same reasoning as above.
    */
-  SettingsView: 22_528,
+  SettingsView: 24_576,
   /** The entity detail views + their shared templates — loaded on first drill. */
   DetailView: 4_096,
   /** The per-widget filter rows — lazy inside WidgetSettings. */

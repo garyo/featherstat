@@ -6,8 +6,13 @@ import {
   type Hit,
   HitSchema,
   MAX_COLLECT_HITS,
+  type SiteRef,
 } from '@featherstat/shared';
+import type { SiteResolver } from '../pipeline/index.ts';
 import { boundUrl } from '../pipeline/page-url.ts';
+
+/** Without a site directory a domain names nothing; an id passes on to the sink to judge. */
+const idsOnly: SiteResolver = (ref) => (typeof ref === 'number' ? ref : undefined);
 
 /**
  * Normalize a `POST /api/collect` body into hits (docs/04 § 2).
@@ -16,21 +21,29 @@ import { boundUrl } from '../pipeline/page-url.ts';
  * rejects a request. Anything unparseable simply yields fewer hits, because a
  * beacon must never bounce (CLAUDE.md invariant 4). The degradation is per hit
  * rather than per request — one bad entry in a batch costs itself alone.
+ *
+ * The envelope names its site by id or by domain; `resolveSite` turns either
+ * into the id every hit carries from here on, once per request.
  */
-export function parseCollectRequest(body: string | undefined): Hit[] {
+export function parseCollectRequest(
+  body: string | undefined,
+  resolveSite: SiteResolver = idsOnly,
+): Hit[] {
   const envelope = parseEnvelope(body);
   if (envelope === undefined) return [];
-  const { site, hits: raw } = envelope;
-  const hits: Hit[] = [];
   // Truncated, not refused: the hits that fit are still real (invariant 4).
-  for (const entry of raw.slice(0, MAX_COLLECT_HITS)) {
+  const raw = envelope.hits.slice(0, MAX_COLLECT_HITS);
+  const site = resolveSite(envelope.site, raw.length);
+  if (site === undefined) return [];
+  const hits: Hit[] = [];
+  for (const entry of raw) {
     const hit = parseHit(site, entry);
     if (hit) hits.push(hit);
   }
   return hits;
 }
 
-function parseEnvelope(body: string | undefined): { site: number; hits: unknown[] } | undefined {
+function parseEnvelope(body: string | undefined): { site: SiteRef; hits: unknown[] } | undefined {
   const trimmed = body?.trim();
   if (!trimmed) return undefined;
   let parsed: unknown;

@@ -371,6 +371,10 @@ export function unsaved(): boolean {
           <dt>Excluded hits · 7 days</dt>
           <dd>{exactNumber(totalOf(excludedTotals))}</dd>
         </div>
+        <div>
+          <dt>Hits for unknown sites · since restart</dt>
+          <dd>{exactNumber(stats.unknownSites.hits)}</dd>
+        </div>
       </dl>
       {#if botTotals.length > 0}
         <p class="widget-note">Bot drops by site</p>
@@ -380,15 +384,20 @@ export function unsaved(): boolean {
         <p class="widget-note">Excluded by site</p>
         {@render dropList(excludedTotals)}
       {/if}
+      {#if stats.unknownSites.recent.length > 0}
+        <p class="widget-note">Unknown site ids and domains, newest first</p>
+        {@render dropList(stats.unknownSites.recent.map((unknown) => [unknown.ref, unknown.hits]))}
+      {/if}
     {/snippet}
   </LoadState>
 </div>
 
-{#snippet dropList(rows: Array<[number, number]>)}
+<!-- A number is a site id; a string is what a beacon named that no site has. -->
+{#snippet dropList(rows: Array<[number | string, number]>)}
   <div class="bot-list">
     {#each rows as [siteId, count] (siteId)}
       <div class="bot-row">
-        <span class="name">{nameOf(siteId)}</span>
+        <span class="name">{typeof siteId === 'number' ? nameOf(siteId) : siteId}</span>
         <span class="num">{exactNumber(count)}</span>
       </div>
     {/each}

@@ -7,13 +7,12 @@ is the part a person follows.
 ## 1. Add the site
 
 Settings → Sites → Add. You need a name, the domains it serves from (every
-hostname, including `www.`), and the site's IANA timezone — `local_date` and
+hostname, including `www.`; the first is canonical, and each domain belongs to
+one site), and the site's IANA timezone — `local_date` and
 `local_hour` are computed at ingest from it. Changing it later re-dates the
 site's stored history in the background, but not the days retention has already
 pruned, and unique-visitor counts on re-dated days become approximate (docs/03
 § Timezones) — so get it right at the start.
-
-Note the numeric **site id**; the snippet needs it.
 
 ## 2. Paste the snippet
 
@@ -22,9 +21,18 @@ New sites use the native tracker. `<head>`, as early as convenient:
 ```html
 <script type="module">
   import { init, page } from 'https://analytics.example.com/tracker.js'
-  init({ site: 1, endpoint: 'https://analytics.example.com/api/collect' })
+  init({ site: 'example.com', endpoint: 'https://analytics.example.com/api/collect' })
 </script>
 ```
+
+`site` names the site by any of its registered domains — Settings → Sites →
+Tracking snippet fills in the canonical one — or by its numeric id, which still
+works and is what a site with no domain gets. Naming it by domain means the
+snippet can be written before anyone opens Settings, but a hit only records
+once the site exists: until then it is dropped and counted under Settings →
+Diagnostics → *Hits for unknown sites*, which also lists what the beacons
+named. A typo lands there too. Removing a domain from a site stops a snippet
+that names it.
 
 That is the whole install. `init` hooks `history` for pageviews, delegates
 outlink and download clicks, and starts focus- and idle-gated engagement pings.
@@ -160,7 +168,12 @@ curl -sSL https://example.com/zz-probe-404/nope | grep -o 'tracker\.js\|matomo\.
 ## 4. The other things worth checking once
 
 - **Every hostname is registered.** A hit from a host the site does not claim
-  still records. `www.` is the usual straggler.
+  still records — the snippet named the site, not the page's host — but a
+  visitor crossing between it and the site's other hosts reads as a referral
+  rather than internal navigation (docs/03 § Attribution). `www.` is the usual
+  straggler.
+- **Hits for unknown sites reads 0** in Settings → Diagnostics. Anything else
+  is a snippet naming a domain or id no site has, listed right there.
 - **The snippet runs on production only**, or dev sessions land in the
   reports — `if (location.hostname === 'example.com')` around it is enough.
 - **Verify with the live feed.** Settings → Diagnostics and the Realtime page

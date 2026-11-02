@@ -10,29 +10,35 @@ import {
   trackingSnippet,
 } from './settings.ts';
 
+const BLOG = { id: 7, domains: ['blog.example.com', 'www.blog.example.com'] };
+
 describe('trackingSnippet', () => {
-  it('targets this deployment and the chosen site', () => {
-    const snippet = trackingSnippet(7, 'https://analytics.example.com');
+  it('targets this deployment and names the site by its canonical domain', () => {
+    const snippet = trackingSnippet(BLOG, 'https://analytics.example.com');
     expect(snippet).toContain("import { init } from 'https://analytics.example.com/tracker.js'");
     expect(snippet).toContain(
-      "init({ site: 7, endpoint: 'https://analytics.example.com/api/collect' })",
+      "init({ site: 'blog.example.com', endpoint: 'https://analytics.example.com/api/collect' })",
     );
     expect(snippet.startsWith('<script type="module">')).toBe(true);
     expect(snippet.endsWith('</script>')).toBe(true);
+  });
+
+  it('falls back to the id for a site with no domain', () => {
+    expect(trackingSnippet({ id: 9, domains: [] }, 'https://a.test')).toContain('init({ site: 9,');
   });
 
   // The shim owns `_paq`, so it cannot run beside a real Matomo tag during a
   // comparison; offering it here would steer new sites into the one path that
   // cannot dual-run (docs/06 § Already running Matomo?).
   it('is the native tag, never the matomo.js shim', () => {
-    const snippet = trackingSnippet(7, 'https://analytics.example.com');
+    const snippet = trackingSnippet(BLOG, 'https://analytics.example.com');
     expect(snippet).not.toContain('_paq');
     expect(snippet).not.toContain('matomo');
   });
 
   it('never doubles the slash when the origin already ends with one', () => {
-    expect(trackingSnippet(1, 'https://a.test/')).toContain("from 'https://a.test/tracker.js'");
-    expect(trackingSnippet(1, 'https://a.test/')).not.toContain('a.test//');
+    expect(trackingSnippet(BLOG, 'https://a.test/')).toContain("from 'https://a.test/tracker.js'");
+    expect(trackingSnippet(BLOG, 'https://a.test/')).not.toContain('a.test//');
   });
 });
 

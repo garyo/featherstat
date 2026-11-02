@@ -345,6 +345,25 @@ export function listSites(db: Db): Site[] {
   return stmt<SiteColumns>(db, SQL_LIST_SITES).all().map(decodeSite);
 }
 
+/**
+ * The first of `domains` another live site already lists, if any — compared
+ * without regard to case. A domain names one site (docs/04 § 2: a snippet may
+ * name its site by domain), so the sites routes refuse a second claim.
+ */
+export function claimedDomain(
+  db: Db,
+  domains: readonly string[],
+  exceptSiteId?: number,
+): string | undefined {
+  const wanted = new Set(domains.map((domain) => domain.toLowerCase()));
+  for (const site of listSites(db)) {
+    if (site.id === exceptSiteId) continue;
+    const taken = site.domains.find((domain) => wanted.has(domain.toLowerCase()));
+    if (taken !== undefined) return taken;
+  }
+  return undefined;
+}
+
 export function getSite(db: Db, id: number): Site | undefined {
   const row = stmt<SiteColumns>(db, SQL_GET_SITE).get(id);
   return row === undefined ? undefined : decodeSite(row);

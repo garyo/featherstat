@@ -31,6 +31,7 @@ import { runSitePurges } from '../jobs/site-purge.ts';
 import { runTimezoneBackfills } from '../jobs/timezone-backfill.ts';
 import { ExclusionMatcher, type Resolver, refreshResolutions } from '../pipeline/exclusions.ts';
 import { PropRegistry } from '../pipeline/props.ts';
+import { UnknownSiteTally } from '../pipeline/unknown-sites.ts';
 import { createAdminRoutes, DECOY_HASH } from './admin.ts';
 
 const PASSWORD = 'a-decent-password';
@@ -171,6 +172,31 @@ describe('sites CRUD', () => {
     expect(res.status).toBe(200);
     await runTimezoneBackfills(db); // rides the run the route kicked
     expect(clockOf()).toEqual({ local_date: '2026-07-27', local_hour: 11 });
+  });
+
+  // A snippet may name its site by domain (docs/04 § 2), so a domain names one site.
+  it('refuses a domain another site lists, in any case, and lets a site keep its own', async () => {
+    const session = await login();
+    const theirs = getSite(db, 2)?.domains[0] ?? '';
+    const create = await mutate(session, 'POST', '/api/admin/sites', {
+      name: 'Squatter',
+      domains: ['new.test', theirs.toUpperCase()],
+    });
+    expect(create.status).toBe(409);
+    expect(await create.json()).toEqual({
+      error: `${theirs} is already registered to another site`,
+    });
+    expect(listSites(db)).toHaveLength(2);
+
+    const patch = await mutate(session, 'PATCH', '/api/admin/sites/1', { domains: [theirs] });
+    expect(patch.status).toBe(409);
+    expect(getSite(db, 1)?.domains).not.toContain(theirs);
+
+    const own = getSite(db, 2)?.domains ?? [];
+    const keep = await mutate(session, 'PATCH', '/api/admin/sites/2', {
+      domains: [...own, `www.${theirs}`],
+    });
+    expect(keep.status).toBe(200);
   });
 
   it('404s an unknown site, 400s an empty patch and a bad id', async () => {
@@ -319,6 +345,30 @@ describe('diagnostics', () => {
       { siteId: 1, localDate: '2026-07-27', count: 4 },
       { siteId: 2, localDate: '2026-07-25', count: 1 },
     ]);
+  });
+});
+
+describe('diagnostics: hits for unknown sites', () => {
+  it('reports the live tally, and an empty one when no pipeline is attached', async () => {
+    const tally = new UnknownSiteTally(() => clock);
+    tally.record('oberbruner.com', 3);
+    const withTally = new Hono<AuthEnv>().route(
+      '/',
+      createAdminRoutes(db, auth, { unknownSites: tally }),
+    );
+    const { cookie } = await login();
+    const read = async (target: Hono<AuthEnv>) =>
+      (
+        (await (
+          await target.request('/api/admin/diagnostics', { headers: { cookie } })
+        ).json()) as AdminDiagnostics
+      ).unknownSites;
+    expect(await read(withTally)).toEqual({
+      since: T0,
+      hits: 3,
+      recent: [{ ref: 'oberbruner.com', hits: 3, lastSeen: T0 }],
+    });
+    expect(await read(app)).toEqual({ since: T0, hits: 0, recent: [] });
   });
 });
 

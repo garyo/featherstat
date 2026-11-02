@@ -157,6 +157,7 @@ export function createSecuredApp(options: SecuredAppOptions = {}): SecuredApp {
   } = options;
   // The bundled server (Docker) points these at its own directories via env.
   appOptions.assetsDir ??= process.env.ASSETS_DIR;
+  appOptions.resolveSite ??= pipeline?.resolveSite;
 
   const metrics = new Metrics();
   pipeline?.onFlush((summary) => metrics.recordFlush(summary));
@@ -216,6 +217,7 @@ export function createSecuredApp(options: SecuredAppOptions = {}): SecuredApp {
         identity: pipeline?.identity,
         campaignAliases: pipeline?.campaignAliases,
         exclusions: pipeline?.exclusions,
+        unknownSites: pipeline?.unknownSites,
         refreshExclusions: options.refreshExclusions,
       }),
     );

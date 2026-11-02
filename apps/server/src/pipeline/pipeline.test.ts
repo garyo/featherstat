@@ -19,6 +19,7 @@ import {
   withWriteTransaction,
 } from '../db/index.ts';
 import { executeQueryRequest } from '../query/executor.ts';
+import { createTrackRoutes } from '../routes/track.ts';
 import type { GeoProvider } from './geo.ts';
 import type { Pipeline } from './index.ts';
 import { createPipeline } from './index.ts';
@@ -127,10 +128,33 @@ describe('createPipeline', () => {
     expect(getExcludedDrops(db, 1, '2026-07-27')).toBe(0);
   });
 
-  it('drops hits for unknown sites', () => {
-    pipeline.sink([hit({ siteId: 99 })], ctx());
+  it('drops hits for unknown sites, and counts them for diagnostics', () => {
+    pipeline.sink([hit({ siteId: 99 }), hit({ siteId: 99, type: 'ping' })], ctx());
     pipeline.flush();
     expect(db.prepare('SELECT COUNT(*) FROM events').pluck().get()).toBe(0);
+    expect(pipeline.unknownSites.report()).toMatchObject({
+      hits: 2,
+      recent: [{ ref: '99', hits: 2 }],
+    });
+  });
+
+  // docs/04 § 2: a snippet may name its site by any domain the site lists.
+  it('records a native beacon that names its site by domain, and counts one naming none', async () => {
+    const app = createTrackRoutes(pipeline.sink, pipeline.resolveSite);
+    const post = (site: unknown) =>
+      app.request('/api/collect', {
+        method: 'POST',
+        headers: { 'content-type': 'text/plain;charset=UTF-8' },
+        body: JSON.stringify({ site, hits: [{ type: 'pageview', url: 'https://example.com/a' }] }),
+      });
+    expect((await post('Example.com')).status).toBe(204);
+    expect((await post('exmaple.com')).status).toBe(204);
+    pipeline.flush();
+    expect(db.prepare('SELECT site_id FROM events').pluck().all()).toEqual([1]);
+    expect(pipeline.unknownSites.report()).toMatchObject({
+      hits: 1,
+      recent: [{ ref: 'exmaple.com', hits: 1 }],
+    });
   });
 
   it('stores pings as rows that update engagement but not pageviews', () => {

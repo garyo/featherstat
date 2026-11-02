@@ -1,21 +1,25 @@
-import type { AdminBotDrops, AdminDataSettings } from '@featherstat/shared';
+import type { AdminBotDrops, AdminDataSettings, SiteInfo } from '@featherstat/shared';
 
 /** Pure helpers behind the settings view — kept out of the component for tests. */
 
 /**
  * The native tag for a site (docs/04 § 2) against this deployment: `tracker.js`
- * as ESM, beaconing to `/api/collect` on `origin`.
+ * as ESM, beaconing to `/api/collect` on `origin`. It names the site by its
+ * canonical domain, which the site's owner already knows; only a site with no
+ * domain falls back to the id.
  *
  * The Matomo-compatible shim this deployment also serves is deliberately not
  * offered here — it owns the `_paq` global, so it cannot run beside a real
  * Matomo tag while an operator compares the two. That path is a migration
  * step, documented in docs/06, not the way to start.
  */
-export function trackingSnippet(siteId: number, origin: string): string {
+export function trackingSnippet(site: Pick<SiteInfo, 'id' | 'domains'>, origin: string): string {
   const base = origin.endsWith('/') ? origin : `${origin}/`;
+  const domain = site.domains[0];
+  const ref = domain === undefined ? String(site.id) : `'${domain}'`;
   return `<script type="module">
   import { init } from '${base}tracker.js';
-  init({ site: ${siteId}, endpoint: '${base}api/collect' });
+  init({ site: ${ref}, endpoint: '${base}api/collect' });
 </${'script'}>`;
 }
 

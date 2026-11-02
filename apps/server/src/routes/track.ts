@@ -3,7 +3,7 @@ import { getConnInfo } from '@hono/node-server/conninfo';
 import { type Context, Hono } from 'hono';
 import { parseMatomoRequest } from '../ingest/matomo.ts';
 import { parseCollectRequest } from '../ingest/native.ts';
-import type { HitSink } from '../pipeline/index.ts';
+import type { HitSink, SiteResolver } from '../pipeline/index.ts';
 
 const TRACKING_PATHS = ['/matomo.php', '/piwik.php'];
 const COLLECT_PATH = '/api/collect';
@@ -40,7 +40,7 @@ export const MAX_TRACK_BODY_BYTES = 256 * 1024;
  * Matomo-compatible tracking endpoints. They answer immediately and never
  * return 4xx/5xx for tracking input (CLAUDE.md invariant 4).
  */
-export function createTrackRoutes(sink: HitSink): Hono {
+export function createTrackRoutes(sink: HitSink, resolveSite?: SiteResolver): Hono {
   const app = new Hono();
   app.on(['GET', 'POST'], TRACKING_PATHS, async (c) => {
     const body = c.req.method === 'POST' ? await readBody(c) : undefined;
@@ -57,7 +57,7 @@ export function createTrackRoutes(sink: HitSink): Hono {
   // The native collector (docs/04 § 2). Same sink, same context, same promise:
   // it answers 204 whether it understood the body or not (invariant 4).
   app.post(COLLECT_PATH, async (c) => {
-    const hits = parseCollectRequest(await readBody(c));
+    const hits = parseCollectRequest(await readBody(c), resolveSite);
     if (hits.length > 0) sink(hits, hitContext(c));
     return c.body(null, 204, { ...EMPTY_HEADERS, ...COLLECT_CORS_HEADERS });
   });

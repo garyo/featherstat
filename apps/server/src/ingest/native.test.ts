@@ -123,8 +123,28 @@ describe('never rejects, only records less (invariant 4)', () => {
     }
   });
 
+  it('names its site through the resolver, once, with the hits it would carry', () => {
+    const asked: Array<[unknown, number]> = [];
+    const resolve = (ref: number | string, hits: number): number | undefined => {
+      asked.push([ref, hits]);
+      return ref === 'deep-timeline.org' ? 4 : undefined;
+    };
+    const hits = [{ type: 'pageview' }, { type: 'ping' }];
+    const named = parseCollectRequest(body({ site: 'deep-timeline.org', hits }), resolve);
+    expect(named.map((hit) => hit.siteId)).toEqual([4, 4]);
+    expect(parseCollectRequest(body({ site: 'deep-timline.org', hits }), resolve)).toEqual([]);
+    expect(asked).toEqual([
+      ['deep-timeline.org', 2],
+      ['deep-timline.org', 2],
+    ]);
+  });
+
+  it('understands only ids without a site directory to resolve a domain against', () => {
+    expect(parseCollectRequest(body({ site: 'a.test', hits: [{ type: 'ping' }] }))).toEqual([]);
+  });
+
   it('yields nothing for an envelope with no usable site', () => {
-    for (const site of [0, -1, 1.5, '4', undefined]) {
+    for (const site of [0, -1, 1.5, '', 'not a host', 'evil.test/path', undefined]) {
       expect(parseCollectRequest(body({ site, hits: [{ type: 'ping' }] })), String(site)).toEqual(
         [],
       );

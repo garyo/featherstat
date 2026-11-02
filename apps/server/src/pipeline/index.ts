@@ -1,4 +1,4 @@
-import { type Hit, type HitContext, localClock } from '@featherstat/shared';
+import { type Hit, type HitContext, localClock, type SiteRef } from '@featherstat/shared';
 import type { Db, EventRow } from '../db/index.ts';
 import { type FlushHook, WriteBatcher } from './batcher.ts';
 import { AliasCache } from './campaigns.ts';
@@ -10,9 +10,16 @@ import { isMissingHit, missingRow } from './missing.ts';
 import { PropRegistry } from './props.ts';
 import { loadOpenSessions, priorSessionLookup, Sessionizer } from './sessionizer.ts';
 import { SiteCache } from './site-cache.ts';
+import { UnknownSiteTally } from './unknown-sites.ts';
 
 /** Where normalized hits go. `createPipeline` builds the real one; routes call it. */
 export type HitSink = (hits: Hit[], ctx: HitContext) => void;
+
+/**
+ * A collect envelope's site reference → its site id (docs/04 § 2). Undefined
+ * means the beacon is dropped; the resolver has already counted its `hits`.
+ */
+export type SiteResolver = (ref: SiteRef, hits: number) => number | undefined;
 
 /** Enriched hit, delivered as it happens — the realtime hub cannot wait for the flush. */
 type HitHook = (event: EventRow) => void;
@@ -24,6 +31,10 @@ export interface PipelineOptions {
 
 export interface Pipeline {
   sink: HitSink;
+  /** What the native collector names its site through, before the sink. */
+  resolveSite: SiteResolver;
+  /** Hits that named no known site — the diagnostics panel reads it. */
+  unknownSites: UnknownSiteTally;
   /** Flushes everything queued right now (tests, admin). */
   flush(): void;
   /** Stops the batch timer and flushes — wire to SIGTERM/SIGINT. False when
@@ -54,6 +65,7 @@ export function createPipeline(db: Db, options: PipelineOptions = {}): Pipeline 
   const geo = options.geo ?? new NullProvider();
   const identity = new Identity(db);
   const sites = new SiteCache(db);
+  const unknownSites = new UnknownSiteTally();
   const props = new PropRegistry(db);
   const batcher = new WriteBatcher(db, options.batchIntervalMs, props);
   // Every session row read back from the store is COMMITTED state: seed the
@@ -89,7 +101,10 @@ export function createPipeline(db: Db, options: PipelineOptions = {}): Pipeline 
     const geoResult = device === null ? null : geo.lookup(ctx.ip);
     for (const hit of hits) {
       const site = sites.get(hit.siteId);
-      if (site === undefined) continue; // unknown site id → dropped, never 4xx (docs/04)
+      if (site === undefined) {
+        unknownSites.record(hit.siteId, 1); // dropped, never 4xx (docs/04)
+        continue;
+      }
       // Once per hit: the drop counters, the prop registry, the day salt and the
       // sessionizer all bucket on the same site-local clock.
       const local = localClock(site.timezone, ctx.receivedAt);
@@ -128,8 +143,16 @@ export function createPipeline(db: Db, options: PipelineOptions = {}): Pipeline 
     }
   };
 
+  const resolveSite: SiteResolver = (ref, hits) => {
+    const site = sites.resolve(ref);
+    if (site === undefined) unknownSites.record(ref, hits);
+    return site?.id;
+  };
+
   return {
     sink,
+    resolveSite,
+    unknownSites,
     flush: () => {
       batcher.flush();
     },

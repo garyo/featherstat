@@ -37,6 +37,7 @@ import {
   type ApiTokenRow,
   addUserSite,
   bumpAnnotationsVersion,
+  claimedDomain,
   countEvents,
   createSite,
   type Db,
@@ -90,6 +91,7 @@ import type { ExclusionMatcher } from '../pipeline/exclusions.ts';
 import { readExclusionRules, writeExclusionRules } from '../pipeline/exclusions.ts';
 import { carryDaySalt, forgetSiteIdentity, type Identity } from '../pipeline/identity.ts';
 import type { PropRegistry } from '../pipeline/props.ts';
+import type { UnknownSiteTally } from '../pipeline/unknown-sites.ts';
 import { clientIp } from './track.ts';
 
 /**
@@ -134,6 +136,8 @@ export interface AdminRouteOptions {
   /** The live exclusion set — a rule write must take effect without a restart.
    * Absent (a query-only server, tests), the settings row alone moves. */
   exclusions?: ExclusionMatcher;
+  /** The live pipeline's count of beacons that named no site. Absent, diagnostics report none. */
+  unknownSites?: UnknownSiteTally;
   /** Re-resolves hostname rules after a write, so a new name bites immediately. */
   refreshExclusions?: () => Promise<void>;
 }
@@ -262,12 +266,16 @@ export function createAdminRoutes(
     const body = await parseBody(c, AdminSiteCreateSchema);
     if (body.ok === false) return body.response;
     const principal = c.get('principal');
-    // Ownership grows on create: a user's new site is theirs, atomically.
+    // Ownership grows on create: a user's new site is theirs, atomically. The
+    // domain check shares the transaction, so no second writer slips between.
     const site = withWriteTransaction(db, () => {
+      const taken = claimedDomain(db, body.data.domains);
+      if (taken !== undefined) return { taken };
       const created = createSite(db, body.data);
       if (principal.kind === 'user') addUserSite(db, principal.userId, created.id);
       return created;
     });
+    if ('taken' in site) return domainTaken(c, site.taken);
     return c.json(toSiteInfo(site), 201);
   });
 
@@ -280,7 +288,10 @@ export function createAdminRoutes(
     if (body.ok === false) return body.response;
     // A new zone re-dates the site's history (docs/03 § Timezones): the salt
     // carry and the backfill's enqueue commit with the change itself.
-    const { site, rezoned } = withWriteTransaction(db, () => {
+    const result = withWriteTransaction(db, () => {
+      const { domains } = body.data;
+      const taken = domains === undefined ? undefined : claimedDomain(db, domains, id);
+      if (taken !== undefined) return { taken };
       const before = getSite(db, id);
       const after = updateSite(db, id, body.data);
       const moved =
@@ -291,6 +302,8 @@ export function createAdminRoutes(
       }
       return { site: after, rezoned: moved };
     });
+    if (result.taken !== undefined) return domainTaken(c, result.taken);
+    const { site, rezoned } = result;
     if (site === undefined) return c.json({ error: `unknown site ${id}` }, 404);
     if (rezoned) {
       // Kick the backfill now; the scheduler's job resumes it after a crash.
@@ -496,12 +509,17 @@ export function createAdminRoutes(
       eventCount: countEvents(db),
       botDrops: listBotDrops(db, since).map(toDropCounts),
       excludedDrops: listExcludedDrops(db, since).map(toDropCounts),
+      unknownSites: options.unknownSites?.report() ?? { since: auth.now(), hits: 0, recent: [] },
     };
     return c.json(diagnostics);
   });
 
   return app;
 }
+
+/** Which site holds it is not said: a user may not see that site at all. */
+const domainTaken = (c: Context, domain: string): Response =>
+  c.json({ error: `${domain} is already registered to another site` }, 409);
 
 const toDropCounts = (row: DropCountRow): AdminBotDrops => ({
   siteId: row.site_id,

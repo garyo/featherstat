@@ -201,6 +201,19 @@ Props are a native-collector feature only (§ 2).
 }
 ```
 
+- **`site` is the site's id or any domain it registers** (`SiteRefSchema`):
+  `"site": "deep-timeline.org"` names the same site as `"site": 4`, matched
+  without regard to case, so a snippet can be written without anyone looking
+  an id up. A domain belongs to one live site at most — the sites routes
+  answer 409 to a second claim — and the route resolves it once per request,
+  so everything past the collector (pipeline, realtime, the Matomo tee) sees
+  the numeric id. An id or domain naming no site is answered 204 and dropped
+  like any beacon that says nothing usable, and counted in memory since boot
+  (`unknownSites` in the diagnostics: the total and the 20 most recently seen
+  references), because a mistyped domain would otherwise vanish without a
+  trace. Nothing a beacon names is stored. matomo.php keeps its numeric
+  `idsite`: matomo.js will not send without one.
+
   The wire format is flatter than the normalized `Hit`: event fields ride at
   the top level and `ingest/native.ts` lifts them into `Hit.event`. The
   vocabulary is `CollectHitSchema` in `packages/shared` — the wire cannot
@@ -981,7 +994,13 @@ would be a trap — and re-resolves hostnames before answering, so the response'
 if the lookup failed. A failed lookup is reported, never fatal: the rule keeps
 matching its last known addresses. `GET /api/admin/diagnostics` carries
 `excludedDrops` beside `botDrops`, same per-site/per-day shape and 7-day window,
-so a rule quietly eating real traffic is visible as itself.
+so a rule quietly eating real traffic is visible as itself, and `unknownSites`
+(§ 2): beacons naming no known site, counted since the server started.
+
+**A domain names one site.** `POST`/`PATCH /api/admin/sites` answer 409 when a
+domain in the body — compared without regard to case — is already listed by
+another live site, without saying which (a user may not see it). A site may
+keep, reorder and extend its own. A deleted site's domains are free at once.
 
 Read-only
 dashboard access via `GET /share/:token`: the server re-validates the stored

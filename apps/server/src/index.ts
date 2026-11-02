@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { Principal } from './auth/principal.ts';
 import type { Db } from './db/index.ts';
-import type { HitSink } from './pipeline/index.ts';
+import type { HitSink, SiteResolver } from './pipeline/index.ts';
 import type { RealtimeHub } from './realtime/hub.ts';
 import { createRealtimeRoutes } from './realtime/sse.ts';
 import { createAssetRoutes } from './routes/assets.ts';
@@ -14,6 +14,9 @@ const dropHits: HitSink = () => undefined;
 export interface AppOptions {
   /** Receives normalized hits — `createPipeline` supplies the real one; omitted, they drop. */
   sink?: HitSink;
+  /** Names the site a native beacon's domain refers to — `createPipeline` supplies it;
+   * omitted, only numeric ids are understood. */
+  resolveSite?: SiteResolver;
   /** Mounts the query API and the site directory. */
   db?: Db;
   /** Mounts the realtime stream. */
@@ -31,6 +34,7 @@ export interface AppOptions {
 /** Without `db` or `hub`, only tracking and the tracker bundles are served. */
 export function createApp({
   sink = dropHits,
+  resolveSite,
   db,
   hub,
   assetsDir,
@@ -40,7 +44,7 @@ export function createApp({
 }: AppOptions = {}): Hono {
   const app = new Hono();
   app.get('/healthz', (c) => c.json({ ok: true }));
-  app.route('/', createTrackRoutes(sink));
+  app.route('/', createTrackRoutes(sink, resolveSite));
   app.route('/', createAssetRoutes({ dir: assetsDir }));
   if (db !== undefined) {
     app.route('/', createQueryRoutes(db, { execute: executeQuery, limits: queryLimits }));

@@ -89,6 +89,22 @@ export const MAX_ENGAGEMENT_ENTRIES = 200;
 /** Shape of the `sites.domains` JSON column; the first entry is canonical. */
 export const SiteDomainsSchema = z.array(z.string());
 
+/** One domain a site serves from, as an admin enters it: a hostname, optionally with a port. */
+const DomainSchema = z
+  .string()
+  .min(1)
+  .max(253)
+  .regex(/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:\d{1,5})?$/i, 'not a hostname');
+
+/**
+ * How a tracker names its site (docs/04 § 2): the numeric id, or any domain the
+ * site registers — matched without regard to case, so a snippet can name its
+ * site without anyone looking an id up. A domain belongs to one site at most
+ * (the sites routes refuse a second claim), which is what makes it a name.
+ */
+export const SiteRefSchema = z.union([z.number().int().positive(), DomainSchema]);
+export type SiteRef = z.infer<typeof SiteRefSchema>;
+
 /** `GET /api/sites` row — the public site directory the dashboard header lists. */
 export const SiteInfoSchema = z.object({
   id: z.number().int().positive(),
@@ -230,7 +246,7 @@ export const MAX_COLLECT_HITS = 50;
  * batch it travelled in.
  */
 export const CollectRequestSchema = z.object({
-  site: z.number().int().positive(),
+  site: SiteRefSchema,
   hits: z.array(z.unknown()),
 });
 
@@ -758,12 +774,6 @@ export const AdminChangePasswordSchema = z.object({
 const TimezoneSchema = z.string().refine(isValidTimezone, 'not an IANA timezone or ±hhmm offset');
 /** Hostname shape (optionally `:port`) — a stored `<script>` or `javascript:` string
  * must be rejected at the boundary, not trusted to render discipline downstream. */
-const DomainSchema = z
-  .string()
-  .min(1)
-  .max(253)
-  .regex(/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:\d{1,5})?$/i, 'not a hostname');
-
 export const AdminSiteCreateSchema = z.object({
   name: z.string().min(1).max(200),
   domains: z.array(DomainSchema).max(20).default([]),
@@ -827,6 +837,28 @@ export interface AdminDiagnostics {
    * itself rather than hidden in the crawler count (docs/03 § Exclusions).
    */
   excludedDrops: AdminBotDrops[];
+  /** Hits that named no site this server knows, since it started. */
+  unknownSites: UnknownSiteReport;
+}
+
+/**
+ * Beacons naming a site id or domain nobody registered are answered and
+ * dropped (invariant 4), so a typo in a snippet would otherwise vanish without
+ * a trace. Counted in memory since boot — a diagnosis, not a history.
+ */
+export interface UnknownSiteReport {
+  /** Server start, UTC ms: the window `hits` covers. */
+  since: number;
+  hits: number;
+  /** The most recently seen unknown references, newest first; capped. */
+  recent: UnknownSiteRef[];
+}
+
+export interface UnknownSiteRef {
+  /** The id or domain as the beacon wrote it. */
+  ref: string;
+  hits: number;
+  lastSeen: number;
 }
 
 /**

@@ -96,3 +96,32 @@ describe('SiteCache', () => {
     }
   });
 });
+
+describe('SiteCache.resolve (docs/04 § 2)', () => {
+  it('names a site by its id or by any domain it lists, regardless of case', () => {
+    const cache = seeded();
+    withWriteTransaction(db, () =>
+      updateSite(db, SITE.id, { domains: ['pcons.org', 'www.pcons.org'] }),
+    );
+    expect(cache.resolve(SITE.id)?.id).toBe(SITE.id);
+    expect(cache.resolve('pcons.org')?.id).toBe(SITE.id);
+    expect(cache.resolve('WWW.Pcons.org')?.id).toBe(SITE.id);
+    expect(cache.resolve('docs.pcons.org')).toBeUndefined();
+  });
+
+  it('follows a domain edit, and a domain freed by a deleted site', () => {
+    const cache = seeded();
+    expect(cache.resolve('pcons.org')?.id).toBe(SITE.id);
+    withWriteTransaction(db, () => updateSite(db, SITE.id, { domains: ['pcons.dev'] }));
+    expect(cache.resolve('pcons.org')).toBeUndefined();
+    expect(cache.resolve('pcons.dev')?.id).toBe(SITE.id);
+    withWriteTransaction(db, () => tombstoneSite(db, SITE.id, Date.now()));
+    expect(cache.resolve('pcons.dev')).toBeUndefined();
+  });
+
+  it('gives a domain two sites list (an import predating the rule) to the older one', () => {
+    const cache = seeded();
+    withWriteTransaction(db, () => createSite(db, { ...SITE, id: 2, name: 'older' }));
+    expect(cache.resolve('pcons.org')?.id).toBe(2);
+  });
+});

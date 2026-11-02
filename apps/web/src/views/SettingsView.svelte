@@ -188,8 +188,9 @@ async function deleteSite(): Promise<void> {
 // ---------- tracking snippet ----------
 let snippetChoice = $state<number | undefined>(undefined);
 const snippetSiteId = $derived(snippetChoice ?? sites?.[0]?.id);
+const snippetSite = $derived(sites?.find((site) => site.id === snippetSiteId));
 const snippet = $derived(
-  snippetSiteId === undefined ? undefined : trackingSnippet(snippetSiteId, window.location.origin),
+  snippetSite === undefined ? undefined : trackingSnippet(snippetSite, window.location.origin),
 );
 let copied = $state(false);
 let copyFailed = $state(false);
@@ -293,6 +294,7 @@ const nameOf = (id: number): string => sites?.find((s) => s.id === id)?.name ?? 
               Domains (comma-separated; the first is canonical)
               <input bind:value={draft.domains} placeholder="blog.example.com, www.example.com" />
             </label>
+            <p class="widget-note">A snippet may name its site by any of these.</p>
             <label class="field">
               Timezone
               <input bind:value={draft.timezone} list="timezones" required />

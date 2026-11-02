@@ -1,4 +1,4 @@
-import type { HitType } from '@featherstat/shared';
+import type { HitType, SiteRef } from '@featherstat/shared';
 import { isExitPingWorthwhile } from '../exit.ts';
 import { classifyLink, isLinkActivation } from '../links.ts';
 import { type HistoryChange, isNewView } from '../navigation.ts';
@@ -9,7 +9,8 @@ import { send } from '../send.ts';
 
 /** The native tracker for new sites (docs/04 § 2): `POST /api/collect`, JSON, ESM. */
 export interface TrackerConfig {
-  site: number;
+  /** The site's id, or any domain it registers (`'example.com'`). */
+  site: SiteRef;
   /** Collector URL; defaults to `/api/collect` on the current origin. */
   endpoint?: string;
   /** Auto pageviews via a `history` hook — opt out when the app tracks its own routes. */
@@ -50,7 +51,7 @@ interface NativeHit {
 }
 
 interface Runtime {
-  site: number;
+  site: SiteRef;
   endpoint: string;
   /** URL of the last pageview — also the referrer of the next one within the app. */
   url: string;

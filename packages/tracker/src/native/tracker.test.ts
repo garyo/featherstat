@@ -7,7 +7,7 @@ import { init, page, track } from './tracker.ts';
 const ENDPOINT = 'https://analytics.example.org/api/collect';
 
 interface Payload {
-  site: number;
+  site: number | string;
   hits: Record<string, unknown>[];
 }
 
@@ -64,6 +64,13 @@ describe('pageviews', () => {
         lang: navigator.language,
       },
     ]);
+  });
+
+  it('names the site by domain when given one, untouched', () => {
+    start({ site: 'deep-timeline.org' });
+    expect((JSON.parse(String(beacon.mock.calls[0]?.[1])) as Payload).site).toBe(
+      'deep-timeline.org',
+    );
   });
 
   it('defaults the endpoint to /api/collect', () => {
