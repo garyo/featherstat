@@ -129,7 +129,8 @@ A dashboard is JSON: a grid of widget cards.
   only, since a path means nothing without its site),
   `map` (world choropleth + city dots — **M2**, with the
   map-outline data that arrives alongside the sankey work), `feed` (realtime
-  events). M2's journeys (sankey over transitions + top-journeys flows table)
+  events; a row reads who, then what happened — `site › page` at All scope —
+  on one line when the card is wide; a narrow card stacks what over who). M2's journeys (sankey over transitions + top-journeys flows table)
   shipped as the dedicated per-site **Journeys view** (see the IA table above)
   rather than as `sankey`/`flows` viz types: the pair is one coupled
   interaction (a clicked edge filters the table from the same batch) with its

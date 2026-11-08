@@ -481,8 +481,8 @@ describe('the realtime widgets read the stream the page holds', () => {
       env: { ...APP_PAGE, scope: 'all' },
     });
     expect(text(root.querySelector('.active-now'))).toBe('9 active now');
-    // At 'all' a feed row badges which site it came from.
-    expect(text(root.querySelector('.feed-row'))).toContain('pcons.org');
+    // At 'all' a feed row says which site, ahead of the page it names.
+    expect(text(root.querySelector('.feed-row .what'))).toMatch(/^pcons\.org\s*›\s*\//);
   });
 });
 

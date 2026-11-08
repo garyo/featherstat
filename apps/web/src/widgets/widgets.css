@@ -440,7 +440,13 @@
   align-self: center;
 }
 
+/* A row is who did it, then what happened (site › page). One line on a wide
+   card; on a narrower one what happened goes on top and who under it, so a
+   phone gets two short lines instead of one that runs off the screen. Sized by
+   the card, not the viewport: the feed also sits in narrow columns on wide
+   screens. */
 .feed {
+  container: feed / inline-size;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -461,12 +467,54 @@
   background: color-mix(in srgb, var(--ink) 8%, transparent);
 }
 
+.feed-row .what,
+.feed-row .who {
+  display: flex;
+  gap: 7px;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.feed-row .what {
+  flex: 1 1 auto;
+}
+
+.feed-row .who {
+  flex: 0 1 auto;
+}
+
+.feed-row .acts {
+  margin-left: auto;
+}
+
+/* 560px: about the width one line needs for a typical all-sites row. */
+@container feed (max-width: 560px) {
+  .feed-row {
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr);
+    grid-template-areas:
+      "ago what"
+      ". who";
+    column-gap: 10px;
+    row-gap: 1px;
+  }
+
+  .feed-row .ago {
+    grid-area: ago;
+  }
+
+  .feed-row .what {
+    grid-area: what;
+  }
+
+  .feed-row .who {
+    grid-area: who;
+  }
+}
+
 .feed-row .vname {
   color: var(--ink-2);
   flex-shrink: 0;
-  max-width: 34%;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -484,10 +532,27 @@
 
 .feed-row .where {
   color: var(--ink-2);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.feed-row .fsite {
   flex-shrink: 0;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-2);
+}
+
+.feed-row .fsep {
+  color: var(--muted);
 }
 
 .feed-row .path {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -695,13 +760,6 @@
       box-shadow: 0 0 0 0 transparent;
     }
   }
-}
-
-.fsite {
-  margin-left: auto;
-  color: var(--muted);
-  font-size: 12px;
-  white-space: nowrap;
 }
 
 .feed-row .vtime {
