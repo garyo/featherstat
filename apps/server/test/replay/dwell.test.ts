@@ -139,6 +139,7 @@ function measuredViews(session: OracleSession): MeasuredView[] {
 interface DwellRow {
   path: string;
   views_measured: number;
+  median_page_ms: number;
   avg_page_ms: number;
   max_page_ms: number;
   views_scrolled: number;
@@ -146,18 +147,14 @@ interface DwellRow {
 }
 
 function expectedDwell(scoped: readonly OracleSession[], limit: number): DwellRow[] {
-  const byPath = new Map<string, { total: number; count: number; max: number }>();
+  const byPath = new Map<string, number[]>();
   for (const session of scoped) {
     for (const view of measuredViews(session)) {
-      const entry = byPath.get(view.path) ?? { total: 0, count: 0, max: 0 };
-      entry.total += view.ms;
-      entry.count += 1;
-      entry.max = Math.max(entry.max, view.ms);
-      byPath.set(view.path, entry);
+      byPath.set(view.path, [...(byPath.get(view.path) ?? []), view.ms]);
     }
   }
   return [...byPath.entries()]
-    .map(([path, entry]) => ({
+    .map(([path, times]) => ({
       path,
       // Constant, and honestly so: scroll depth is native-tracker-only and this
       // corpus is Matomo-shaped (`generate.ts` encodes every hit back into
@@ -167,12 +164,22 @@ function expectedDwell(scoped: readonly OracleSession[], limit: number): DwellRo
       // hand-built fixture in `query/dwell.test.ts` instead.
       views_scrolled: 0,
       avg_scroll_pct: null,
-      views_measured: entry.count,
-      avg_page_ms: entry.total / entry.count,
-      max_page_ms: entry.max,
+      views_measured: times.length,
+      median_page_ms: median(times),
+      avg_page_ms: times.reduce((sum, ms) => sum + ms, 0) / times.length,
+      max_page_ms: Math.max(...times),
     }))
-    .sort((a, b) => b.avg_page_ms - a.avg_page_ms || cmp(a.path, b.path))
+    .sort((a, b) => b.median_page_ms - a.median_page_ms || cmp(a.path, b.path))
     .slice(0, limit);
+}
+
+/** The middle value; an even count averages the middle two, as SQLite's does. */
+function median(values: readonly number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = sorted.length >> 1;
+  return sorted.length % 2 === 1
+    ? (sorted[mid] as number)
+    : ((sorted[mid - 1] as number) + (sorted[mid] as number)) / 2;
 }
 
 function cmp(a: string, b: string): number {

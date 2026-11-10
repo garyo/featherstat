@@ -420,8 +420,20 @@ describe('time on page renders through the shared bar rows', () => {
         results: {
           dwell: {
             rows: [
-              { path: '/blog', views_measured: 1_400, avg_page_ms: 92_400, max_page_ms: 740_000 },
-              { path: '/', views_measured: 3_000, avg_page_ms: 23_100, max_page_ms: 180_000 },
+              {
+                path: '/blog',
+                views_measured: 1_400,
+                median_page_ms: 41_000,
+                avg_page_ms: 92_400,
+                max_page_ms: 740_000,
+              },
+              {
+                path: '/',
+                views_measured: 3_000,
+                median_page_ms: 15_000,
+                avg_page_ms: 23_100,
+                max_page_ms: 180_000,
+              },
             ],
           },
         },
@@ -429,8 +441,8 @@ describe('time on page renders through the shared bar rows', () => {
     );
     const rows = [...root.querySelectorAll('.bar-row')];
     expect(rows.map((row) => text(row))).toEqual([
-      '/blog 1m 32s max 12m 20s · 1,400 measured',
-      '/ 23s max 3m 00s · 3,000 measured',
+      '/blog 41s avg 1m 32s · max 12m 20s · 1,400 measured',
+      '/ 15s avg 23s · max 3m 00s · 3,000 measured',
     ]);
     // The shared row's affordances came free with the shared row.
     expect(rows.every((row) => row.getAttribute('tabindex') === '0')).toBe(true);

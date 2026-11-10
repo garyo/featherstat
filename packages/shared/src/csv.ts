@@ -85,6 +85,7 @@ function knownColumns(query: Query): readonly string[] {
       return [
         'path',
         'views_measured',
+        'median_page_ms',
         'avg_page_ms',
         'max_page_ms',
         'views_scrolled',

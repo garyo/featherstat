@@ -298,13 +298,14 @@ describe('a time series draws the axis the server enumerated', () => {
 });
 
 describe('time on page reads the session-scoped answer', () => {
-  it('ranks by measured average and says what each average rests on', () => {
+  it('ranks by measured median and says what each median rests on', () => {
     const rows = dwellRows(sliceOf(site, 'dwell').rows);
     expect(rows.length).toBeGreaterThan(1);
     // The server ranked them; the client must not re-order into disagreement.
-    expect(rows.map((row) => row.avgMs)).toEqual(
-      [...rows.map((row) => row.avgMs)].sort((a, b) => b - a),
+    expect(rows.map((row) => row.medianMs)).toEqual(
+      [...rows.map((row) => row.medianMs)].sort((a, b) => b - a),
     );
+    for (const row of rows) expect(row.medianMs).toBeLessThanOrEqual(row.maxMs);
     for (const row of rows) expect(row.views).toBeGreaterThan(0);
     expect(dwellBars(rows)[0]?.text).toMatch(/^\d+[smh]/);
   });

@@ -322,6 +322,7 @@ describe('a reader who comes back to an open tab', () => {
       {
         path: '/a',
         views_measured: 1,
+        median_page_ms: ENGAGED_MS,
         avg_page_ms: ENGAGED_MS,
         max_page_ms: ENGAGED_MS,
         // The matomo.js shim sends no scroll reading, so this visit has none.

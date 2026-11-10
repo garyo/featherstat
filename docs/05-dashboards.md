@@ -121,9 +121,9 @@ A dashboard is JSON: a grid of widget cards.
   § Accessibility), `heatmap` (hour × weekday), `devices` (the
   mockup's stacked device bar + browsers list — one card, two breakdowns of
   the same batch), `dwell` ("Time on page": the `dwell` kind's pages ranked by
-  average measured dwell, each behind a wash bar, with the longest view and the
-  count of *measured* views alongside — the card states what its average rests
-  on, and says plainly when nothing could be timed), `broken-links` (the
+  median measured dwell, each behind a wash bar, with the average, the longest
+  view and the count of *measured* views alongside — the card states what its
+  numbers rest on, and says plainly when nothing could be timed), `broken-links` (the
   `missing` kind's paths asked for that do not exist, linked-to ones first,
   each with the page that most often links there — a site dashboard's card
   only, since a path means nothing without its site),

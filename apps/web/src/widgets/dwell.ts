@@ -5,7 +5,7 @@ import { num } from './series.ts';
 
 /**
  * Pure shaping for the time-on-page card (docs/04 § 3 `dwell`). The server
- * already ranked the pages by average dwell; this module only makes the rows
+ * already ranked the pages by median dwell; this module only makes the rows
  * renderable — and keeps the card's honesty visible: `views` is how many page
  * views the numbers actually rest on, because a view nothing followed was never
  * timed and is not in the answer at all.
@@ -14,6 +14,9 @@ import { num } from './series.ts';
 export interface DwellRow {
   /** A title-only pageview stores no URL and arrives as '' — never a blank cell. */
   path: string;
+  /** The typical view — the headline and the ranking; the average is skewed
+   * by the few views left open for minutes. */
+  medianMs: number;
   avgMs: number;
   maxMs: number;
   /** Page views the average rests on; never zero. */
@@ -44,6 +47,7 @@ export function dwellRows(rows: readonly ResultRow[]): DwellRow[] {
     const rate = row.avg_scroll_pct;
     parsed.push({
       path: row.path === '' || typeof row.path !== 'string' ? UNTITLED : row.path,
+      medianMs: num(row.median_page_ms),
       avgMs: num(row.avg_page_ms),
       maxMs: num(row.max_page_ms),
       views,
@@ -51,9 +55,9 @@ export function dwellRows(rows: readonly ResultRow[]): DwellRow[] {
       scrolled,
     });
   }
-  parsed.sort((a, b) => b.avgMs - a.avgMs);
-  const longest = Math.max(1, ...parsed.map((row) => row.avgMs));
-  return parsed.map((row) => ({ ...row, pct: ((row.avgMs / longest) * 100).toFixed(1) }));
+  parsed.sort((a, b) => b.medianMs - a.medianMs);
+  const longest = Math.max(1, ...parsed.map((row) => row.medianMs));
+  return parsed.map((row) => ({ ...row, pct: ((row.medianMs / longest) * 100).toFixed(1) }));
 }
 
 /**
@@ -71,17 +75,18 @@ export function dwellRows(rows: readonly ResultRow[]): DwellRow[] {
 export function dwellBars(rows: readonly DwellRow[]): BarRow[] {
   return rows.map((row) => ({
     name: row.path,
-    value: row.avgMs,
+    value: row.medianMs,
     extra: 0,
     pct: row.pct,
     filterValue: undefined,
-    text: formatDuration(row.avgMs),
+    text: formatDuration(row.medianMs),
     // The scroll clause is omitted entirely rather than shown empty: a page with
     // no reading should read as one number, not one number and a blank.
     sub:
-      `max ${formatDuration(row.maxMs)} · ${compactNumber(row.views)} measured` +
+      `avg ${formatDuration(row.avgMs)} · max ${formatDuration(row.maxMs)} · ${compactNumber(row.views)} measured` +
       (row.scroll === undefined ? '' : ` · ${formatMeasure('rate', row.scroll)} read`),
     tips: [
+      { value: `${exactNumber(Math.round(row.medianMs))} ms`, label: 'median' },
       { value: `${exactNumber(Math.round(row.avgMs))} ms`, label: 'average' },
       { value: `${exactNumber(Math.round(row.maxMs))} ms`, label: 'longest' },
       { value: exactNumber(row.views), label: 'measured views' },

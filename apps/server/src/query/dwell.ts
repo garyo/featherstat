@@ -58,6 +58,13 @@ export interface CompiledLegs {
  */
 export const DWELL_MEASURES: Measures = {
   views_measured: { unit: 'count', population: 'measured_pageviews', aggregate: 'sum' },
+  /**
+   * The typical view, and the ranking. A few views left open for minutes pull
+   * the average far above what most readers spent; the median does not move.
+   * `computed` because medians do not recombine — two pages' medians say
+   * nothing about the median of both.
+   */
+  median_page_ms: { unit: 'ms', population: 'measured_pageviews', aggregate: 'computed' },
   avg_page_ms: {
     unit: 'ms',
     population: 'measured_pageviews',
@@ -158,6 +165,7 @@ export function compileDwellQuery(
     prefix(scope, [ORDERED_CTE, DWELL_CTE, SCROLL_CTE]),
     `SELECT ${PAGE_LABEL} AS path,`,
     '  COUNT(*) AS views_measured,',
+    '  MEDIAN(dwell.ms) AS median_page_ms,',
     '  AVG(dwell.ms) AS avg_page_ms,',
     '  MAX(dwell.ms) AS max_page_ms,',
     // COUNT(expr) counts non-NULLs, and SQLite's AVG skips them — so a page leg
@@ -170,7 +178,7 @@ export function compileDwellQuery(
     ...pathRestriction(query.path, params),
     'GROUP BY 1',
     // Path breaks ties so a limited ranking is deterministic, like every other kind.
-    'ORDER BY avg_page_ms DESC, path',
+    'ORDER BY median_page_ms DESC, path',
     'LIMIT ?',
   ].join('\n');
   params.push(query.limit);

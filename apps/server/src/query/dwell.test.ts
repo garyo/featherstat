@@ -79,6 +79,7 @@ beforeAll(() => {
   withWriteTransaction(db, () => {
     createSite(db, { id: 1, name: 'one', domains: ['one.test'], timezone: 'America/New_York' });
     createSite(db, { id: 2, name: 'two', domains: ['two.test'], timezone: 'UTC' });
+    createSite(db, { id: 3, name: 'three', domains: ['three.test'], timezone: 'UTC' });
 
     // A: /a is timed by its heartbeats (3 × 15 s); /b by the outlink that follows
     // it, whose own gap is unmeasurable — it is the session's last event.
@@ -133,6 +134,34 @@ beforeAll(() => {
         { path: '/older', at: 5 * SECOND },
       ],
     });
+    // Site 3: a page with one long view among short ones. /m's views run 4 s,
+    // 6 s and 40 s — average 16.7 s, median 6 s; /n's two run 9 s each. By
+    // average /m leads, by median /n does.
+    for (const [sess, path, ms] of [
+      [40, '/m', 4 * SECOND],
+      [41, '/m', 6 * SECOND],
+      [43, '/n', 9 * SECOND],
+      [44, '/n', 9 * SECOND],
+    ] as const) {
+      seedVisit({
+        sess,
+        site: 3,
+        hits: [
+          { path, at: 0 },
+          { type: 'ping', path, at: ms },
+        ],
+      });
+    }
+    seedVisit({
+      sess: 42,
+      site: 3,
+      hits: [
+        { path: '/m', at: 0 },
+        { type: 'ping', path: '/m', at: 15 * SECOND },
+        { type: 'ping', path: '/m', at: 30 * SECOND },
+        { type: 'ping', path: '/m', at: 40 * SECOND },
+      ],
+    });
     // Site 2: must never leak into site 1 answers.
     seedVisit({
       sess: 7,
@@ -165,6 +194,7 @@ describe('dwell attribution', () => {
       {
         path: '/a',
         views_measured: 2,
+        median_page_ms: 32_500,
         avg_page_ms: 32_500,
         max_page_ms: 45_000,
         views_scrolled: 0,
@@ -174,6 +204,7 @@ describe('dwell attribution', () => {
       {
         path: '/after',
         views_measured: 1,
+        median_page_ms: 20_000,
         avg_page_ms: 20_000,
         max_page_ms: 20_000,
         views_scrolled: 0,
@@ -182,6 +213,7 @@ describe('dwell attribution', () => {
       {
         path: '/d',
         views_measured: 1,
+        median_page_ms: 10_000,
         avg_page_ms: 10_000,
         max_page_ms: 10_000,
         views_scrolled: 0,
@@ -190,6 +222,7 @@ describe('dwell attribution', () => {
       {
         path: '/late',
         views_measured: 1,
+        median_page_ms: 10_000,
         avg_page_ms: 10_000,
         max_page_ms: 10_000,
         views_scrolled: 0,
@@ -199,6 +232,7 @@ describe('dwell attribution', () => {
       {
         path: '/b',
         views_measured: 1,
+        median_page_ms: 5_000,
         avg_page_ms: 5_000,
         max_page_ms: 5_000,
         views_scrolled: 0,
@@ -219,6 +253,7 @@ describe('dwell attribution', () => {
     expect(rows[0]).toEqual({
       path: '/a',
       views_measured: 2,
+      median_page_ms: (45_000 + PING_CLAMP_MS) / 2,
       avg_page_ms: (45_000 + PING_CLAMP_MS) / 2,
       max_page_ms: 45_000,
       views_scrolled: 0,
@@ -243,6 +278,7 @@ describe('dwell attribution', () => {
       {
         path: '/a',
         views_measured: 2,
+        median_page_ms: 32_500,
         avg_page_ms: 32_500,
         max_page_ms: 45_000,
         views_scrolled: 0,
@@ -265,7 +301,15 @@ describe('dwell attribution', () => {
     expect(resultOf(response, 'q').rows).toEqual([]);
   });
 
-  it('ranks by average time and guards the tail with `limit`', () => {
+  it('ranks by the median view, which one long view cannot drag up', () => {
+    const rows = resultOf(run({ site: 3, queries: dwell() }), 'q').rows;
+    expect(rows.map((row) => [row.path, row.median_page_ms, row.avg_page_ms])).toEqual([
+      ['/n', 9_000, 9_000],
+      ['/m', 6_000, 50_000 / 3],
+    ]);
+  });
+
+  it('ranks by median time and guards the tail with `limit`', () => {
     const rows = resultOf(run({ queries: dwell(2) }), 'q').rows;
     expect(rows.map((row) => row.path)).toEqual(['/a', '/after']);
   });
@@ -275,6 +319,7 @@ describe('dwell attribution', () => {
       {
         path: '/x',
         views_measured: 1,
+        median_page_ms: 5_000,
         avg_page_ms: 5_000,
         max_page_ms: 5_000,
         views_scrolled: 0,
@@ -285,6 +330,7 @@ describe('dwell attribution', () => {
     expect(all).toContainEqual({
       path: '/x',
       views_measured: 1,
+      median_page_ms: 5_000,
       avg_page_ms: 5_000,
       max_page_ms: 5_000,
       views_scrolled: 0,
@@ -293,6 +339,7 @@ describe('dwell attribution', () => {
     expect(all).toContainEqual({
       path: '/a',
       views_measured: 2,
+      median_page_ms: 32_500,
       avg_page_ms: 32_500,
       max_page_ms: 45_000,
       views_scrolled: 0,
@@ -305,6 +352,7 @@ describe('dwell attribution', () => {
     expect(resultOf(wider, 'q').rows).toContainEqual({
       path: '/old',
       views_measured: 1,
+      median_page_ms: 5_000,
       avg_page_ms: 5_000,
       max_page_ms: 5_000,
       views_scrolled: 0,
@@ -328,6 +376,7 @@ describe('dwell envelope filters', () => {
       {
         path: '/a',
         views_measured: 2,
+        median_page_ms: 32_500,
         avg_page_ms: 32_500,
         max_page_ms: 45_000,
         views_scrolled: 0,
@@ -336,6 +385,7 @@ describe('dwell envelope filters', () => {
       {
         path: '/b',
         views_measured: 1,
+        median_page_ms: 5_000,
         avg_page_ms: 5_000,
         max_page_ms: 5_000,
         views_scrolled: 0,

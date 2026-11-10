@@ -73,6 +73,7 @@ describe('resultToCsv', () => {
         {
           path: '/post',
           views_measured: 12,
+          median_page_ms: 24000,
           avg_page_ms: 31000,
           max_page_ms: 90000,
           views_scrolled: 8,
@@ -81,8 +82,8 @@ describe('resultToCsv', () => {
       ],
     };
     expect(resultToCsv(query, result)).toBe(
-      'path,views_measured,avg_page_ms,max_page_ms,views_scrolled,avg_scroll_pct\r\n' +
-        '/post,12,31000,90000,8,0.6\r\n',
+      'path,views_measured,median_page_ms,avg_page_ms,max_page_ms,views_scrolled,avg_scroll_pct\r\n' +
+        '/post,12,24000,31000,90000,8,0.6\r\n',
     );
   });
 

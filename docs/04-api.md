@@ -626,8 +626,10 @@ buckets rather than the top groups; the schema refuses that combination with a
   never an adjacency, and the page is never its own neighbor.
 - **Time on page** is its own kind for the same reason — it counts page legs,
   not rows: `{ "id": "dwell", "kind": "dwell", "limit": 10 }` → rows of
-  `{ path, views_measured, avg_page_ms, max_page_ms, views_scrolled,
-  avg_scroll_pct }` ranked by average dwell,
+  `{ path, views_measured, median_page_ms, avg_page_ms, max_page_ms,
+  views_scrolled, avg_scroll_pct }` ranked by median dwell (a few views left
+  open for minutes drag the average far above the typical view; the median
+  holds — and, unlike the average, it does not recombine across rows),
   over the same session-scoped envelope (and the same honest refusal of
   event-level filters). Semantics live in 03: every event, **pings included**,
   credits `min(gap to the next event, 20 s)` to the most recent pageview. Views
